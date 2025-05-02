@@ -15,9 +15,8 @@
     "@types/three": "^0.176.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-globe.gl": "^2.33.2",
-    "three": "^0.176.0",
-    "three-globe": "^2.42.4"
+    "react-globe.gl": "^2.22.0",
+    "three": "^0.176.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
