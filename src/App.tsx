@@ -36,31 +36,31 @@ function App() {
     onNewStrike: handleNewStrike
   });
 
-  // Custom Three.js object for lightning strikes - with proper typing
+  // Custom Three.js object for lightning strikes - using flat circles for better performance
   const createLightningObjectFn: CustomThreeObjectFn = useCallback((d) => {
     const strike = d as LightningStrike;
-
-    // Create a group to hold both the core and glow
     const group = new THREE.Group();
 
-    // Add the core (white sphere)
+    // Add core white circle
     const core = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 12, 12),
+      new THREE.CircleGeometry(1, 16),
       new THREE.MeshBasicMaterial({ 
         color: 0xffffff,
         transparent: true,
-        opacity: 1.0
+        opacity: 1.0,
+        side: THREE.DoubleSide
       })
     );
     group.add(core);
 
-    // Add the glow (larger yellowish sphere)
+    // Add white-yellow glow around core
     const glow = new THREE.Mesh(
-      new THREE.SphereGeometry(1.5, 12, 12),
+      new THREE.CircleGeometry(1.5, 16),
       new THREE.MeshBasicMaterial({ 
-        color: 0xffffa0, 
+        color: 0xffffc0, 
         transparent: true,
-        opacity: 0.5
+        opacity: 1,
+        side: THREE.DoubleSide
       })
     );
     group.add(glow);
@@ -81,25 +81,53 @@ function App() {
     const group = obj as THREE.Group;
     const strike = d as LightningStrike;
     const currentTime = Date.now();
-
-    // Position the object at the correct lat/lng/altitude
-    const coords = globeEl.current.getCoords(strike.lat, strike.lng, 0.01);
+  
+    // Position calculation as before
+    const coords = globeEl.current.getCoords(strike.lat, strike.lng, 0.001); // Reduced altitude
     Object.assign(group.position, coords);
-
+  
     // Calculate size based on age
     const size = getStrikeSize(strike, currentTime);
     group.scale.set(size, size, size);
-
+  
     // Calculate opacities based on age
     const coreOpacity = getStrikeOpacity(strike, currentTime);
     const glowOpacity = getGlowOpacity(strike, currentTime);
-
+  
     // Update materials
     const coreMaterial = (group.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
     coreMaterial.opacity = coreOpacity;
+  
+    const glowMesh = group.children[1] as THREE.Mesh;
+    const glowMaterial = glowMesh.material as THREE.MeshBasicMaterial;
+    
+    // Check if we're past the shrinking phase
+    const age = currentTime - strike.createdAt;
+    const pastShrinkingPhase = age > (LIGHTNING_CONSTANTS.DISPLAY_DURATION + LIGHTNING_CONSTANTS.FADE_DURATION);
+    
+    if (pastShrinkingPhase) {
+      // Hide the glow mesh completely once we're in the lingering phase
+      glowMesh.visible = false;
+    } else {
+      // Otherwise update its opacity as before
+      glowMesh.visible = true;
+      glowMaterial.opacity = glowOpacity;
+    }
 
-    const glowMaterial = (group.children[1] as THREE.Mesh).material as THREE.MeshBasicMaterial;
-    glowMaterial.opacity = glowOpacity;
+    Object.assign(group.position, coords);
+
+    // Make circles lie flat on the globe surface
+    // Calculate the normal vector (pointing outward from globe center)
+    const globeCenter = new THREE.Vector3(0, 0, 0);
+    const normal = new THREE.Vector3()
+      .subVectors(group.position, globeCenter)
+      .normalize();
+
+    // Create a quaternion rotation that aligns the circle with the surface
+    group.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1), // Default circle normal (z-axis)
+      normal                      // Target direction (surface normal)
+    );
   }, []);
 
   // Animation loop to update strikes
@@ -127,8 +155,8 @@ function App() {
       try {
         const controls = globeEl.current.controls();
         if (controls) {
-          controls.autoRotate = true;
-          controls.autoRotateSpeed = 0.25;
+          // controls.autoRotate = true;
+          // controls.autoRotateSpeed = 0.25;
         }
 
         globeEl.current.pointOfView({

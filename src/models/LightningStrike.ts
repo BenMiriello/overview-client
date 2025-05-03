@@ -10,14 +10,14 @@ export interface LightningStrike {
 
 // Constants for lightning animation
 export const LIGHTNING_CONSTANTS = {
-  INITIAL_SIZE: 0.5, // Initial size (radius in degrees)
+  INITIAL_SIZE: 0.6, // Initial size (radius in degrees)
   FINAL_SIZE: 0.1, // Size after shrinking (1/5 the original size)
   GLOW_SIZE: 0.6, // Size of glow effect
   DISPLAY_DURATION: 500, // How long to display at full size (ms)
   FADE_DURATION: 2500, // How long to fade from full to small
   LINGER_DURATION: 294000, // How long to linger as a small point (ms) 
   // Total duration is 5 minutes (300,000ms = 3000 + 3000 + 294000)
-  MAX_STRIKES: 10000, // Maximum number of strikes to keep in memory
+  MAX_STRIKES: 1000, // Maximum number of strikes to keep in memory
 };
 
 // Calculate current size based on time since creation
