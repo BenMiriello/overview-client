@@ -3,11 +3,12 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import './App.css';
 import { 
-  LightningStrike, 
-  getCoreSize,
-  getGlowSize,
-  getCoreOpacity,
-  getGlowOpacity,
+  LightningStrike,
+  getLineLength,
+  getCircleSize,
+  getCircleOpacity,
+  getLineOpacity,
+  getStrikeAltitude,
   isStrikeExpired,
   LIGHTNING_CONSTANTS
 } from './models/LightningStrike';
@@ -37,56 +38,38 @@ function App() {
     onNewStrike: handleNewStrike
   });
 
-  // Custom Three.js object for lightning strikes - using flat circles for better performance
+  // Custom Three.js object for lightning strikes
   const createLightningObjectFn: CustomThreeObjectFn = useCallback((d) => {
     const strike = d as LightningStrike;
     const group = new THREE.Group();
 
-    // Create a radial gradient texture for the glow
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const context = canvas.getContext('2d');
-    if (context) {
-      const gradient = context.createRadialGradient(
-        canvas.width / 2, canvas.height / 2, 0,
-        canvas.width / 2, canvas.height / 2, canvas.width / 2
-      );
-      gradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
-      gradient.addColorStop(0.3, 'rgba(255, 255, 200, 0.8)');
-      gradient.addColorStop(0.6, 'rgba(255, 240, 120, 0.4)');
-      gradient.addColorStop(1, 'rgba(255, 220, 50, 0.0)');
-      
-      context.fillStyle = gradient;
-      context.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    
-    const glowTexture = new THREE.CanvasTexture(canvas);
-    
-    // Add persistent small white core point
-    const core = new THREE.Mesh(
-      new THREE.CircleGeometry(1, 16),
+    // 1. Add the lightning bolt line 
+    const lineGeometry = new THREE.BufferGeometry();
+    // Will be updated in the update function
+    const lineVertices = new Float32Array(6); // 2 points x 3 components (x,y,z)
+    lineGeometry.setAttribute('position', new THREE.BufferAttribute(lineVertices, 3));
+
+    const lineMaterial = new THREE.LineBasicMaterial({ 
+      color: 0xffffc0,
+      transparent: true,
+      opacity: 1.0,
+      linewidth: 4.5 // 3x thicker line
+    });
+
+    const line = new THREE.Line(lineGeometry, lineMaterial);
+    group.add(line);
+
+    // 2. Add circle (will appear on impact)
+    const circle = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 32),
       new THREE.MeshBasicMaterial({ 
         color: 0xffffff,
         transparent: true,
-        opacity: 1.0,
+        opacity: 0.0, // Start invisible
         side: THREE.DoubleSide
       })
     );
-    group.add(core);
-
-    // Add expanding/contracting glow effect with gradient texture
-    const glow = new THREE.Mesh(
-      new THREE.CircleGeometry(1, 32),
-      new THREE.MeshBasicMaterial({ 
-        map: glowTexture,
-        transparent: true,
-        opacity: 1.0,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending // Additive blending for more dramatic effect
-      })
-    );
-    group.add(glow);
+    group.add(circle);
 
     // Store reference data
     group.userData = {
@@ -97,62 +80,96 @@ function App() {
     return group;
   }, []);
 
-  // Update function for lightning objects - with proper typing
+  // Update function for lightning objects
   const updateLightningObjectFn: CustomThreeObjectUpdateFn = useCallback((obj, d) => {
     if (!globeEl.current) return;
 
     const group = obj as THREE.Group;
     const strike = d as LightningStrike;
     const currentTime = Date.now();
-  
-    // Position calculation - very close to the surface
-    const coords = globeEl.current.getCoords(strike.lat, strike.lng, 0.0005); // Even closer to the surface
-    Object.assign(group.position, coords);
-    
-    // Get the core and glow meshes
-    const coreMesh = group.children[0] as THREE.Mesh;
-    const glowMesh = group.children[1] as THREE.Mesh;
-  
-    // Calculate sizes for core and glow
-    const coreSize = getCoreSize();
-    const glowSize = getGlowSize(strike, currentTime);
-    
-    // Set sizes independently
-    coreMesh.scale.set(coreSize, coreSize, coreSize);
-    glowMesh.scale.set(glowSize, glowSize, glowSize);
-  
-    // Calculate opacities
-    const coreOpacity = getCoreOpacity(strike, currentTime);
-    const glowOpacity = getGlowOpacity(strike, currentTime);
-  
-    // Update materials
-    const coreMaterial = coreMesh.material as THREE.MeshBasicMaterial;
-    coreMaterial.opacity = coreOpacity;
-    
-    const glowMaterial = glowMesh.material as THREE.MeshBasicMaterial;
-    
-    // Check if we're past the flash + contraction phase
-    const age = currentTime - strike.createdAt;
-    const pastAnimationPhase = age > (LIGHTNING_CONSTANTS.FLASH_DURATION + LIGHTNING_CONSTANTS.CONTRACTION_DURATION);
-    
-    if (pastAnimationPhase) {
-      // Hide the glow mesh completely once we're in the lingering phase
-      glowMesh.visible = false;
+
+    // Get altitude for z-indexing
+    const altitude = getStrikeAltitude(strike, currentTime);
+
+    // 1. Update the lightning line vertices
+    const surfaceCoords = globeEl.current.getCoords(strike.lat, strike.lng, altitude);
+
+    // Fix: Keep line starting point fixed in the sky
+    const skyCoords = globeEl.current.getCoords(
+      strike.lat, 
+      strike.lng, 
+      LIGHTNING_CONSTANTS.LINE_START_ALTITUDE
+    );
+
+    // Calculate the line length based on the phase (0-1)
+    const lineLength = getLineLength(strike, currentTime);
+
+    // If there's no line, hide it
+    if (lineLength <= 0) {
+      (group.children[0] as THREE.Line).visible = false;
     } else {
-      // Otherwise update its opacity and ensure it's visible
-      glowMesh.visible = true;
-      glowMaterial.opacity = glowOpacity;
+      (group.children[0] as THREE.Line).visible = true;
+
+      // Calculate the current endpoint of the line
+      const vectorFromSurfaceToSky = new THREE.Vector3()
+        .subVectors(skyCoords, surfaceCoords);
+
+      // The bottom endpoint is always at the surface
+      const bottomPoint = surfaceCoords;
+
+      // The top endpoint starts at the sky position and moves down
+      // This fixes the issue where the line was moving up
+      const lineVector = vectorFromSurfaceToSky.clone().multiplyScalar(1 - lineLength);
+      const topPoint = new THREE.Vector3().addVectors(skyCoords, lineVector.negate());
+
+      // Update line vertices
+      const lineGeo = (group.children[0] as THREE.Line).geometry;
+      const positions = lineGeo.attributes.position.array as Float32Array;
+
+      // Set the top point (sky)
+      positions[0] = topPoint.x;
+      positions[1] = topPoint.y;
+      positions[2] = topPoint.z;
+
+      // Set the bottom point (surface)
+      positions[3] = bottomPoint.x;
+      positions[4] = bottomPoint.y;
+      positions[5] = bottomPoint.z;
+
+      lineGeo.attributes.position.needsUpdate = true;
+
+      // Update line opacity
+      const lineMaterial = (group.children[0] as THREE.Line).material as THREE.LineBasicMaterial;
+      lineMaterial.opacity = getLineOpacity(strike, currentTime);
     }
+
+    // 2. Update the circle
+    const circleMesh = group.children[1] as THREE.Mesh;
+    const circleMaterial = circleMesh.material as THREE.MeshBasicMaterial;
+
+    // Place circle at surface position
+    Object.assign(circleMesh.position, surfaceCoords);
+
+    // Calculate size and opacity
+    const circleSize = getCircleSize(strike, currentTime);
+    const circleOpacity = getCircleOpacity(strike, currentTime);
+
+    // Update the mesh
+    circleMesh.scale.set(circleSize, circleSize, circleSize);
+    circleMaterial.opacity = circleOpacity;
+
+    // If no circle, hide the mesh
+    circleMesh.visible = circleSize > 0 && circleOpacity > 0;
 
     // Make circles lie flat on the globe surface
     // Calculate the normal vector (pointing outward from globe center)
     const globeCenter = new THREE.Vector3(0, 0, 0);
     const normal = new THREE.Vector3()
-      .subVectors(group.position, globeCenter)
+      .subVectors(circleMesh.position, globeCenter)
       .normalize();
 
     // Create a quaternion rotation that aligns the circle with the surface
-    group.quaternion.setFromUnitVectors(
+    circleMesh.quaternion.setFromUnitVectors(
       new THREE.Vector3(0, 0, 1), // Default circle normal (z-axis)
       normal                      // Target direction (surface normal)
     );
@@ -183,14 +200,20 @@ function App() {
       try {
         const controls = globeEl.current.controls();
         if (controls) {
-          // controls.autoRotate = true;
-          // controls.autoRotateSpeed = 0.25;
+          controls.autoRotate = true;
+          controls.autoRotateSpeed = 0.067; // ISS simulation speed
+          
+          // Set min distance (closest zoom) to prevent zooming too close
+          controls.minDistance = 130; // Adjust this value to set your minimum zoom
+          
+          // Set max distance (furthest zoom) to limit how far away users can zoom
+          controls.maxDistance = 500; // Adjust this value to set your maximum zoom
         }
-
+  
         globeEl.current.pointOfView({
           lat: 10,
           lng: -33,
-          altitude: 4
+          altitude: 2.5
         });
       } catch (err) {
         console.error("Error setting up globe:", err);
