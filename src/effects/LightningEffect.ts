@@ -22,17 +22,17 @@ export interface LightningConfig {
  * Default lightning configuration
  */
 export const DEFAULT_LIGHTNING_CONFIG: LightningConfig = {
-  startAltitude: 0.03,       // Higher altitude than before (2x higher)
+  startAltitude: 0.04,       // Higher altitude for more dramatic effect
   endAltitude: 0.0005,
   color: 0xffffff,
-  width: 3,
-  segments: 6,
-  jitterAmount: 0.015,
-  branchChance: 0.3,
-  branchFactor: 0.6,
-  maxBranches: 3,
-  duration: 750,             // Total duration
-  fadeOutDuration: 250,      // Fade out duration
+  width: 3.5,                // Slightly thicker lines
+  segments: 8,               // More segments for more zigzag
+  jitterAmount: 0.02,        // More randomness
+  branchChance: 0.4,         // Higher chance of branches
+  branchFactor: 0.7,         // Longer branches
+  maxBranches: 4,            // More branches
+  duration: 1000,            // Longer total duration
+  fadeOutDuration: 300,      // Longer fade out duration
 };
 
 /**
@@ -47,6 +47,7 @@ export class LightningEffect {
   private config: LightningConfig;
   private createTime: number;
   private random: () => number;
+  private glowLight: THREE.PointLight | null = null;
 
   /**
    * Create a new lightning effect
@@ -106,20 +107,30 @@ export class LightningEffect {
     const segments = this.config.segments;
     const points: THREE.Vector3[] = [];
     
-    // Create a zigzag line from top to bottom
+    // Create a zigzag line from top to bottom with varying segment lengths
+    let prevX = 0, prevZ = 0;
     for (let i = 0; i <= segments; i++) {
       const t = i / segments;
       
-      // Interpolate height from start to end altitude
-      const altitude = this.config.startAltitude * (1 - t) + this.config.endAltitude * t;
+      // Interpolate height from start to end altitude with non-linear curve for more natural look
+      const easedT = t * t; // Quadratic easing for faster initial descent
+      const altitude = this.config.startAltitude * (1 - easedT) + this.config.endAltitude * easedT;
       
-      // Add randomness to x and z (horizontal plane)
-      const jitterX = (this.random() * 2 - 1) * this.config.jitterAmount;
-      const jitterZ = (this.random() * 2 - 1) * this.config.jitterAmount;
+      // More randomness at the middle segments, less at the ends
+      const segmentRandomness = Math.sin(t * Math.PI); // Peaks at t=0.5 (middle)
+      const jitterMultiplier = segmentRandomness * 1.5;
+      
+      // Add randomness to x and z (horizontal plane) with progressive buildup
+      // Each jitter builds on the previous position for more natural branching pattern
+      const jitterX = (prevX + (this.random() * 2 - 1) * this.config.jitterAmount * jitterMultiplier);
+      const jitterZ = (prevZ + (this.random() * 2 - 1) * this.config.jitterAmount * jitterMultiplier);
       
       // No jitter at start and end points
       const finalJitterX = (i === 0 || i === segments) ? 0 : jitterX;
       const finalJitterZ = (i === 0 || i === segments) ? 0 : jitterZ;
+      
+      prevX = finalJitterX;
+      prevZ = finalJitterZ;
       
       points.push(new THREE.Vector3(finalJitterX, altitude, finalJitterZ));
     }
@@ -191,8 +202,14 @@ export class LightningEffect {
     // Calculate the current opacity based on age
     let opacity = 1.0;
     
+    // Add flicker effect to make lightning more dynamic
+    if (age < duration - fadeOutDuration) {
+      const flickerSpeed = 0.08;
+      const flickerAmount = 0.3;
+      opacity = 1.0 - flickerAmount + flickerAmount * Math.sin(age * flickerSpeed);
+    }
     // Fade out towards the end
-    if (age > duration - fadeOutDuration) {
+    else if (age > duration - fadeOutDuration) {
       opacity = 1.0 - (age - (duration - fadeOutDuration)) / fadeOutDuration;
     }
     
@@ -201,6 +218,13 @@ export class LightningEffect {
     this.branches.forEach(branch => {
       (branch.material as THREE.LineBasicMaterial).opacity = opacity;
     });
+    
+    // Update glow light intensity
+    if (this.glowLight) {
+      // Make the glow fade out slightly faster than the lightning
+      const glowIntensity = Math.max(0, opacity * 2.0);
+      this.glowLight.intensity = glowIntensity;
+    }
     
     return true;
   }
@@ -237,6 +261,11 @@ export class LightningEffect {
       new THREE.Vector3(0, 1, 0), // Default up vector (Y axis)
       normal                       // Target direction (surface normal)
     );
+    
+    // Add a point light for the glow effect
+    this.glowLight = new THREE.PointLight(0x88ccff, 2.0, 5);
+    this.glowLight.position.set(0, this.config.endAltitude * 0.5, 0); // Position near the ground
+    this.group.add(this.glowLight);
   }
   
   /**
@@ -246,6 +275,12 @@ export class LightningEffect {
     // Dispose geometries
     this.geometry.dispose();
     this.branches.forEach(branch => branch.geometry.dispose());
+    
+    // Clean up glow light
+    if (this.glowLight) {
+      this.group.remove(this.glowLight);
+      this.glowLight = null;
+    }
     
     // Remove from parent if attached
     if (this.group.parent) {

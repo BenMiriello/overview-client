@@ -20,13 +20,18 @@ function App() {
   // Initialize lightning manager when globe is ready
   useEffect(() => {
     if (isGlobeReady && globeEl.current) {
-      // Create lightning manager
+      // Create lightning manager with enhanced settings
       const manager = new LightningManager({
-        // You can override default settings here
-        startAltitude: 0.03, // 2x higher than before
-        width: 4,           // Thicker lines
-        segments: 8,        // More zigzag segments
-        jitterAmount: 0.018 // More randomness
+        // Enhanced lightning configuration
+        startAltitude: 0.05,      // Higher for more dramatic effect
+        width: 4.5,               // Thicker lines for visibility
+        segments: 10,             // More zigzag segments for complexity
+        jitterAmount: 0.022,      // More randomness for natural look
+        branchChance: 0.5,        // Higher chance of branches
+        branchFactor: 0.8,        // Longer branches
+        maxBranches: 5,           // More branches
+        duration: 1000,           // Length of lightning animation
+        fadeOutDuration: 300      // Fade out duration
       });
       
       manager.initialize(globeEl.current);
