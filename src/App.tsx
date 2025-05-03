@@ -4,8 +4,9 @@ import * as THREE from 'three';
 import './App.css';
 import { 
   LightningStrike, 
-  getStrikeSize, 
-  getStrikeOpacity,
+  getCoreSize,
+  getGlowSize,
+  getCoreOpacity,
   getGlowOpacity,
   isStrikeExpired,
   LIGHTNING_CONSTANTS
@@ -41,7 +42,28 @@ function App() {
     const strike = d as LightningStrike;
     const group = new THREE.Group();
 
-    // Add core white circle
+    // Create a radial gradient texture for the glow
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const context = canvas.getContext('2d');
+    if (context) {
+      const gradient = context.createRadialGradient(
+        canvas.width / 2, canvas.height / 2, 0,
+        canvas.width / 2, canvas.height / 2, canvas.width / 2
+      );
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+      gradient.addColorStop(0.3, 'rgba(255, 255, 200, 0.8)');
+      gradient.addColorStop(0.6, 'rgba(255, 240, 120, 0.4)');
+      gradient.addColorStop(1, 'rgba(255, 220, 50, 0.0)');
+      
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    
+    const glowTexture = new THREE.CanvasTexture(canvas);
+    
+    // Add persistent small white core point
     const core = new THREE.Mesh(
       new THREE.CircleGeometry(1, 16),
       new THREE.MeshBasicMaterial({ 
@@ -53,14 +75,15 @@ function App() {
     );
     group.add(core);
 
-    // Add white-yellow glow around core
+    // Add expanding/contracting glow effect with gradient texture
     const glow = new THREE.Mesh(
-      new THREE.CircleGeometry(1.5, 16),
+      new THREE.CircleGeometry(1, 32),
       new THREE.MeshBasicMaterial({ 
-        color: 0xffffc0, 
+        map: glowTexture,
         transparent: true,
-        opacity: 1,
-        side: THREE.DoubleSide
+        opacity: 1.0,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending // Additive blending for more dramatic effect
       })
     );
     group.add(glow);
@@ -82,39 +105,44 @@ function App() {
     const strike = d as LightningStrike;
     const currentTime = Date.now();
   
-    // Position calculation as before
-    const coords = globeEl.current.getCoords(strike.lat, strike.lng, 0.001); // Reduced altitude
+    // Position calculation - very close to the surface
+    const coords = globeEl.current.getCoords(strike.lat, strike.lng, 0.0005); // Even closer to the surface
     Object.assign(group.position, coords);
+    
+    // Get the core and glow meshes
+    const coreMesh = group.children[0] as THREE.Mesh;
+    const glowMesh = group.children[1] as THREE.Mesh;
   
-    // Calculate size based on age
-    const size = getStrikeSize(strike, currentTime);
-    group.scale.set(size, size, size);
+    // Calculate sizes for core and glow
+    const coreSize = getCoreSize();
+    const glowSize = getGlowSize(strike, currentTime);
+    
+    // Set sizes independently
+    coreMesh.scale.set(coreSize, coreSize, coreSize);
+    glowMesh.scale.set(glowSize, glowSize, glowSize);
   
-    // Calculate opacities based on age
-    const coreOpacity = getStrikeOpacity(strike, currentTime);
+    // Calculate opacities
+    const coreOpacity = getCoreOpacity(strike, currentTime);
     const glowOpacity = getGlowOpacity(strike, currentTime);
   
     // Update materials
-    const coreMaterial = (group.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    const coreMaterial = coreMesh.material as THREE.MeshBasicMaterial;
     coreMaterial.opacity = coreOpacity;
-  
-    const glowMesh = group.children[1] as THREE.Mesh;
+    
     const glowMaterial = glowMesh.material as THREE.MeshBasicMaterial;
     
-    // Check if we're past the shrinking phase
+    // Check if we're past the flash + contraction phase
     const age = currentTime - strike.createdAt;
-    const pastShrinkingPhase = age > (LIGHTNING_CONSTANTS.DISPLAY_DURATION + LIGHTNING_CONSTANTS.FADE_DURATION);
+    const pastAnimationPhase = age > (LIGHTNING_CONSTANTS.FLASH_DURATION + LIGHTNING_CONSTANTS.CONTRACTION_DURATION);
     
-    if (pastShrinkingPhase) {
+    if (pastAnimationPhase) {
       // Hide the glow mesh completely once we're in the lingering phase
       glowMesh.visible = false;
     } else {
-      // Otherwise update its opacity as before
+      // Otherwise update its opacity and ensure it's visible
       glowMesh.visible = true;
       glowMaterial.opacity = glowOpacity;
     }
-
-    Object.assign(group.position, coords);
 
     // Make circles lie flat on the globe surface
     // Calculate the normal vector (pointing outward from globe center)
