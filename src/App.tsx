@@ -1,11 +1,9 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import Globe from 'react-globe.gl';
-import * as THREE from 'three';
 import './App.css';
 import { LightningStrike } from './models/LightningStrike';
 import { useWebSocketService } from './services/websocketService';
 import { LightningManager } from './effects/LightningManager';
-import { DEFAULT_LIGHTNING_CONFIG } from './effects/LightningEffect';
 
 function App() {
   const globeEl = useRef<any>(null);
@@ -13,30 +11,29 @@ function App() {
   const [isGlobeReady, setIsGlobeReady] = useState(false);
   const [strikes, setStrikes] = useState<LightningStrike[]>([]);
 
-  const handleGlobeReady = () => {
-    setIsGlobeReady(true);
-  };
-
   // Initialize lightning manager when globe is ready
   useEffect(() => {
     if (isGlobeReady && globeEl.current) {
-      // Create lightning manager with enhanced settings
       const manager = new LightningManager({
-        // Enhanced lightning configuration
-        startAltitude: 0.05,      // Higher for more dramatic effect
-        width: 4.5,               // Thicker lines for visibility
-        segments: 10,             // More zigzag segments for complexity
-        jitterAmount: 0.022,      // More randomness for natural look
-        branchChance: 0.5,        // Higher chance of branches
-        branchFactor: 0.8,        // Longer branches
-        maxBranches: 5,           // More branches
-        duration: 1000,           // Length of lightning animation
-        fadeOutDuration: 300      // Fade out duration
+        startAltitude: 0.1,
+        lineWidth: 4.5,
+        lineSegments: 10,
+        jitterAmount: 0.022,
+        branchChance: 0.5,
+        branchFactor: 0.8,
+        maxBranches: 5,
+        duration: 1000,
+        fadeOutDuration: 300
       });
-      
+
+      // Top-level switchbox to toggle these values:
+      manager.maxActiveAnimations = 10;
+      manager.showGlow = false;
+      manager.showLightning = false;
+
       manager.initialize(globeEl.current);
       lightningManagerRef.current = manager;
-      
+
       // Set up animation loop
       const animate = () => {
         if (lightningManagerRef.current) {
@@ -44,7 +41,7 @@ function App() {
         }
         requestAnimationFrame(animate);
       };
-      
+
       animate();
     }
   }, [isGlobeReady]);
@@ -56,7 +53,7 @@ function App() {
       if (lightningManagerRef.current) {
         lightningManagerRef.current.createLightning(newStrike);
       }
-      
+
       // Keep track of strikes
       return [newStrike, ...prev].slice(0, 1000);
     });
@@ -74,12 +71,12 @@ function App() {
       try {
         const controls = globeEl.current.controls();
         if (controls) {
-          controls.autoRotate = true;
+          // controls.autoRotate = true;
           controls.autoRotateSpeed = 0.067; // ISS orbital speed
           
           // Set min and max zoom distances
-          // controls.minDistance = 130;
-          controls.maxDistance = 500;
+          controls.minDistance = 120;
+          controls.maxDistance = 10000;
         }
 
         globeEl.current.pointOfView({
@@ -98,7 +95,7 @@ function App() {
       <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
         <Globe
           ref={globeEl}
-          onGlobeReady={handleGlobeReady}
+          onGlobeReady={() => setIsGlobeReady(true)}
           globeImageUrl="https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
           bumpImageUrl="https://unpkg.com/three-globe/example/img/earth-topology.png"
           backgroundImageUrl="https://unpkg.com/three-globe/example/img/night-sky.png"
