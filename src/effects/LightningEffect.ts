@@ -202,8 +202,6 @@ export class LightningEffect {
     const displayDuration = 500;     // 0.5 seconds to keep it visible
     const fadeOutDuration = 500;     // 0.5 seconds to fade out
     const totalDuration = 1500;      // 1.5 seconds total
-
-    // Maximum glow duration of 1 second
     const maxGlowDuration = 1000;    // 1 second max for glow
 
     // If past total duration or not in active set, lightning is done
@@ -218,18 +216,15 @@ export class LightningEffect {
         });
       }
 
-      // Turn off glow light completely
       if (this.glowLight) {
         this.glowLight.intensity = 0;
       }
 
-      // return false;
       return age <= totalDuration; // Only return true if still within duration
     }
 
     // Handle lightning animation in three phases
     if (this.showLightning) {
-      console.log('showing lightning')
       // Drawing phase (0-0.5s)
       if (age <= drawDuration) {
         const progress = age / drawDuration;
@@ -263,13 +258,13 @@ export class LightningEffect {
         });
       }
     } else {
-      console.log('hiding lightning');
-      // Hide lightning if disabled
       this.material.opacity = 0;
+      this.mainBolt.visible = false;
       this.branches.forEach(branch => {
         if (branch.material instanceof THREE.LineBasicMaterial) {
           branch.material.opacity = 0;
         }
+        branch.visible = false;
       });
     }
 
@@ -304,7 +299,18 @@ export class LightningEffect {
       this.glowLight.intensity = 0;
       this.glowLight = null;
     }
-    
+
+    // Remove lightning completely from the scene
+    if (this.mainBolt.parent) {
+      this.mainBolt.parent.remove(this.mainBolt);
+    }
+
+    this.branches.forEach(branch => {
+      if (branch.parent) {
+        branch.parent.remove(branch);
+      }
+    });
+
     // Hide lightning
     this.material.opacity = 0;
     this.branches.forEach(branch => {

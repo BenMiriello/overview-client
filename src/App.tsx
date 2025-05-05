@@ -10,8 +10,9 @@ function App() {
   const lightningManagerRef = useRef<LightningManager | null>(null);
   const [isGlobeReady, setIsGlobeReady] = useState(false);
   const [strikes, setStrikes] = useState<LightningStrike[]>([]);
+  const maxDisplayedStrikes = 20;
 
-  // Initialize lightning manager when globe is ready
+  // Initialize lightning manager
   useEffect(() => {
     if (isGlobeReady && globeEl.current) {
       const manager = new LightningManager({
@@ -31,6 +32,8 @@ function App() {
       manager.showGlow = false;
       manager.showLightning = false;
 
+      // Clear any lingering effects
+      manager.clearAllLightningEffects();
       manager.initialize(globeEl.current);
       lightningManagerRef.current = manager;
 
@@ -46,20 +49,16 @@ function App() {
     }
   }, [isGlobeReady]);
 
-  // Handler for new strikes coming from WebSocket
   const handleNewStrike = useCallback((newStrike: LightningStrike) => {
     setStrikes(prev => {
-      // Create a new strike and trigger lightning effect
       if (lightningManagerRef.current) {
         lightningManagerRef.current.createLightning(newStrike);
       }
 
-      // Keep track of strikes
-      return [newStrike, ...prev].slice(0, 1000);
+      return [newStrike, ...prev].slice(0, maxDisplayedStrikes);
     });
   }, []);
 
-  // Connect to WebSocket service
   const { connected, lastUpdate } = useWebSocketService({
     url: 'ws://localhost:3001',
     onNewStrike: handleNewStrike
@@ -74,9 +73,8 @@ function App() {
           // controls.autoRotate = true;
           controls.autoRotateSpeed = 0.067; // ISS orbital speed
           
-          // Set min and max zoom distances
-          controls.minDistance = 120;
-          controls.maxDistance = 10000;
+          controls.minDistance = 120; // Zoom in limit
+          controls.maxDistance = 10000; // Zoom out limit
         }
 
         globeEl.current.pointOfView({

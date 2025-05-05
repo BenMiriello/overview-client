@@ -3,23 +3,6 @@ import { LightningEffect, LightningConfig } from './LightningEffect';
 import { LightningStrike } from '../models/LightningStrike';
 
 /**
- * Helper function to get a color based on strike intensity
- */
-function getIntensityColor(intensity: number): number {
-  // Default to white if no intensity data
-  if (intensity === undefined) return 0xffffff;
-
-  // Map intensity to a color
-  if (intensity > 0.8) {
-    return 0xff4500; // Strong strike - Orange/Red
-  } else if (intensity > 0.5) {
-    return 0xffaa00; // Medium strike - Yellow
-  } else {
-    return 0xaaccff; // Weak strike - Light Blue
-  }
-}
-
-/**
  * Manager for creating and updating lightning effects on the globe
  */
 export class LightningManager {
@@ -28,11 +11,29 @@ export class LightningManager {
   private scene: THREE.Scene | null = null;
   private globeEl: any | null = null;
   private defaultConfig: Partial<LightningConfig>;
-
-  // New properties for limiting active animations
+  private _showLightning: boolean = true;
   public maxActiveAnimations: number = 10;
   public showGlow: boolean = true;
-  public showLightning: boolean = true;
+
+  /**
+   * Set the showLightning flag and update all active effects
+   */
+  set showLightning(value: boolean) {
+    if (this._showLightning !== value) {
+      this._showLightning = value;
+
+      if (!value) {
+        this.clearAllLightningEffects();
+      }
+    }
+  }
+
+  /**
+   * Get the showLightning flag
+   */
+  get showLightning(): boolean {
+    return this._showLightning;
+  }
   private activeEffects: {id: string, timestamp: number}[] = [];
 
   /**
@@ -68,13 +69,16 @@ export class LightningManager {
   createLightning(strike: LightningStrike, config?: Partial<LightningConfig>): string {
     if (!this.scene || !this.globeEl) return '';
 
-    // Merge configs with defaults then any strike-specific config
+    if (!this.showLightning) {
+      this.createPointMarker(strike);
+      return strike.id;
+    }
+
     const mergedConfig: Partial<LightningConfig> = {
       ...this.defaultConfig,
       ...config
     };
 
-    // Create a new lightning effect
     const effect = new LightningEffect(
       strike.lat,
       strike.lng,
@@ -84,24 +88,17 @@ export class LightningManager {
     // Apply global effect settings
     effect.showGlow = this.showGlow;
     effect.showLightning = this.showLightning;
-
-    // Position on globe
     effect.positionOnGlobe(this.globeEl, strike.lat, strike.lng, 0);
 
-    // Add to scene
     const lightning = effect.getObject();
     this.scene.add(lightning);
-
-    // Store the effect with the strike ID
     this.effects.set(strike.id, effect);
 
-    // Add to active effects list
     this.activeEffects.push({
       id: strike.id,
       timestamp: Date.now()
     });
 
-    // Create a persistent point marker at the strike location
     this.createPointMarker(strike);
 
     return strike.id;
@@ -112,32 +109,24 @@ export class LightningManager {
    * @param currentTime Current time in milliseconds
    */
   update(currentTime: number): void {
-    // Don't do anything if not initialized
     if (!this.scene) return;
 
     this.ensureMaxActiveLights();
 
-    // Sort effects by timestamp (newest first)
     this.activeEffects.sort((a, b) => b.timestamp - a.timestamp);
 
     // Limit active effects to maxActiveAnimations
     const activeIds = new Set(this.activeEffects.map(e => e.id));
-    // const activeIds = new Set(this.activeEffects.slice(0, this.maxActiveAnimations).map(e => e.id));
 
     // Update each lightning effect and remove completed ones
     const completedIds: string[] = [];
 
     this.effects.forEach((effect, id) => {
-      // Only allow animation for effects in the active set
       const shouldAnimate = activeIds.has(id);
-
-      // Pass the animation flag to the effect
       const isActive = effect.update(currentTime, shouldAnimate);
 
-      // If the effect is done, mark for removal
       if (!isActive) {
         completedIds.push(id);
-        // Remove from active effects list
         this.activeEffects = this.activeEffects.filter(e => e.id !== id);
       }
     });
@@ -150,12 +139,6 @@ export class LightningManager {
       if (effect) {
         effect.dispose();
         this.effects.delete(id);
-
-        // Make sure the point marker is visible after lightning is gone
-        const marker = this.pointMarkers.get(id);
-        if (marker && marker.material instanceof THREE.Material) {
-          marker.material.opacity = 0.8;
-        }
       }
     });
 
@@ -164,27 +147,37 @@ export class LightningManager {
   }
 
   ensureMaxActiveLights() {
-    // Sort by timestamp (newest first)
     this.activeEffects.sort((a, b) => b.timestamp - a.timestamp);
-    
+
     // Keep only the N newest effects active
     if (this.activeEffects.length > this.maxActiveAnimations) {
-      // Get the IDs that should be immediately deactivated
       const removeIds = this.activeEffects
         .slice(this.maxActiveAnimations)
         .map(e => e.id);
 
-      // Force-terminate these effects
       removeIds.forEach(id => {
         const effect = this.effects.get(id);
         if (effect) {
-          // Remove the light completely from the scene
           effect.terminateImmediately();
-          // Remove from active list
           this.activeEffects = this.activeEffects.filter(e => e.id !== id);
         }
       });
     }
+  }
+
+  /**
+   * Forcefully clear all active lightning effects
+   */
+  clearAllLightningEffects(): void {
+    this.effects.forEach((effect, id) => {
+      effect.terminateImmediately();
+      effect.dispose();
+
+      // Remove from tracking collections
+      this.effects.delete(id);
+    });
+
+    this.activeEffects = [];
   }
 
   /**
@@ -197,25 +190,25 @@ export class LightningManager {
   /**
    * Create a persistent point marker at the strike location
    * @param strike Lightning strike data
+   * @param currentTime Current time in milliseconds
    */
   private createPointMarker(strike: LightningStrike): void {
     if (!this.scene || !this.globeEl) return;
 
     // Create circle geometry (flat disc) - 1/4 the size of the original animation
-    const radius = 0.0625; // Small white circle, 1/4 the size of the original
-    const resolution = 12; // Lower resolution for better performance
+    const radius = 0.08; // Small white circle
+    const resolution = 25; // Lower resolution gives better performance
     const geometry = new THREE.CircleGeometry(radius, resolution);
 
     // Create material for permanent marker (non-glowing)
     const material = new THREE.MeshBasicMaterial({
-      color: strike.intensity ? getIntensityColor(strike.intensity) : 0xffffff,
+      color: 0xffffff, // white // 0xffaa00, // yellow
       transparent: true,
-      opacity: 0, // Start invisible while lightning is active
+      opacity: this.showLightning ? 0 : 0.8, // Visible immediately if no lightning
       side: THREE.DoubleSide,
       depthWrite: false
     });
 
-    // Create mesh
     const marker = new THREE.Mesh(geometry, material);
 
     // Store creation time for aging effects
@@ -225,7 +218,6 @@ export class LightningManager {
       intensity: strike.intensity || 0.5
     };
 
-    // Position on globe surface
     const surfaceCoords = this.globeEl.getCoords(strike.lat, strike.lng, 0.001); // Slightly above surface
     marker.position.set(surfaceCoords.x, surfaceCoords.y, surfaceCoords.z);
 
@@ -239,10 +231,7 @@ export class LightningManager {
       normal                       // Direction to face
     );
 
-    // Add to scene
     this.scene.add(marker);
-
-    // Store with strike ID for later reference
     this.pointMarkers.set(strike.id, marker);
   }
 
@@ -254,20 +243,19 @@ export class LightningManager {
     const maxAge = 60000; // 60 seconds before completely fading out
     const fadeStartAge = 10000; // Start fading after 10 seconds
 
-    // Remove very old markers
     const removeIds: string[] = [];
 
     this.pointMarkers.forEach((marker, id) => {
-      // Each marker stores creation time in a custom property
-      if (!marker.userData.createdAt) {
-        // Initialize if not yet set
-        marker.userData.createdAt = currentTime;
-      }
-
       const age = currentTime - marker.userData.createdAt;
+      // Duration is based on the total lightning animation duration (1.5s total)
+      const fadeInDuration = 1500; // Match the lightning animation duration
 
-      if (age > maxAge) {
-        // Mark for removal if too old
+      // Make markers fade in during the lightning animation
+      if (this.showLightning && age < fadeInDuration && marker.material instanceof THREE.Material) {
+        // Gradually increase opacity as the lightning animation plays
+        const fadeRatio = age / fadeInDuration;
+        marker.material.opacity = Math.min(0.8, fadeRatio * 0.8);
+      } else if (age > maxAge) {
         removeIds.push(id);
       } else if (age > fadeStartAge && marker.material instanceof THREE.Material) {
         // Gradually reduce opacity for older strikes
@@ -292,12 +280,10 @@ export class LightningManager {
    * Clear all lightning effects and point markers
    */
   clear(): void {
-    // Remove all effects
     this.effects.forEach(effect => {
       effect.dispose();
     });
 
-    // Remove all point markers
     this.pointMarkers.forEach(marker => {
       if (marker.geometry) marker.geometry.dispose();
       if (marker.material instanceof THREE.Material) marker.material.dispose();
