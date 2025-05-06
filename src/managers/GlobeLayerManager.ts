@@ -165,11 +165,10 @@ export class GlobeLayerManager {
   * Create and add a layer using the LayerFactory
   * @param id Unique identifier for the layer
   * @param type Type of layer to create (e.g., 'lightning', 'cloud')
-  * @param config Configuration for the layer
   * @returns The created layer or null if type is unknown
   */
-  createLayer<T extends Layer<any>>(id: string, type: string, config?: any): T | null {
-    const layer = LayerFactory.createLayer(type, config);
+  createLayer<T extends Layer<any>>(id: string, type: string): T | null {
+    const layer = LayerFactory.createLayer(type);
     
     if (layer) {
       // Just add the layer - initialization happens in addLayer

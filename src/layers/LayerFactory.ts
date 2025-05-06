@@ -1,25 +1,30 @@
 import { Layer } from './LayerInterface';
-import { LightningLayer, LightningLayerConfig } from './LightningLayer';
-import { CloudLayer, CloudLayerConfig } from './CloudLayer';
+import { LightningLayer } from './LightningLayer';
+import { CloudLayer } from './CloudLayer';
 
 /**
  * Factory for creating different types of data layers
  */
 export class LayerFactory {
-  static createLightningLayer(config?: Partial<LightningLayerConfig>): LightningLayer {
-    return new LightningLayer(config);
+  static createLightningLayer(): LightningLayer {
+    return new LightningLayer();
   }
 
-  static createCloudLayer(config?: Partial<CloudLayerConfig>): CloudLayer {
-    return new CloudLayer(config);
+  static createCloudLayer(): CloudLayer {
+    return new CloudLayer();
   }
 
-  static createLayer(type: string, config: any = {}): Layer<any> | null {
+  /**
+   * Factory method for creating different types of layers
+   * (for future expansion with earthquakes, tornadoes, etc.)
+   */
+  static createLayer(type: string): Layer<any> | null {
     switch (type.toLowerCase()) {
       case 'lightning':
-        return this.createLightningLayer(config);
+        return this.createLightningLayer();
       case 'clouds':
-        return this.createCloudLayer(config);
+      case 'cloud':
+        return this.createCloudLayer();
       default:
         console.warn(`Unknown layer type: ${type}`);
         return null;
