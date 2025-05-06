@@ -4,37 +4,46 @@ import './App.css';
 import { LightningStrike } from './models/LightningStrike';
 import { useWebSocketService } from './services/websocketService';
 import { LightningLayer, CloudLayer } from './layers';
+import { GlobeLayerManager } from './managers';
 
 function App() {
   const globeEl = useRef<any>(null);
-  const lightningLayerRef = useRef<LightningLayer | null>(null);
-  const cloudLayerRef = useRef<CloudLayer | null>(null);
+  const layerManagerRef = useRef<GlobeLayerManager | null>(null);
   const [isGlobeReady, setIsGlobeReady] = useState(false);
   const [strikes, setStrikes] = useState<LightningStrike[]>([]);
   const maxDisplayedStrikes = 256;
 
-  // Initialize lightning layer
+  // Initialize layer manager and layers
   useEffect(() => {
     if (isGlobeReady && globeEl.current) {
-      // First, ensure any previous instance is cleaned up
-      if (lightningLayerRef.current) {
-        lightningLayerRef.current.clear();
+      // Create layer manager if not exists
+      if (!layerManagerRef.current) {
+        const manager = new GlobeLayerManager();
+        manager.initialize(globeEl.current);
+        layerManagerRef.current = manager;
+      } else {
+        // Clean up existing layers before re-initialization
+        layerManagerRef.current.clearAllLayers();
       }
+
+      const manager = layerManagerRef.current;
 
       const cloudConfig = {
         altitude: 0.02,
         opacity: 0.6,
         size: 3.5,
-        imagePath: '/clouds.png',
+        imagePath: '/clouds.png',  // Make sure this file exists in the public directory
         rotationSpeed: 0.002  // Counter-clockwise rotation speed (degrees per frame)
       };
+      
+      manager.createLayer<CloudLayer>('clouds', 'clouds', cloudConfig);
 
-      const layer = new LightningLayer({
+      const lightningConfig = {
         maxActiveAnimations: 10,
         maxDisplayedStrikes: maxDisplayedStrikes,
         showZigZag: true, // Enable lightning
         zigZagConfig: {
-          startAltitude: cloudConfig.altitude, // Match cloud layer height
+          startAltitude: cloudConfig.altitude,
           lineWidth: 3.5,
           lineSegments: 8,
           jitterAmount: 0.02,
@@ -49,52 +58,19 @@ function App() {
           color: 0xffffff,
           opacity: 0.8
         }
-      });
-
-      layer.initialize(globeEl.current);
-      lightningLayerRef.current = layer;
-
-      // Initialize cloud layer
-      if (cloudLayerRef.current) {
-        cloudLayerRef.current.clear();
-      }
-
-      const clouds = new CloudLayer(cloudConfig);
-
-      clouds.initialize(globeEl.current);
-      cloudLayerRef.current = clouds;
-
-      // Update lightning config to match cloud altitude
-      if (lightningLayerRef.current) {
-        lightningLayerRef.current.updateZigZagStartAltitude(cloudConfig.altitude);
-      }
-
-      // Set up animation loop
-      const animate = () => {
-        const currentTime = Date.now();
-
-        // Update lightning layer
-        if (lightningLayerRef.current) {
-          lightningLayerRef.current.update(currentTime);
-        }
-
-        // Update cloud layer
-        if (cloudLayerRef.current) {
-          cloudLayerRef.current.update();
-        }
-
-        requestAnimationFrame(animate);
       };
 
-      animate();
+      // Create lightning layer and configure it to start from cloud layer
+      const lightning = manager.createLayer<LightningLayer>('lightning', 'lightning', lightningConfig);
+      if (lightning) {
+        lightning.updateZigZagStartAltitude(cloudConfig.altitude);
+      }
 
       // Clean up function for when component unmounts
       return () => {
-        if (lightningLayerRef.current) {
-          lightningLayerRef.current.clear();
-        }
-        if (cloudLayerRef.current) {
-          cloudLayerRef.current.clear();
+        if (layerManagerRef.current) {
+          layerManagerRef.current.dispose();
+          layerManagerRef.current = null;
         }
       };
     }
@@ -102,8 +78,11 @@ function App() {
 
   const handleNewStrike = useCallback((newStrike: LightningStrike) => {
     setStrikes(prev => {
-      if (lightningLayerRef.current) {
-        lightningLayerRef.current.addData(newStrike);
+      if (layerManagerRef.current) {
+        const lightningLayer = layerManagerRef.current.getLayer<LightningLayer>('lightning');
+        if (lightningLayer) {
+          lightningLayer.addData(newStrike);
+        }
       }
 
       return [newStrike, ...prev].slice(0, maxDisplayedStrikes);
@@ -152,8 +131,8 @@ function App() {
         {connected ? (
           <div className="status-bar">
             Connected | Strikes: {strikes.length} | 
-            Lightning Effects: {lightningLayerRef.current?.getActiveZigZagCount() || 0} | 
-            Markers: {lightningLayerRef.current?.getMarkerCount() || 0} | 
+            Lightning Effects: {layerManagerRef.current?.getLayer<LightningLayer>('lightning')?.getActiveZigZagCount() || 0} | 
+            Markers: {layerManagerRef.current?.getLayer<LightningLayer>('lightning')?.getMarkerCount() || 0} | 
             Last update: {lastUpdate}
           </div>
         ) : (
