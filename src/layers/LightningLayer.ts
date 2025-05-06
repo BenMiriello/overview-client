@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import { BaseLayer } from './LayerInterface';
 import { LightningStrike } from '../models/LightningStrike';
 import { ZigZagEffect, ZigZagEffectConfig } from '../effects/ZigZagEffect';
@@ -158,7 +157,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    * Clear all zigzag lightning effects
    */
   private clearZigZagEffects(): void {
-    this.zigZagEffects.forEach((effect, id) => {
+    this.zigZagEffects.forEach((effect) => {
       effect.terminateImmediately();
       effect.dispose();
     });

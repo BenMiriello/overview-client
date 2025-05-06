@@ -11,7 +11,7 @@ export class LayerFactory {
   static createLightningLayer(config?: Partial<LightningLayerConfig>): LightningLayer {
     return new LightningLayer(config);
   }
-  
+
   /**
    * Factory method for creating other types of layers as needed
    * (for future expansion with earthquakes, tornadoes, etc.)
