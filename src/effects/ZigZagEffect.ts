@@ -22,7 +22,7 @@ export interface ZigZagEffectConfig extends BaseEffectConfig {
  * Default zigzag configuration
  */
 export const DEFAULT_ZIGZAG_CONFIG: ZigZagEffectConfig = {
-  startAltitude: 0.04,       // Higher altitude for more dramatic effect
+  startAltitude: 0.03,      // Match the cloud layer height
   endAltitude: 0.0005,       // The bottom of the effect
   color: 0xffffff,           // Color: white
   lineWidth: 3.5,            // Thickness of line
@@ -66,6 +66,8 @@ export class ZigZagEffect implements Effect {
     this.random = this.createRandomGenerator(seed);
 
     this.group = new THREE.Group();
+    // Set rendering order (higher renders on top)
+    this.group.renderOrder = 20;
 
     this.geometry = this.createZigZagGeometry();
 
@@ -74,6 +76,7 @@ export class ZigZagEffect implements Effect {
       transparent: true,
       opacity: 0, // Start invisible and fade in
       linewidth: this.config.lineWidth,
+      depthWrite: false, // Don't write to depth buffer
     });
 
     this.mainLine = new THREE.Line(this.geometry, this.material);

@@ -3,14 +3,15 @@ import Globe from 'react-globe.gl';
 import './App.css';
 import { LightningStrike } from './models/LightningStrike';
 import { useWebSocketService } from './services/websocketService';
-import { LightningLayer } from './layers/LightningLayer';
+import { LightningLayer, CloudLayer } from './layers';
 
 function App() {
   const globeEl = useRef<any>(null);
   const lightningLayerRef = useRef<LightningLayer | null>(null);
+  const cloudLayerRef = useRef<CloudLayer | null>(null);
   const [isGlobeReady, setIsGlobeReady] = useState(false);
   const [strikes, setStrikes] = useState<LightningStrike[]>([]);
-  const maxDisplayedStrikes = 20;
+  const maxDisplayedStrikes = 256;
 
   // Initialize lightning layer
   useEffect(() => {
@@ -23,15 +24,15 @@ function App() {
       const layer = new LightningLayer({
         maxActiveAnimations: 10,
         maxDisplayedStrikes: maxDisplayedStrikes,
-        showZigZag: true, // Set zigzags to be enabled by default
+        showZigZag: true, // Enable lightning
         zigZagConfig: {
-          startAltitude: 0.1,
-          lineWidth: 4.5,
-          lineSegments: 10,
-          jitterAmount: 0.022,
-          branchChance: 0.5,
-          branchFactor: 0.8,
-          maxBranches: 5,
+          startAltitude: 0.03, // Match cloud layer height
+          lineWidth: 3.5,
+          lineSegments: 8,
+          jitterAmount: 0.02,
+          branchChance: 0.4,
+          branchFactor: 0.7,
+          maxBranches: 4,
           duration: 1000,
           fadeOutDuration: 300
         },
@@ -44,21 +45,48 @@ function App() {
 
       layer.initialize(globeEl.current);
       lightningLayerRef.current = layer;
+      
+      // Initialize cloud layer
+      if (cloudLayerRef.current) {
+        cloudLayerRef.current.clear();
+      }
+
+      const clouds = new CloudLayer({
+        altitude: 0.05,
+        opacity: 0.6,
+        size: 3.5,
+        imagePath: '/clouds.png'
+      });
+
+      clouds.initialize(globeEl.current);
+      cloudLayerRef.current = clouds;
 
       // Set up animation loop
       const animate = () => {
+        const currentTime = Date.now();
+
+        // Update lightning layer
         if (lightningLayerRef.current) {
-          lightningLayerRef.current.update(Date.now());
+          lightningLayerRef.current.update(currentTime);
         }
+
+        // Update cloud layer
+        if (cloudLayerRef.current) {
+          cloudLayerRef.current.update(currentTime);
+        }
+        
         requestAnimationFrame(animate);
       };
 
       animate();
-      
+
       // Clean up function for when component unmounts
       return () => {
         if (lightningLayerRef.current) {
           lightningLayerRef.current.clear();
+        }
+        if (cloudLayerRef.current) {
+          cloudLayerRef.current.clear();
         }
       };
     }

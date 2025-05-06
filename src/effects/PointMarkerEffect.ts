@@ -75,6 +75,9 @@ export class PointMarkerEffect implements Effect {
     // Create mesh
     this.marker = new THREE.Mesh(this.geometry, this.material);
     
+    // Set rendering order (highest renders on top)
+    this.marker.renderOrder = 30;
+    
     // Store metadata
     this.marker.userData = {
       createdAt: this.createTime,

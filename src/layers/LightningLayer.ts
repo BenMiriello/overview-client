@@ -23,7 +23,7 @@ export const DEFAULT_LIGHTNING_CONFIG: LightningLayerConfig = {
   maxDisplayedStrikes: 1000,
   showZigZag: true,
   zigZagConfig: {
-    startAltitude: 0.1,
+    startAltitude: 0.03,
     lineWidth: 4.5,
     lineSegments: 10,
     jitterAmount: 0.022,
