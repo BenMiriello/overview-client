@@ -28,7 +28,7 @@ export const useWebSocketService = ({ url, onNewStrike }: WebSocketServiceProps)
   useEffect(() => {
     console.log('Connecting to WebSocket server at:', url);
     const ws = new WebSocket(url);
-    
+
     ws.onopen = () => {
       console.log('Connected to server');
       setConnected(true);
@@ -46,7 +46,7 @@ export const useWebSocketService = ({ url, onNewStrike }: WebSocketServiceProps)
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.id && (data.lat !== undefined) && (data.lng !== undefined)) {          
+        if (data.id && (data.lat !== undefined) && (data.lng !== undefined)) {
           const newStrike = createStrike(data);
           onNewStrike(newStrike);
         }

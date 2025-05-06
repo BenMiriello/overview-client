@@ -9,16 +9,18 @@ export interface CloudLayerConfig {
   opacity: number;       // Cloud opacity
   size: number;          // Size multiplier for clouds
   imagePath: string;     // Path to cloud texture
+  rotationSpeed: number; // Rotation speed (degrees per second)
 }
 
 /**
  * Default cloud layer configuration
  */
 export const DEFAULT_CLOUD_CONFIG: CloudLayerConfig = {
-  altitude: 0.03,       // 1/3 of the original height (0.16)
-  opacity: 0.6,          // Semi-transparent clouds
-  size: 3.5,             // Size multiplier
-  imagePath: '/clouds.png'  // Path to cloud image
+  altitude: 0.02,
+  opacity: 0.6,             // Semi-transparent clouds
+  size: 3.5,                // Size multiplier
+  imagePath: '/clouds.png',  // Path to cloud image
+  rotationSpeed: 0.005        // Slow rotation (degrees per frame)
 };
 
 /**
@@ -27,7 +29,7 @@ export const DEFAULT_CLOUD_CONFIG: CloudLayerConfig = {
 export class CloudLayer extends BaseLayer<void> {
   private config: CloudLayerConfig;
   private cloudMesh: THREE.Mesh | null = null;
-  
+
   /**
    * Create a new cloud layer
    */
@@ -35,15 +37,15 @@ export class CloudLayer extends BaseLayer<void> {
     super();
     this.config = { ...DEFAULT_CLOUD_CONFIG, ...config };
   }
-  
+
   /**
    * Initialize the cloud layer on the globe
    */
   initialize(globeEl: any): void {
     super.initialize(globeEl);
-    
+
     if (!this.scene || !globeEl) return;
-    
+
     // Create cloud material using the provided texture
     const material = new THREE.MeshPhongMaterial({
       map: new THREE.TextureLoader().load(this.config.imagePath),
@@ -51,32 +53,38 @@ export class CloudLayer extends BaseLayer<void> {
       opacity: this.config.opacity,
       depthWrite: false // Don't write to depth buffer to allow objects behind to render
     });
-    
+
     // Create the cloud sphere at the specified altitude
     const EARTH_RADIUS = 100; // Base globe radius in react-globe.gl
     const cloudRadius = EARTH_RADIUS * (1 + this.config.altitude);
     const cloudGeometry = new THREE.SphereGeometry(cloudRadius, 48, 48);
-    
+
     // Create the cloud mesh
     this.cloudMesh = new THREE.Mesh(cloudGeometry, material);
-    
+
     // Set rendering order (lower numbers render first)
     this.cloudMesh.renderOrder = 10;
-    
+
     // Add to scene
     this.scene.add(this.cloudMesh);
   }
-  
+
   /**
    * Update method (required by Layer interface)
-   * Clouds are static, so we just check visibility
+   * Rotates the clouds and checks visibility
    */
   update(): void {
     if (this.cloudMesh) {
       this.cloudMesh.visible = this.visible;
+
+      // Rotate clouds counter-clockwise (viewed from above north pole)
+      // Negative value for counter-clockwise rotation
+      if (this.visible && this.config.rotationSpeed !== 0) {
+        this.cloudMesh.rotation.y += this.config.rotationSpeed * Math.PI / 180;
+      }
     }
   }
-  
+
   /**
    * Add data method (required by Layer interface)
    * Not used for clouds but required by interface
@@ -84,22 +92,22 @@ export class CloudLayer extends BaseLayer<void> {
   addData(_data: void): void {
     // No data to add for the cloud layer
   }
-  
+
   /**
    * Clear the layer
    */
   clear(): void {
     if (this.cloudMesh && this.scene) {
       this.scene.remove(this.cloudMesh);
-      
+
       if (this.cloudMesh.geometry) {
         this.cloudMesh.geometry.dispose();
       }
-      
+
       if (this.cloudMesh.material instanceof THREE.Material) {
         this.cloudMesh.material.dispose();
       }
-      
+
       this.cloudMesh = null;
     }
   }

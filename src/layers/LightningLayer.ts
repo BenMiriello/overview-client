@@ -66,6 +66,20 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   }
 
   /**
+   * Update the starting altitude for zigzag effects to match cloud layer
+   */
+  updateZigZagStartAltitude(altitude: number): void {
+    if (this.config.zigZagConfig) {
+      this.config.zigZagConfig.startAltitude = altitude;
+
+      // Update any existing effects
+      this.zigZagEffects.forEach((effect) => {
+        effect.updateStartAltitude(altitude);
+      });
+    }
+  }
+
+  /**
    * Add a lightning strike to the layer
    */
   addData(strike: LightningStrike): void {
@@ -107,12 +121,12 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     effect.positionOnGlobe(strike.lat, strike.lng, 0);
 
     this.zigZagEffects.set(strike.id, effect);
-    
+
     this.activeEffects.push({
       id: strike.id,
       timestamp: Date.now()
     });
-    
+
     // Limit active animations
     this.ensureMaxActiveEffects();
   }
@@ -122,7 +136,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    */
   private createMarkerEffect(strike: LightningStrike): void {
     if (!this.scene || !this.globeEl) return;
-    
+
     // If we already have this strike, remove the old one first
     if (this.markerEffects.has(strike.id)) {
       const oldEffect = this.markerEffects.get(strike.id);
@@ -155,13 +169,13 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   private ensureMaxActiveEffects(): void {
     // Sort by timestamp (newest first)
     this.activeEffects.sort((a, b) => b.timestamp - a.timestamp);
-    
+
     // Remove excess effects
     if (this.activeEffects.length > this.config.maxActiveAnimations) {
       const removeIds = this.activeEffects
         .slice(this.config.maxActiveAnimations)
         .map(e => e.id);
-        
+
       removeIds.forEach(id => {
         const effect = this.zigZagEffects.get(id);
         if (effect) {
@@ -169,7 +183,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
           this.zigZagEffects.delete(id);
         }
       });
-      
+
       // Update active effects list
       this.activeEffects = this.activeEffects.slice(0, this.config.maxActiveAnimations);
     }
@@ -182,7 +196,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     this.zigZagEffects.forEach((effect) => {
       effect.terminateImmediately();
     });
-    
+
     this.zigZagEffects.clear();
     this.activeEffects = [];
   }
@@ -192,36 +206,36 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    */
   update(currentTime: number): void {
     if (!this.visible) return;
-    
+
     // Update zigzag effects and collect completed IDs
     const completedZigZagIds: string[] = [];
-    
+
     this.zigZagEffects.forEach((effect, id) => {
       const isActive = effect.update(currentTime);
-      
+
       if (!isActive) {
         completedZigZagIds.push(id);
         // Remove from active effects tracking
         this.activeEffects = this.activeEffects.filter(e => e.id !== id);
       }
     });
-    
+
     // Remove completed zigzag effects
     completedZigZagIds.forEach(id => {
       this.zigZagEffects.delete(id);
     });
-    
+
     // Update point markers and collect completed IDs
     const completedMarkerIds: string[] = [];
-    
+
     this.markerEffects.forEach((effect, id) => {
       const isActive = effect.update(currentTime);
-      
+
       if (!isActive) {
         completedMarkerIds.push(id);
       }
     });
-    
+
     // Remove completed markers
     completedMarkerIds.forEach(id => {
       this.markerEffects.delete(id);
@@ -233,7 +247,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    */
   private enforceMaxDisplayedStrikes(): void {
     if (this.markerEffects.size <= this.config.maxDisplayedStrikes) return;
-    
+
     // Get all markers sorted by creation time (oldest first)
     const markers = Array.from(this.markerEffects.entries())
       .sort((a, b) => {
@@ -241,16 +255,16 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
         const bTime = b[1].getObject().userData.createdAt || 0;
         return aTime - bTime;
       });
-    
+
     // Remove oldest markers that exceed the limit
     const removeCount = markers.length - this.config.maxDisplayedStrikes;
-    
+
     if (removeCount <= 0) return;
-    
+
     markers.slice(0, removeCount).forEach(([id, effect]) => {
       effect.terminateImmediately();
       this.markerEffects.delete(id);
-      
+
       // Also remove any associated zigzag effect
       const zigZag = this.zigZagEffects.get(id);
       if (zigZag) {
@@ -284,16 +298,16 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
       effect.terminateImmediately();
     });
     this.zigZagEffects.clear();
-    
+
     // Clear markers with proper cleanup
     this.markerEffects.forEach(effect => {
       effect.terminateImmediately();
     });
     this.markerEffects.clear();
-    
+
     this.activeEffects = [];
   }
-  
+
   /**
    * Show the layer
    */
@@ -306,7 +320,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    */
   hide(): void {
     super.hide();
-    
+
     // Immediately terminate all visible zigzag effects when hiding the layer
     if (!this.config.showZigZag) {
       this.clearZigZagEffects();

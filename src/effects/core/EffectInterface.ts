@@ -15,7 +15,7 @@ export interface Effect {
 /**
  * Basic configuration properties common to many effects
  */
-export interface BaseEffectConfig {  
+export interface BaseEffectConfig {
   fadeOutDuration: number; // Fade out duration in ms
 }
 

@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { Effect, BaseEffectConfig } from './core/EffectInterface';
 
-// Import cloud layer configuration to use the same altitude value
-import { DEFAULT_CLOUD_CONFIG } from '../layers/CloudLayer';
+// We no longer use CloudLayer's default config directly to avoid coupling
+// Instead, we set our own default that will be updated programmatically
 
 /**
  * Configuration for zigzag line effects
@@ -25,8 +25,8 @@ export interface ZigZagEffectConfig extends BaseEffectConfig {
  * Default zigzag configuration
  */
 export const DEFAULT_ZIGZAG_CONFIG: ZigZagEffectConfig = {
-  startAltitude: DEFAULT_CLOUD_CONFIG.altitude, // Exactly match the cloud layer height
-  endAltitude: 0.0005,                       // Very close to surface
+  startAltitude: 0.05, // Default that will be updated to match cloud layer height
+  endAltitude: 0.0005, // Very close to surface
   color: 0xffffff,                           // Color: white
   lineWidth: 3.5,                            // Thickness of line
   lineSegments: 12,                          // More segments for smoother zigzag
@@ -111,10 +111,10 @@ export class ZigZagEffect implements Effect {
    */
   private createZigZagGeometry(): THREE.BufferGeometry {
     if (!this.globeEl) return new THREE.BufferGeometry();
-    
+
     const segments = this.config.lineSegments;
     const points: THREE.Vector3[] = [];
-    
+
     // Get globe radius from the globe element
     let globeRadius = 100; // Default fallback
     if (this.globeEl._mainSphere && this.globeEl._mainSphere.geometry && this.globeEl._mainSphere.geometry.parameters) {
@@ -124,12 +124,12 @@ export class ZigZagEffect implements Effect {
     // Calculate surface and cloud points in actual world coordinates
     const surfacePoint = this.globeEl.getCoords(this.lat, this.lng, 0);
     const cloudPoint = this.globeEl.getCoords(this.lat, this.lng, this.config.startAltitude);
-    
+
     // Direction from center to surface point (normalized)
     const directionVector = new THREE.Vector3()
       .subVectors(surfacePoint, new THREE.Vector3(0, 0, 0))
       .normalize();
-    
+
     // Create a basis for sideways movement (perpendicular to direction)
     const sideways = new THREE.Vector3(1, 0, 0);
     if (Math.abs(directionVector.y) < 0.9) {
@@ -141,36 +141,36 @@ export class ZigZagEffect implements Effect {
 
     // Jitter scale - small enough to keep zigzag tight
     const jitterScale = globeRadius * 0.004;
-    
+
     let prevJitterX = 0, prevJitterZ = 0;
-    
+
     // First point is exact cloud position
     points.push(new THREE.Vector3(cloudPoint.x, cloudPoint.y, cloudPoint.z));
-    
+
     // Create zigzag points between cloud and surface
     for (let i = 1; i < segments; i++) {
       const t = i / segments;
-      
+
       // Position along the line from cloud to surface
       const pos = new THREE.Vector3()
         .lerpVectors(cloudPoint, surfacePoint, t);
-      
+
       // Apply jitter perpendicular to the main direction
       const jitterX = (prevJitterX + (this.random() * 2 - 1) * this.config.jitterAmount);
       const jitterZ = (prevJitterZ + (this.random() * 2 - 1) * this.config.jitterAmount);
-      
+
       // Pull toward center to prevent wandering
       const pullToCenter = 0.3;
       prevJitterX = jitterX * (1 - pullToCenter);
       prevJitterZ = jitterZ * (1 - pullToCenter);
-      
+
       // Apply jitter in local coordinate system
       pos.add(sideways.clone().multiplyScalar(jitterX * jitterScale));
       pos.add(updown.clone().multiplyScalar(jitterZ * jitterScale));
-      
+
       points.push(pos);
     }
-    
+
     // Last point is exact surface position
     points.push(new THREE.Vector3(surfacePoint.x, surfacePoint.y, surfacePoint.z));
 
@@ -182,7 +182,7 @@ export class ZigZagEffect implements Effect {
    */
   private createBranches() {
     if (!this.globeEl) return;
-    
+
     const segments = this.config.lineSegments;
     const maxBranches = this.config.maxBranches;
     let branchCount = 0;
@@ -194,16 +194,16 @@ export class ZigZagEffect implements Effect {
     // Only create branches in the middle portion of the lightning
     const skipTop = Math.floor(segments * 0.15); // Skip top 15%
     const skipBottom = Math.floor(segments * 0.15); // Skip bottom 15%
-    
+
     // Get globe radius for scaling branches appropriately
     let globeRadius = 100; // Default fallback
     if (this.globeEl._mainSphere && this.globeEl._mainSphere.geometry && this.globeEl._mainSphere.geometry.parameters) {
       globeRadius = this.globeEl._mainSphere.geometry.parameters.radius || 100;
     }
-    
+
     // Scale branches to be appropriate for globe size
     const branchScale = globeRadius * 0.005;
-    
+
     for (let i = skipTop; i < segments - skipBottom && branchCount < maxBranches; i++) {
       if (this.random() < this.config.branchChance) {
         // Get the vertex position from the main lightning line
@@ -212,11 +212,11 @@ export class ZigZagEffect implements Effect {
           positions.getY(i),
           positions.getZ(i)
         );
-        
+
         // Calculate direction from globe center to this point
         const center = new THREE.Vector3(0, 0, 0);
         const dir = new THREE.Vector3().subVectors(startPoint, center).normalize();
-        
+
         // Create a local coordinate system at this point
         const sideways = new THREE.Vector3(1, 0, 0);
         if (Math.abs(dir.y) < 0.9) {
@@ -225,47 +225,47 @@ export class ZigZagEffect implements Effect {
           sideways.crossVectors(dir, new THREE.Vector3(0, 0, 1)).normalize();
         }
         const updown = new THREE.Vector3().crossVectors(dir, sideways).normalize();
-        
+
         // Create random branch direction (mostly sideways, slightly downward)
         const randomSideways = (this.random() * 2 - 1) * branchScale;
-        
+
         // More downward as we get closer to ground
         const downwardBias = i / segments; 
         const randomDown = this.random() * branchScale * 0.7 * downwardBias;
-        
+
         // Combined branch direction
         const branchDir = new THREE.Vector3()
           .addScaledVector(sideways, randomSideways)
           .addScaledVector(updown, randomDown);
-        
+
         // Ensure branch points away from center a bit to look natural
         const outwardAmount = branchScale * 0.3;
         branchDir.addScaledVector(dir, outwardAmount);
-        
+
         // End point of the branch
         const endPoint = new THREE.Vector3().copy(startPoint).add(branchDir);
-        
+
         // Create a multi-point branch with zigzag effect
         const branchPoints = [startPoint.clone()];
-        
+
         // Add intermediate zigzag points on the branch (fewer points for shorter branches)
         const subSegments = 1 + Math.floor(this.random() * 2);
         for (let j = 1; j <= subSegments; j++) {
           const t = j / (subSegments + 1);
-          
+
           // Base interpolated position
           const midPoint = new THREE.Vector3().lerpVectors(startPoint, endPoint, t);
-          
+
           // Small perpendicular jitter for zigzag effect
           const jitterSize = branchScale * 0.1;
           const jitterDir = new THREE.Vector3()
             .addScaledVector(sideways, (this.random() * 2 - 1) * jitterSize)
             .addScaledVector(updown, (this.random() * 2 - 1) * jitterSize);
-          
+
           midPoint.add(jitterDir);
           branchPoints.push(midPoint);
         }
-        
+
         // Add final point
         branchPoints.push(endPoint);
 
@@ -288,7 +288,7 @@ export class ZigZagEffect implements Effect {
   update(currentTime: number): boolean {
     // If already terminated, don't continue
     if (this.isTerminated) return false;
-    
+
     const age = currentTime - this.createTime;
 
     // Fixed animation durations
@@ -340,16 +340,43 @@ export class ZigZagEffect implements Effect {
   }
 
   /**
+   * Update the starting altitude for this effect
+   */
+  updateStartAltitude(altitude: number): void {
+    if (this.config.startAltitude !== altitude) {
+      this.config.startAltitude = altitude;
+
+      // Rebuild the geometry with the new altitude
+      if (this.group && this.group.parent) {
+        // Remove old line and create new one
+        this.group.remove(this.mainLine);
+        this.geometry = this.createZigZagGeometry();
+        this.mainLine = new THREE.Line(this.geometry, this.material);
+        this.group.add(this.mainLine);
+
+        // Recreate branches with new coordinates
+        this.branches.forEach(branch => {
+          this.group.remove(branch);
+          if (branch.geometry) branch.geometry.dispose();
+          if (branch.material instanceof THREE.Material) branch.material.dispose();
+        });
+        this.branches = [];
+        this.createBranches();
+      }
+    }
+  }
+
+  /**
    * Position the effect on the globe
    * With our new approach using world coordinates, we don't need to position or rotate the group
    */
   positionOnGlobe(lat: number, lng: number, altitude: number = 0): void {
     if (!this.globeEl) return;
-    
+
     // Store lat/lng values for use in createZigZagGeometry
     this.lat = lat;
     this.lng = lng;
-    
+
     // If we already initialized, we need to rebuild the geometry with the new coords
     if (this.group && this.group.parent) {
       // Remove old line and create new one
@@ -357,7 +384,7 @@ export class ZigZagEffect implements Effect {
       this.geometry = this.createZigZagGeometry();
       this.mainLine = new THREE.Line(this.geometry, this.material);
       this.group.add(this.mainLine);
-      
+
       // Recreate branches with new coordinates
       this.branches.forEach(branch => {
         this.group.remove(branch);
@@ -367,7 +394,7 @@ export class ZigZagEffect implements Effect {
       this.branches = [];
       this.createBranches();
     }
-    
+
     // Since we're using world coordinates directly, we don't need
     // to position, rotate or scale the group
     this.group.position.set(0, 0, 0);
@@ -425,7 +452,7 @@ export class ZigZagEffect implements Effect {
     if (this.material) {
       this.material.dispose();
     }
-    
+
     this.branches.forEach(branch => {
       if (branch.material instanceof THREE.Material) {
         branch.material.dispose();

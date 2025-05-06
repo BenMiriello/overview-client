@@ -20,13 +20,21 @@ function App() {
       if (lightningLayerRef.current) {
         lightningLayerRef.current.clear();
       }
-      
+
+      const cloudConfig = {
+        altitude: 0.02,
+        opacity: 0.6,
+        size: 3.5,
+        imagePath: '/clouds.png',
+        rotationSpeed: 0.002  // Counter-clockwise rotation speed (degrees per frame)
+      };
+
       const layer = new LightningLayer({
         maxActiveAnimations: 10,
         maxDisplayedStrikes: maxDisplayedStrikes,
         showZigZag: true, // Enable lightning
         zigZagConfig: {
-          startAltitude: 0.03, // Match cloud layer height
+          startAltitude: cloudConfig.altitude, // Match cloud layer height
           lineWidth: 3.5,
           lineSegments: 8,
           jitterAmount: 0.02,
@@ -45,21 +53,21 @@ function App() {
 
       layer.initialize(globeEl.current);
       lightningLayerRef.current = layer;
-      
+
       // Initialize cloud layer
       if (cloudLayerRef.current) {
         cloudLayerRef.current.clear();
       }
 
-      const clouds = new CloudLayer({
-        altitude: 0.05,
-        opacity: 0.6,
-        size: 3.5,
-        imagePath: '/clouds.png'
-      });
+      const clouds = new CloudLayer(cloudConfig);
 
       clouds.initialize(globeEl.current);
       cloudLayerRef.current = clouds;
+
+      // Update lightning config to match cloud altitude
+      if (lightningLayerRef.current) {
+        lightningLayerRef.current.updateZigZagStartAltitude(cloudConfig.altitude);
+      }
 
       // Set up animation loop
       const animate = () => {
@@ -74,7 +82,7 @@ function App() {
         if (cloudLayerRef.current) {
           cloudLayerRef.current.update();
         }
-        
+
         requestAnimationFrame(animate);
       };
 
@@ -115,7 +123,7 @@ function App() {
         if (controls) {
           // controls.autoRotate = true;
           controls.autoRotateSpeed = 0.067; // ISS orbital speed
-          
+
           controls.minDistance = 120; // Zoom in limit
           controls.maxDistance = 10000; // Zoom out limit
         }

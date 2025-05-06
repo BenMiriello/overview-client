@@ -74,10 +74,10 @@ export class PointMarkerEffect implements Effect {
 
     // Create mesh
     this.marker = new THREE.Mesh(this.geometry, this.material);
-    
+
     // Set rendering order (highest renders on top)
     this.marker.renderOrder = 30;
-    
+
     // Store metadata
     this.marker.userData = {
       createdAt: this.createTime,
@@ -102,7 +102,7 @@ export class PointMarkerEffect implements Effect {
   update(currentTime: number): boolean {
     // If already terminated, don't continue
     if (this.isTerminated) return false;
-    
+
     const age = currentTime - this.createTime;
 
     // If past max age, effect is done
@@ -157,7 +157,7 @@ export class PointMarkerEffect implements Effect {
   terminateImmediately() {
     if (this.isTerminated) return;
     this.isTerminated = true;
-    
+
     this.material.opacity = 0;
 
     // Remove from scene
