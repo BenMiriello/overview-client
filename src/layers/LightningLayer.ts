@@ -2,11 +2,7 @@ import { BaseLayer } from './LayerInterface';
 import { LightningStrike } from '../models/LightningStrike';
 import { ZigZagEffect, ZigZagEffectConfig, DEFAULT_ZIGZAG_CONFIG } from '../effects/ZigZagEffect';
 import { PointMarkerEffect, PointMarkerConfig } from '../effects/PointMarkerEffect';
-import { DEFAULT_CLOUD_CONFIG } from './CloudLayer';
 
-/**
- * Configuration for the lightning layer
- */
 export interface LightningLayerConfig {
   maxActiveAnimations: number;
   maxDisplayedStrikes: number;
@@ -15,9 +11,6 @@ export interface LightningLayerConfig {
   markerConfig: Partial<PointMarkerConfig>;
 }
 
-/**
- * Default lightning layer configuration
- */
 export const DEFAULT_LIGHTNING_CONFIG: LightningLayerConfig = {
   maxActiveAnimations: 20,
   maxDisplayedStrikes: 1000,
@@ -83,21 +76,14 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    * Add a lightning strike to the layer
    */
   addData(strike: LightningStrike): void {
-    // Create zigzag lightning effect if enabled
     if (this.config.showZigZag) {
       this.createZigZagEffect(strike);
     }
 
-    // Always create a point marker
     this.createMarkerEffect(strike);
-
-    // Enforce max displayed strikes immediately
     this.enforceMaxDisplayedStrikes();
   }
 
-  /**
-   * Create zigzag lightning effect
-   */
   private createZigZagEffect(strike: LightningStrike): void {
     if (!this.scene || !this.globeEl) return;
 
@@ -127,13 +113,9 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
       timestamp: Date.now()
     });
 
-    // Limit active animations
     this.ensureMaxActiveEffects();
   }
 
-  /**
-   * Create marker effect
-   */
   private createMarkerEffect(strike: LightningStrike): void {
     if (!this.scene || !this.globeEl) return;
 
@@ -189,9 +171,6 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     }
   }
 
-  /**
-   * Clear all zigzag lightning effects
-   */
   private clearZigZagEffects(): void {
     this.zigZagEffects.forEach((effect) => {
       effect.terminateImmediately();
@@ -201,9 +180,6 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     this.activeEffects = [];
   }
 
-  /**
-   * Update the layer
-   */
   update(currentTime: number): void {
     if (!this.visible) return;
 
@@ -220,7 +196,6 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
       }
     });
 
-    // Remove completed zigzag effects
     completedZigZagIds.forEach(id => {
       this.zigZagEffects.delete(id);
     });
@@ -236,15 +211,11 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
       }
     });
 
-    // Remove completed markers
     completedMarkerIds.forEach(id => {
       this.markerEffects.delete(id);
     });
   }
 
-  /**
-   * Enforce the maximum number of displayed strikes
-   */
   private enforceMaxDisplayedStrikes(): void {
     if (this.markerEffects.size <= this.config.maxDisplayedStrikes) return;
 
@@ -275,23 +246,14 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     });
   }
 
-  /**
-   * Get the number of active zigzag effects
-   */
   getActiveZigZagCount(): number {
     return this.zigZagEffects.size;
   }
 
-  /**
-   * Get the number of displayed markers
-   */
   getMarkerCount(): number {
     return this.markerEffects.size;
   }
 
-  /**
-   * Clear the layer
-   */
   clear(): void {
     // Clear zigzag effects with proper cleanup
     this.zigZagEffects.forEach(effect => {
@@ -308,16 +270,10 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     this.activeEffects = [];
   }
 
-  /**
-   * Show the layer
-   */
   show(): void {
     super.show();
   }
 
-  /**
-   * Hide the layer
-   */
   hide(): void {
     super.hide();
 

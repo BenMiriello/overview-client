@@ -1,9 +1,6 @@
 import * as THREE from 'three';
 import { BaseLayer } from './LayerInterface';
 
-/**
- * Configuration for the cloud layer
- */
 export interface CloudLayerConfig {
   altitude: number;      // Height of the cloud layer
   opacity: number;       // Cloud opacity
@@ -12,9 +9,6 @@ export interface CloudLayerConfig {
   rotationSpeed: number; // Rotation speed (degrees per second)
 }
 
-/**
- * Default cloud layer configuration
- */
 export const DEFAULT_CLOUD_CONFIG: CloudLayerConfig = {
   altitude: 0.02,
   opacity: 0.6,             // Semi-transparent clouds
@@ -30,17 +24,11 @@ export class CloudLayer extends BaseLayer<void> {
   private config: CloudLayerConfig;
   private cloudMesh: THREE.Mesh | null = null;
 
-  /**
-   * Create a new cloud layer
-   */
   constructor(config: Partial<CloudLayerConfig> = {}) {
     super();
     this.config = { ...DEFAULT_CLOUD_CONFIG, ...config };
   }
 
-  /**
-   * Initialize the cloud layer on the globe
-   */
   initialize(globeEl: any): void {
     super.initialize(globeEl);
 
@@ -48,8 +36,6 @@ export class CloudLayer extends BaseLayer<void> {
       console.warn('CloudLayer: Scene or Globe not available for initialization');
       return;
     }
-
-    console.log('CloudLayer: Initializing with config:', this.config);
 
     try {
       // Create cloud material using the provided texture
@@ -62,21 +48,17 @@ export class CloudLayer extends BaseLayer<void> {
         alphaTest: 0.1         // Discard pixels with low alpha values
       });
 
-      // Create the cloud sphere at the specified altitude
       const EARTH_RADIUS = 100; // Base globe radius in react-globe.gl
       const cloudRadius = EARTH_RADIUS * (1 + this.config.altitude);
       const cloudGeometry = new THREE.SphereGeometry(cloudRadius, 48, 48);
 
-      // Create the cloud mesh
       this.cloudMesh = new THREE.Mesh(cloudGeometry, material);
 
       // Set rendering order (lower numbers render first)
       // Make sure this is a value that renders after the globe but before lightning
       this.cloudMesh.renderOrder = 1;
 
-      // Add to scene
       this.scene.add(this.cloudMesh);
-      console.log('CloudLayer: Successfully added cloud mesh to scene');
     } catch (err) {
       console.error('CloudLayer: Error during initialization:', err);
     }
@@ -86,18 +68,11 @@ export class CloudLayer extends BaseLayer<void> {
    * Update method (required by Layer interface)
    * Rotates the clouds and checks visibility
    */
-  update(currentTime: number): void {
+  update(): void {
     if (this.cloudMesh) {
-      // Update visibility state
       this.cloudMesh.visible = this.visible;
 
-      // Log the visibility state occasionally for debugging
-      if (currentTime % 1000 < 20) { // Log every second or so
-        console.log(`CloudLayer update: visible=${this.visible}, mesh.visible=${this.cloudMesh.visible}`);
-      }
-
-      // Rotate clouds counter-clockwise (viewed from above north pole)
-      // Negative value for counter-clockwise rotation
+      // Rotate clouds counter-clockwise (if viewed from above)
       if (this.visible && this.config.rotationSpeed !== 0) {
         this.cloudMesh.rotation.y += this.config.rotationSpeed * Math.PI / 180;
       }
@@ -112,9 +87,6 @@ export class CloudLayer extends BaseLayer<void> {
     // No data to add for the cloud layer
   }
 
-  /**
-   * Clear the layer
-   */
   clear(): void {
     if (this.cloudMesh && this.scene) {
       this.scene.remove(this.cloudMesh);
