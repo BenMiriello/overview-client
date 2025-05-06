@@ -3,44 +3,47 @@ import Globe from 'react-globe.gl';
 import './App.css';
 import { LightningStrike } from './models/LightningStrike';
 import { useWebSocketService } from './services/websocketService';
-import { LightningManager } from './effects/LightningManager';
+import { LightningLayer } from './layers/LightningLayer';
 
 function App() {
   const globeEl = useRef<any>(null);
-  const lightningManagerRef = useRef<LightningManager | null>(null);
+  const lightningLayerRef = useRef<LightningLayer | null>(null);
   const [isGlobeReady, setIsGlobeReady] = useState(false);
   const [strikes, setStrikes] = useState<LightningStrike[]>([]);
-  const maxDisplayedStrikes = 20;
+  const maxDisplayedStrikes = 250;
 
-  // Initialize lightning manager
+  // Initialize lightning layer
   useEffect(() => {
     if (isGlobeReady && globeEl.current) {
-      const manager = new LightningManager({
-        startAltitude: 0.1,
-        lineWidth: 4.5,
-        lineSegments: 10,
-        jitterAmount: 0.022,
-        branchChance: 0.5,
-        branchFactor: 0.8,
-        maxBranches: 5,
-        duration: 1000,
-        fadeOutDuration: 300
+      const layer = new LightningLayer({
+        maxActiveAnimations: 10,
+        maxDisplayedStrikes: maxDisplayedStrikes,
+        showZigZag: true, // Initially disabled
+        zigZagConfig: {
+          startAltitude: 0.1,
+          lineWidth: 4.5,
+          lineSegments: 10,
+          jitterAmount: 0.022,
+          branchChance: 0.5,
+          branchFactor: 0.8,
+          maxBranches: 5,
+          duration: 1000,
+          fadeOutDuration: 300
+        },
+        markerConfig: {
+          radius: 0.08,
+          color: 0xffffff,
+          opacity: 0.8
+        }
       });
 
-      // Top-level switchbox to toggle these values:
-      manager.maxActiveAnimations = 10;
-      manager.showGlow = false;
-      manager.showLightning = false;
-
-      // Clear any lingering effects
-      manager.clearAllLightningEffects();
-      manager.initialize(globeEl.current);
-      lightningManagerRef.current = manager;
+      layer.initialize(globeEl.current);
+      lightningLayerRef.current = layer;
 
       // Set up animation loop
       const animate = () => {
-        if (lightningManagerRef.current) {
-          lightningManagerRef.current.update(Date.now());
+        if (lightningLayerRef.current) {
+          lightningLayerRef.current.update(Date.now());
         }
         requestAnimationFrame(animate);
       };
@@ -51,8 +54,8 @@ function App() {
 
   const handleNewStrike = useCallback((newStrike: LightningStrike) => {
     setStrikes(prev => {
-      if (lightningManagerRef.current) {
-        lightningManagerRef.current.createLightning(newStrike);
+      if (lightningLayerRef.current) {
+        lightningLayerRef.current.addData(newStrike);
       }
 
       return [newStrike, ...prev].slice(0, maxDisplayedStrikes);
@@ -100,7 +103,10 @@ function App() {
         />
         {connected ? (
           <div className="status-bar">
-            Connected | Strikes: {strikes.length} | Lightning Effects: {lightningManagerRef.current?.getActiveCount() || 0} | Last update: {lastUpdate}
+            Connected | Strikes: {strikes.length} | 
+            Lightning Effects: {lightningLayerRef.current?.getActiveZigZagCount() || 0} | 
+            Markers: {lightningLayerRef.current?.getMarkerCount() || 0} | 
+            Last update: {lastUpdate}
           </div>
         ) : (
           <div className="status-bar error">
