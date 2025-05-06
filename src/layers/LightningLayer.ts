@@ -1,7 +1,8 @@
 import { BaseLayer } from './LayerInterface';
 import { LightningStrike } from '../models/LightningStrike';
-import { ZigZagEffect, ZigZagEffectConfig } from '../effects/ZigZagEffect';
+import { ZigZagEffect, ZigZagEffectConfig, DEFAULT_ZIGZAG_CONFIG } from '../effects/ZigZagEffect';
 import { PointMarkerEffect, PointMarkerConfig } from '../effects/PointMarkerEffect';
+import { DEFAULT_CLOUD_CONFIG } from './CloudLayer';
 
 /**
  * Configuration for the lightning layer
@@ -22,16 +23,10 @@ export const DEFAULT_LIGHTNING_CONFIG: LightningLayerConfig = {
   maxDisplayedStrikes: 1000,
   showZigZag: true,
   zigZagConfig: {
-    startAltitude: 0.05, // Cloud height - increased for visibility
-    endAltitude: 0.001, // Surface level
-    lineWidth: 4.5,
-    lineSegments: 12,   // More segments for smoother zigzag
-    jitterAmount: 0.022,
-    branchChance: 0.5,
-    branchFactor: 0.8,
-    maxBranches: 5,
-    duration: 1000,
-    fadeOutDuration: 300
+    // Use the same defaults from ZigZagEffect
+    ...DEFAULT_ZIGZAG_CONFIG,
+    // Override only specific values if needed
+    lineWidth: 4.0
   },
   markerConfig: {
     radius: 0.08,
