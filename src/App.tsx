@@ -72,7 +72,7 @@ function App() {
 
         // Update cloud layer
         if (cloudLayerRef.current) {
-          cloudLayerRef.current.update(currentTime);
+          cloudLayerRef.current.update();
         }
         
         requestAnimationFrame(animate);

@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import { BaseLayer } from './LayerInterface';
 import { LightningStrike } from '../models/LightningStrike';
 import { ZigZagEffect, ZigZagEffectConfig } from '../effects/ZigZagEffect';
@@ -23,9 +22,10 @@ export const DEFAULT_LIGHTNING_CONFIG: LightningLayerConfig = {
   maxDisplayedStrikes: 1000,
   showZigZag: true,
   zigZagConfig: {
-    startAltitude: 0.03,
+    startAltitude: 0.05, // Cloud height - increased for visibility
+    endAltitude: 0.001, // Surface level
     lineWidth: 4.5,
-    lineSegments: 10,
+    lineSegments: 12,   // More segments for smoother zigzag
     jitterAmount: 0.022,
     branchChance: 0.5,
     branchFactor: 0.8,
@@ -108,6 +108,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     );
 
     effect.initialize(this.scene, this.globeEl);
+    // Position at the surface level - the zigzag height is handled by its internal geometry
     effect.positionOnGlobe(strike.lat, strike.lng, 0);
 
     this.zigZagEffects.set(strike.id, effect);

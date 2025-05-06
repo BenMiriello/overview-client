@@ -71,7 +71,7 @@ export class CloudLayer extends BaseLayer<void> {
    * Update method (required by Layer interface)
    * Clouds are static, so we just check visibility
    */
-  update(currentTime: number): void {
+  update(): void {
     if (this.cloudMesh) {
       this.cloudMesh.visible = this.visible;
     }

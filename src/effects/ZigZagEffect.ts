@@ -22,8 +22,8 @@ export interface ZigZagEffectConfig extends BaseEffectConfig {
  * Default zigzag configuration
  */
 export const DEFAULT_ZIGZAG_CONFIG: ZigZagEffectConfig = {
-  startAltitude: 0.03,      // Match the cloud layer height
-  endAltitude: 0.0005,       // The bottom of the effect
+  startAltitude: 0.03,       // Cloud height - increased for visibility
+  endAltitude: 0.001,        // Surface level
   color: 0xffffff,           // Color: white
   lineWidth: 3.5,            // Thickness of line
   lineSegments: 8,           // Number of line segments
@@ -110,11 +110,16 @@ export class ZigZagEffect implements Effect {
     const segments = this.config.lineSegments;
     const points: THREE.Vector3[] = [];
 
-    // Create a zigzag line from top to bottom
+    // Create a zigzag line from cloud height to surface
     let prevX = 0, prevZ = 0;
+    
+    // We need a significant difference between start and end altitude
+    // to make the lightning actually visible from clouds to surface
     for (let i = 0; i <= segments; i++) {
       const t = i / segments;
 
+      // Create a much more pronounced difference in altitude
+      // First point is at cloud height, last point at surface
       const altitude = this.config.startAltitude * (1 - t) + this.config.endAltitude * t;
 
       const jitterX = (prevX + (this.random() * 2 - 1) * this.config.jitterAmount);
@@ -127,6 +132,7 @@ export class ZigZagEffect implements Effect {
       prevX = finalJitterX;
       prevZ = finalJitterZ;
 
+      // Use real positional values with a proper scale
       points.push(new THREE.Vector3(finalJitterX, altitude, finalJitterZ));
     }
 
@@ -144,24 +150,45 @@ export class ZigZagEffect implements Effect {
     // Get the vertices of the main line
     const positions = this.geometry.getAttribute('position');
 
-    // Skip the first and last segment when creating branches
-    for (let i = 1; i < segments && branchCount < maxBranches; i++) {
+    // Skip the very top (cloud) and bottom (surface) segments
+    // Only create branches in the middle portion of the lightning
+    const skipTop = Math.floor(segments * 0.15); // Skip top 15%
+    const skipBottom = Math.floor(segments * 0.15); // Skip bottom 15%
+    
+    for (let i = skipTop; i < segments - skipBottom && branchCount < maxBranches; i++) {
       if (this.random() < this.config.branchChance) {
         const x = positions.getX(i);
         const y = positions.getY(i);
         const z = positions.getZ(i);
 
-        // Calculate branch direction
-        const branchLength = this.config.branchFactor * this.config.jitterAmount * 10;
+        // Calculate branch direction - make branches more pronounced
+        const branchLength = this.config.branchFactor * this.config.jitterAmount * 15;
+        
+        // Branches should go sideways and slightly downward
         const branchX = x + (this.random() * 2 - 1) * branchLength;
-        const branchY = y - this.random() * branchLength * 0.5; // Branches go down
+        
+        // Bias branches downward (towards earth) but with some randomness
+        // The lower we are on the main lightning bolt, the more downward branches go
+        const downwardBias = i / segments; // More bias as we get closer to the ground
+        const branchY = y - (this.random() * branchLength * 0.7 * downwardBias);
+        
         const branchZ = z + (this.random() * 2 - 1) * branchLength;
 
-        // Create a simple branch with two points
-        const branchPoints = [
-          new THREE.Vector3(x, y, z),
-          new THREE.Vector3(branchX, branchY, branchZ)
-        ];
+        // Create a multi-point branch with zigzag effect
+        const branchPoints = [new THREE.Vector3(x, y, z)];
+        
+        // Add 1-3 intermediate zigzag points on the branch
+        const subSegments = 1 + Math.floor(this.random() * 3);
+        for (let j = 1; j <= subSegments; j++) {
+          const t = j / (subSegments + 1);
+          const midX = x + (branchX - x) * t + (this.random() * 2 - 1) * branchLength * 0.3;
+          const midY = y + (branchY - y) * t;
+          const midZ = z + (branchZ - z) * t + (this.random() * 2 - 1) * branchLength * 0.3;
+          branchPoints.push(new THREE.Vector3(midX, midY, midZ));
+        }
+        
+        // Add final point
+        branchPoints.push(new THREE.Vector3(branchX, branchY, branchZ));
 
         // Create geometry and line for the branch
         const branchGeometry = new THREE.BufferGeometry().setFromPoints(branchPoints);
@@ -239,8 +266,9 @@ export class ZigZagEffect implements Effect {
   positionOnGlobe(lat: number, lng: number, altitude: number = 0): void {
     if (!this.globeEl) return;
 
-    // Position the group at the surface point
-    const surfaceCoords = this.globeEl.getCoords(lat, lng, altitude);
+    // Get the coordinates of the point on the surface
+    // We deliberately position at exact surface level (altitude=0)
+    const surfaceCoords = this.globeEl.getCoords(lat, lng, 0);
     this.group.position.set(surfaceCoords.x, surfaceCoords.y, surfaceCoords.z);
 
     // Orient the group to face outward from the center of the globe
@@ -250,10 +278,21 @@ export class ZigZagEffect implements Effect {
       .normalize();
 
     // Create a quaternion rotation that aligns the effect with the surface normal
+    // The Y-axis of our geometry points upward, and we want it to point along the normal
     this.group.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0), // Default up vector (Y axis)
+      new THREE.Vector3(0, 1, 0), // Default up vector (Y axis) 
       normal                      // Target direction (surface normal)
     );
+    
+    // Scale the group to ensure the lightning is properly sized relative to the globe
+    // We need to get the actual globe radius from the globe element
+    let globeRadius = 100; // Default fallback
+    if (this.globeEl._mainSphere && this.globeEl._mainSphere.geometry && this.globeEl._mainSphere.geometry.parameters) {
+      globeRadius = this.globeEl._mainSphere.geometry.parameters.radius || 100;
+    }
+    
+    // Apply a scale that makes the lightning visible but not too large
+    this.group.scale.setScalar(globeRadius * 0.3);
   }
 
   /**
