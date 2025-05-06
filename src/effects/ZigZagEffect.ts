@@ -14,7 +14,7 @@ export interface ZigZagEffectConfig extends BaseEffectConfig {
   branchChance: number;      // Probability (0-1) of creating a branch at each segment
   branchFactor: number;      // Length of the branches relative to main line
   maxBranches: number;       // Maximum number of branches
-  duration: number;          // Total time the effect is displayed
+  duration: number;
   randomSeed?: number;       // Optional seed for deterministic randomness
 }
 
@@ -48,6 +48,8 @@ export class ZigZagEffect implements Effect {
   private createTime: number;
   private random: () => number;
   private globeEl: any;
+  private scene: THREE.Scene | null = null;
+  private isTerminated: boolean = false;
 
   /**
    * Create a new zigzag effect
@@ -70,7 +72,7 @@ export class ZigZagEffect implements Effect {
     this.material = new THREE.LineBasicMaterial({
       color: this.config.color,
       transparent: true,
-      opacity: 1.0,
+      opacity: 0, // Start invisible and fade in
       linewidth: this.config.lineWidth,
     });
 
@@ -82,6 +84,7 @@ export class ZigZagEffect implements Effect {
 
   initialize(scene: THREE.Scene, globeEl: any): void {
     this.globeEl = globeEl;
+    this.scene = scene;
     if (scene && !this.group.parent) {
       scene.add(this.group);
     }
@@ -174,6 +177,9 @@ export class ZigZagEffect implements Effect {
    * Update the effect based on time
    */
   update(currentTime: number): boolean {
+    // If already terminated, don't continue
+    if (this.isTerminated) return false;
+    
     const age = currentTime - this.createTime;
 
     // Fixed animation durations
@@ -184,16 +190,7 @@ export class ZigZagEffect implements Effect {
 
     // If past total duration, effect is done
     if (age > totalDuration) {
-      // Explicitly hide the effect
-      if (this.material) {
-        this.material.opacity = 0;
-        this.branches.forEach(branch => {
-          if (branch.material instanceof THREE.LineBasicMaterial) {
-            branch.material.opacity = 0;
-          }
-        });
-      }
-
+      this.terminateImmediately();
       return false;
     }
 
@@ -257,27 +254,27 @@ export class ZigZagEffect implements Effect {
   }
 
   /**
-   * Immediately terminate the effect
+   * Immediately terminate the effect and remove from scene
    */
   terminateImmediately() {
-    // Remove effect completely from the scene
-    if (this.mainLine.parent) {
-      this.mainLine.parent.remove(this.mainLine);
-    }
+    if (this.isTerminated) return;
+    this.isTerminated = true;
 
-    this.branches.forEach(branch => {
-      if (branch.parent) {
-        branch.parent.remove(branch);
-      }
-    });
-
-    // Hide lines
+    // Ensure all materials are set to zero opacity
     this.material.opacity = 0;
     this.branches.forEach(branch => {
       if (branch.material instanceof THREE.LineBasicMaterial) {
         branch.material.opacity = 0;
       }
     });
+
+    // Remove from scene
+    if (this.scene) {
+      this.scene.remove(this.group);
+    }
+
+    // Clean up THREE.js objects
+    this.dispose();
   }
 
   /**
@@ -292,11 +289,21 @@ export class ZigZagEffect implements Effect {
    */
   dispose(): void {
     // Dispose geometries
-    this.geometry.dispose();
-    this.branches.forEach(branch => branch.geometry.dispose());
+    if (this.geometry) {
+      this.geometry.dispose();
+    }
+
+    this.branches.forEach(branch => {
+      if (branch.geometry) {
+        branch.geometry.dispose();
+      }
+    });
 
     // Clean up materials
-    this.material.dispose();
+    if (this.material) {
+      this.material.dispose();
+    }
+    
     this.branches.forEach(branch => {
       if (branch.material instanceof THREE.Material) {
         branch.material.dispose();
@@ -307,5 +314,8 @@ export class ZigZagEffect implements Effect {
     if (this.group.parent) {
       this.group.parent.remove(this.group);
     }
+
+    // Clear references for GC
+    this.branches = [];
   }
 }

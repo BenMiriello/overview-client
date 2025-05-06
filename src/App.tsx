@@ -10,15 +10,20 @@ function App() {
   const lightningLayerRef = useRef<LightningLayer | null>(null);
   const [isGlobeReady, setIsGlobeReady] = useState(false);
   const [strikes, setStrikes] = useState<LightningStrike[]>([]);
-  const maxDisplayedStrikes = 250;
+  const maxDisplayedStrikes = 20;
 
   // Initialize lightning layer
   useEffect(() => {
     if (isGlobeReady && globeEl.current) {
+      // First, ensure any previous instance is cleaned up
+      if (lightningLayerRef.current) {
+        lightningLayerRef.current.clear();
+      }
+      
       const layer = new LightningLayer({
         maxActiveAnimations: 10,
         maxDisplayedStrikes: maxDisplayedStrikes,
-        showZigZag: true, // Initially disabled
+        showZigZag: true, // Set zigzags to be enabled by default
         zigZagConfig: {
           startAltitude: 0.1,
           lineWidth: 4.5,
@@ -49,6 +54,13 @@ function App() {
       };
 
       animate();
+      
+      // Clean up function for when component unmounts
+      return () => {
+        if (lightningLayerRef.current) {
+          lightningLayerRef.current.clear();
+        }
+      };
     }
   }, [isGlobeReady]);
 

@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { BaseLayer } from './LayerInterface';
 import { LightningStrike } from '../models/LightningStrike';
 import { ZigZagEffect, ZigZagEffectConfig } from '../effects/ZigZagEffect';
@@ -18,7 +19,7 @@ export interface LightningLayerConfig {
  * Default lightning layer configuration
  */
 export const DEFAULT_LIGHTNING_CONFIG: LightningLayerConfig = {
-  maxActiveAnimations: 10,
+  maxActiveAnimations: 20,
   maxDisplayedStrikes: 1000,
   showZigZag: true,
   zigZagConfig: {
@@ -43,7 +44,7 @@ export const DEFAULT_LIGHTNING_CONFIG: LightningLayerConfig = {
  * Layer that displays lightning strikes on the globe
  */
 export class LightningLayer extends BaseLayer<LightningStrike> {
-  private config: LightningLayerConfig;
+  public config: LightningLayerConfig;
   private zigZagEffects: Map<string, ZigZagEffect> = new Map();
   private markerEffects: Map<string, PointMarkerEffect> = new Map();
   private activeEffects: { id: string, timestamp: number }[] = [];
@@ -80,6 +81,9 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
 
     // Always create a point marker
     this.createMarkerEffect(strike);
+
+    // Enforce max displayed strikes immediately
+    this.enforceMaxDisplayedStrikes();
   }
 
   /**
@@ -87,6 +91,15 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    */
   private createZigZagEffect(strike: LightningStrike): void {
     if (!this.scene || !this.globeEl) return;
+
+    // If we already have this strike, remove the old one first
+    if (this.zigZagEffects.has(strike.id)) {
+      const oldEffect = this.zigZagEffects.get(strike.id);
+      if (oldEffect) {
+        oldEffect.terminateImmediately();
+        this.zigZagEffects.delete(strike.id);
+      }
+    }
 
     const effect = new ZigZagEffect(
       strike.lat,
@@ -98,12 +111,12 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     effect.positionOnGlobe(strike.lat, strike.lng, 0);
 
     this.zigZagEffects.set(strike.id, effect);
-
+    
     this.activeEffects.push({
       id: strike.id,
       timestamp: Date.now()
     });
-
+    
     // Limit active animations
     this.ensureMaxActiveEffects();
   }
@@ -113,12 +126,25 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    */
   private createMarkerEffect(strike: LightningStrike): void {
     if (!this.scene || !this.globeEl) return;
+    
+    // If we already have this strike, remove the old one first
+    if (this.markerEffects.has(strike.id)) {
+      const oldEffect = this.markerEffects.get(strike.id);
+      if (oldEffect) {
+        oldEffect.terminateImmediately();
+        this.markerEffects.delete(strike.id);
+      }
+    }
 
     const effect = new PointMarkerEffect(
       strike.lat,
       strike.lng,
       strike.intensity || 0.5,
-      this.config.markerConfig
+      {
+        ...this.config.markerConfig,
+        // If lightning is disabled, show markers immediately with full opacity
+        fadeInDuration: this.config.showZigZag ? 1500 : 0
+      }
     );
 
     effect.initialize(this.scene, this.globeEl);
@@ -133,13 +159,13 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   private ensureMaxActiveEffects(): void {
     // Sort by timestamp (newest first)
     this.activeEffects.sort((a, b) => b.timestamp - a.timestamp);
-
+    
     // Remove excess effects
     if (this.activeEffects.length > this.config.maxActiveAnimations) {
       const removeIds = this.activeEffects
         .slice(this.config.maxActiveAnimations)
         .map(e => e.id);
-
+        
       removeIds.forEach(id => {
         const effect = this.zigZagEffects.get(id);
         if (effect) {
@@ -147,7 +173,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
           this.zigZagEffects.delete(id);
         }
       });
-
+      
       // Update active effects list
       this.activeEffects = this.activeEffects.slice(0, this.config.maxActiveAnimations);
     }
@@ -159,9 +185,8 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   private clearZigZagEffects(): void {
     this.zigZagEffects.forEach((effect) => {
       effect.terminateImmediately();
-      effect.dispose();
     });
-
+    
     this.zigZagEffects.clear();
     this.activeEffects = [];
   }
@@ -171,50 +196,40 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    */
   update(currentTime: number): void {
     if (!this.visible) return;
-
-    // Update zigzag effects
+    
+    // Update zigzag effects and collect completed IDs
     const completedZigZagIds: string[] = [];
-
+    
     this.zigZagEffects.forEach((effect, id) => {
       const isActive = effect.update(currentTime);
-
+      
       if (!isActive) {
         completedZigZagIds.push(id);
+        // Remove from active effects tracking
         this.activeEffects = this.activeEffects.filter(e => e.id !== id);
       }
     });
-
+    
     // Remove completed zigzag effects
     completedZigZagIds.forEach(id => {
-      const effect = this.zigZagEffects.get(id);
-      if (effect) {
-        effect.dispose();
-        this.zigZagEffects.delete(id);
-      }
+      this.zigZagEffects.delete(id);
     });
-
-    // Update point markers
+    
+    // Update point markers and collect completed IDs
     const completedMarkerIds: string[] = [];
-
+    
     this.markerEffects.forEach((effect, id) => {
       const isActive = effect.update(currentTime);
-
+      
       if (!isActive) {
         completedMarkerIds.push(id);
       }
     });
-
+    
     // Remove completed markers
     completedMarkerIds.forEach(id => {
-      const effect = this.markerEffects.get(id);
-      if (effect) {
-        effect.dispose();
-        this.markerEffects.delete(id);
-      }
+      this.markerEffects.delete(id);
     });
-
-    // Enforce max displayed strikes limit
-    this.enforceMaxDisplayedStrikes();
   }
 
   /**
@@ -222,29 +237,28 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    */
   private enforceMaxDisplayedStrikes(): void {
     if (this.markerEffects.size <= this.config.maxDisplayedStrikes) return;
-
+    
     // Get all markers sorted by creation time (oldest first)
     const markers = Array.from(this.markerEffects.entries())
       .sort((a, b) => {
-        const aTime = a[1].getObject().userData.createdAt;
-        const bTime = b[1].getObject().userData.createdAt;
+        const aTime = a[1].getObject().userData.createdAt || 0;
+        const bTime = b[1].getObject().userData.createdAt || 0;
         return aTime - bTime;
       });
-
+    
     // Remove oldest markers that exceed the limit
     const removeCount = markers.length - this.config.maxDisplayedStrikes;
-
+    
     if (removeCount <= 0) return;
-
+    
     markers.slice(0, removeCount).forEach(([id, effect]) => {
-      effect.dispose();
+      effect.terminateImmediately();
       this.markerEffects.delete(id);
-
+      
       // Also remove any associated zigzag effect
       const zigZag = this.zigZagEffects.get(id);
       if (zigZag) {
         zigZag.terminateImmediately();
-        zigZag.dispose();
         this.zigZagEffects.delete(id);
         this.activeEffects = this.activeEffects.filter(e => e.id !== id);
       }
@@ -269,14 +283,37 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
    * Clear the layer
    */
   clear(): void {
-    // Clear zigzag effects
-    this.zigZagEffects.forEach(effect => effect.dispose());
+    // Clear zigzag effects with proper cleanup
+    this.zigZagEffects.forEach(effect => {
+      effect.terminateImmediately();
+    });
     this.zigZagEffects.clear();
-
-    // Clear markers
-    this.markerEffects.forEach(effect => effect.dispose());
+    
+    // Clear markers with proper cleanup
+    this.markerEffects.forEach(effect => {
+      effect.terminateImmediately();
+    });
     this.markerEffects.clear();
-
+    
     this.activeEffects = [];
+  }
+  
+  /**
+   * Show the layer
+   */
+  show(): void {
+    super.show();
+  }
+
+  /**
+   * Hide the layer
+   */
+  hide(): void {
+    super.hide();
+    
+    // Immediately terminate all visible zigzag effects when hiding the layer
+    if (!this.config.showZigZag) {
+      this.clearZigZagEffects();
+    }
   }
 }

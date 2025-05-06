@@ -5,15 +5,15 @@ import { Effect, BaseEffectConfig } from './core/EffectInterface';
  * Configuration for point marker effects
  */
 export interface PointMarkerConfig extends BaseEffectConfig {
-  radius: number;         // Radius of the marker
-  color: number;          // Color of the marker (hex)
-  opacity: number;        // Maximum opacity
-  resolution: number;     // Geometry resolution (number of segments)
-  altitude: number;       // Height above the globe surface
-  duration: number,       // Total time the effect is visible
+  radius: number;       // Radius of the marker
+  color: number;        // Color of the marker (hex)
+  opacity: number;      // Maximum opacity
+  resolution: number;   // Geometry resolution (number of segments)
+  altitude: number;     // Height above the globe surface
+  duration: number;
   fadeInDuration: number; // Time to fade in (ms)
-  maxAge: number;         // Maximum age before complete fade out (ms)
-  fadeStartAge: number;   // Age at which fade out begins (ms)
+  maxAge: number;       // Maximum age before complete fade out (ms)
+  fadeStartAge: number; // Age at which fade out begins (ms)
 }
 
 /**
@@ -25,11 +25,11 @@ export const DEFAULT_MARKER_CONFIG: PointMarkerConfig = {
   opacity: 0.8,
   resolution: 25,
   altitude: 0.001,
-  duration: 60000,
-  fadeInDuration: 1500,
+  duration: 60000,      // 1 minute total visibility
+  fadeInDuration: 1500, // Match lightning animation timing
   fadeOutDuration: 5000,
-  maxAge: 60000,
-  fadeStartAge: 10000,
+  maxAge: 60000,        // 60 seconds before complete fade
+  fadeStartAge: 10000   // Start fading after 10 seconds
 };
 
 /**
@@ -42,6 +42,8 @@ export class PointMarkerEffect implements Effect {
   private config: PointMarkerConfig;
   private createTime: number;
   private globeEl: any;
+  private scene: THREE.Scene | null = null;
+  private isTerminated: boolean = false;
 
   /**
    * Create a new point marker effect
@@ -70,8 +72,9 @@ export class PointMarkerEffect implements Effect {
       depthWrite: false
     });
 
+    // Create mesh
     this.marker = new THREE.Mesh(this.geometry, this.material);
-
+    
     // Store metadata
     this.marker.userData = {
       createdAt: this.createTime,
@@ -79,8 +82,12 @@ export class PointMarkerEffect implements Effect {
     };
   }
 
+  /**
+   * Initialize the effect
+   */
   initialize(scene: THREE.Scene, globeEl: any): void {
     this.globeEl = globeEl;
+    this.scene = scene;
     if (scene && !this.marker.parent) {
       scene.add(this.marker);
     }
@@ -90,11 +97,14 @@ export class PointMarkerEffect implements Effect {
    * Update the effect based on time
    */
   update(currentTime: number): boolean {
+    // If already terminated, don't continue
+    if (this.isTerminated) return false;
+    
     const age = currentTime - this.createTime;
 
     // If past max age, effect is done
     if (age > this.config.maxAge) {
-      this.material.opacity = 0;
+      this.terminateImmediately();
       return false;
     }
 
@@ -118,7 +128,7 @@ export class PointMarkerEffect implements Effect {
   }
 
   /**
-   * Set the position of the effect on the globe
+   * Position the effect on the globe
    */
   positionOnGlobe(lat: number, lng: number, altitude: number = this.config.altitude): void {
     if (!this.globeEl) return;
@@ -138,20 +148,42 @@ export class PointMarkerEffect implements Effect {
     );
   }
 
+  /**
+   * Immediately terminate the effect
+   */
   terminateImmediately() {
+    if (this.isTerminated) return;
+    this.isTerminated = true;
+    
     this.material.opacity = 0;
-    if (this.marker.parent) {
-      this.marker.parent.remove(this.marker);
+
+    // Remove from scene
+    if (this.scene) {
+      this.scene.remove(this.marker);
     }
+
+    // Clean up resources
+    this.dispose();
   }
 
+  /**
+   * Get the Three.js object for this effect
+   */
   getObject(): THREE.Object3D {
     return this.marker;
   }
 
+  /**
+   * Dispose resources
+   */
   dispose(): void {
-    this.geometry.dispose();
-    this.material.dispose();
+    if (this.geometry) {
+      this.geometry.dispose();
+    }
+
+    if (this.material) {
+      this.material.dispose();
+    }
 
     if (this.marker.parent) {
       this.marker.parent.remove(this.marker);
