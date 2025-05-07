@@ -12,8 +12,6 @@ export class GlobeLayerManager {
 
   initialize(globeEl: any): void {
     this.globeEl = globeEl;
-
-    // Start the animation loop
     this.startAnimationLoop();
   }
 
@@ -28,15 +26,14 @@ export class GlobeLayerManager {
       console.warn(`Layer with id '${id}' already exists. Removing existing layer.`);
       this.removeLayer(id);
     }
-    
+
     // Initialize the layer with the globe element if it hasn't been already
     if (this.globeEl) {
       layer.initialize(this.globeEl);
     }
-    
-    // Store the layer with its ID
+
     this.layers.set(id, layer);
-    
+
     return layer;
   }
 
@@ -49,7 +46,6 @@ export class GlobeLayerManager {
     const layer = this.layers.get(id);
 
     if (layer) {
-      // Clear the layer and clean up resources
       layer.clear();
       this.layers.delete(id);
       return true;
@@ -117,9 +113,6 @@ export class GlobeLayerManager {
     return false;
   }
 
-  /**
-   * Get IDs of all registered layers
-   */
   getLayerIds(): string[] {
     return Array.from(this.layers.keys());
   }
@@ -169,13 +162,12 @@ export class GlobeLayerManager {
   */
   createLayer<T extends Layer<any>>(id: string, type: string): T | null {
     const layer = LayerFactory.createLayer(type);
-    
+
     if (layer) {
-      // Just add the layer - initialization happens in addLayer
       this.addLayer(id, layer);
       return layer as T;
     }
-    
+
     return null;
   }
 

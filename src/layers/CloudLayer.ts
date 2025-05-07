@@ -54,7 +54,7 @@ export class CloudLayer extends BaseLayer<void> {
   update(): void {
     if (this.cloudMesh) {
       this.cloudMesh.visible = this.visible;
-      
+
       // Rotate clouds counter-clockwise (when viewed from above)
       if (this.visible) {
         const rotationSpeed = getConfig<number>('layers.clouds.rotationSpeed') || 0.002;

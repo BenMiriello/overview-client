@@ -7,7 +7,7 @@ const configValues = new Map<string, any>();
 function loadConfigValues(obj: any, parentPath: string = ''): void {
   Object.entries(obj).forEach(([key, value]) => {
     const path = parentPath ? `${parentPath}.${key}` : key;
-    
+
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       loadConfigValues(value, path);
     } else {

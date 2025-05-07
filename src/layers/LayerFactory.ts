@@ -16,7 +16,6 @@ export class LayerFactory {
 
   /**
    * Factory method for creating different types of layers
-   * (for future expansion with earthquakes, tornadoes, etc.)
    */
   static createLayer(type: string): Layer<any> | null {
     switch (type.toLowerCase()) {

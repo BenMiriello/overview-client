@@ -1,5 +1,5 @@
 export const CloudsConfig = {
-  altitude: 0.02,
+  altitude: 0.01,
   opacity: 0.6,
   size: 3.5,
   imagePath: '/clouds.png',

@@ -3,6 +3,7 @@ import { LightningStrike } from '../models/LightningStrike';
 import { ZigZagEffect } from '../effects/ZigZagEffect';
 import { PointMarkerEffect } from '../effects/PointMarkerEffect';
 import { getConfig, setConfig } from '../config';
+import { DataStream } from '../services/dataStreams/interfaces';
 
 /**
  * Layer that displays lightning strikes on the globe
@@ -15,15 +16,45 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
                                   getConfig<number>('layers.lightning.zigZagConfig.startAltitude') ?? 
                                   0.02;
 
-  constructor() {
+  private dataStream: DataStream<LightningStrike> | null = null;
+  private unsubscribe: (() => void) | null = null;
+
+  constructor(dataStream?: DataStream<LightningStrike>) {
     super();
+
+    if (dataStream) {
+      this.setDataStream(dataStream);
+    }
+  }
+
+  /**
+   * Set the data stream for this layer
+   * @param dataStream The data stream to use
+   */
+  setDataStream(dataStream: DataStream<LightningStrike>): void {
+    // Clean up any existing subscription
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
+
+    this.dataStream = dataStream;
+
+    // Subscribe to the data stream
+    if (this.dataStream) {
+      this.unsubscribe = this.dataStream.subscribe(this.addData.bind(this));
+    }
+  }
+
+  getDataStream(): DataStream<LightningStrike> | null {
+    return this.dataStream;
   }
 
   setShowZigZag(show: boolean): void {
     const currentShowZigZag = getConfig<boolean>('layers.lightning.showZigZag');
     if (currentShowZigZag !== show) {
       setConfig('layers.lightning.showZigZag', show);
-      
+
       if (!show) {
         this.clearZigZagEffects();
       }
@@ -121,7 +152,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     this.activeEffects.sort((a, b) => b.timestamp - a.timestamp);
 
     const maxActiveAnimations = getConfig<number>('layers.lightning.maxActiveAnimations') || 10;
-    
+
     // Remove excess effects
     if (this.activeEffects.length > maxActiveAnimations) {
       const removeIds = this.activeEffects
@@ -194,7 +225,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
 
   private enforceMaxDisplayedStrikes(): void {
     const maxDisplayedStrikes = getConfig<number>('layers.lightning.maxDisplayedStrikes') || 256;
-    
+
     if (this.markerEffects.size <= maxDisplayedStrikes) return;
 
     // Get all markers sorted by creation time (oldest first)
@@ -255,6 +286,12 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     this.markerEffects.clear();
 
     this.activeEffects = [];
+
+    // Clean up data stream subscription
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
   }
 
   show(): void {
