@@ -1,10 +1,10 @@
 export const LightningConfig = {
   maxActiveAnimations: 10,
   maxDisplayedStrikes: 256,
-  showZigZag: true
+  showLightningBolt: true,
 };
 
-export const ZigZagConfig = {
+export const LightningBoltConfig = {
   startAltitude: 0.02, // Will be overwritten to sync with cloud height when cloud layer is enabled
   endAltitude: 0.0005,
   lineWidth: 3.5,
@@ -21,12 +21,12 @@ export const ZigZagConfig = {
 export const MarkerConfig = {
   radius: 0.08,
   color: 0xffffff,
-  opacity: 0.8
+  opacity: 1,
 };
 
 // Key config options that will have UI controls
 export const LIGHTNING_UI_KEYS = [
-  'showZigZag',
+  'showLightningBolt',
   'maxDisplayedStrikes'
 ] as const;
 

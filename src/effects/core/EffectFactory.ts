@@ -1,25 +1,19 @@
 import { Effect } from './EffectInterface';
-import { ZigZagEffect, ZigZagEffectConfig } from '../ZigZagEffect';
+import { LightningBoltEffect, LightningBoltEffectConfig } from '../LightningBoltEffect/LightningBoltEffect';
 import { PointMarkerEffect, PointMarkerConfig } from '../PointMarkerEffect';
 
 /**
  * Factory for creating different types of visual effects
  */
 export class EffectFactory {
-  /**
-   * Create a zigzag effect (like lightning)
-   */
-  static createZigZagEffect(
+  static createLightningBoltEffect(
     lat: number, 
     lng: number, 
-    config?: Partial<ZigZagEffectConfig>
-  ): ZigZagEffect {
-    return new ZigZagEffect(lat, lng, config);
+    config?: Partial<LightningBoltEffectConfig>
+  ): LightningBoltEffect {
+    return new LightningBoltEffect(lat, lng, config);
   }
 
-  /**
-   * Create a point marker effect
-   */
   static createPointMarkerEffect(
     lat: number, 
     lng: number, 
@@ -29,9 +23,6 @@ export class EffectFactory {
     return new PointMarkerEffect(lat, lng, intensity, config);
   }
 
-  /**
-   * Factory method for creating any type of effect
-   */
   static createEffect(
     type: string, 
     lat: number, 
@@ -41,7 +32,7 @@ export class EffectFactory {
     switch (type.toLowerCase()) {
       case 'zigzag':
       case 'lightning':
-        return this.createZigZagEffect(lat, lng, options.config);
+        return this.createLightningBoltEffect(lat, lng, options.config);
       case 'marker':
       case 'point':
         return this.createPointMarkerEffect(

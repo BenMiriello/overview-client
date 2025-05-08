@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { Effect, BaseEffectConfig } from './core/EffectInterface';
+import { BaseEffect } from './core/BaseEffect';
+import { BaseEffectConfig } from './core/EffectInterface';
+import { MarkerType } from '../types';
 
-/**
- * Configuration for point marker effects
- */
 export interface PointMarkerConfig extends BaseEffectConfig {
-  radius: number;       // Radius of the marker
+  markerType: MarkerType;  // Type of marker (CIRCLE or DONUT)
+  radius: number;       // Radius of the marker (used for CIRCLE)
   color: number;        // Color of the marker (hex)
   opacity: number;      // Maximum opacity
   resolution: number;   // Geometry resolution (number of segments)
@@ -14,54 +14,62 @@ export interface PointMarkerConfig extends BaseEffectConfig {
   fadeInDuration: number; // Time to fade in (ms)
   maxAge: number;       // Maximum age before complete fade out (ms)
   fadeStartAge: number; // Age at which fade out begins (ms)
+  innerRadius: number;  // Inner radius (used for DONUT)
+  outerRadius: number;  // Outer radius (used for DONUT)
 }
 
-/**
- * Default point marker configuration
- */
 export const DEFAULT_MARKER_CONFIG: PointMarkerConfig = {
-  radius: 0.08,
+  markerType: MarkerType.CIRCLE,  // Default to circle
+  radius: 0.1,
   color: 0xffffff,
-  opacity: 0.8,
+  opacity: 1,
   resolution: 25,
   altitude: 0.001,
   duration: 60000,      // 1 minute total visibility
   fadeInDuration: 1500, // Match lightning animation timing
   fadeOutDuration: 5000,
   maxAge: 60000,        // 60 seconds before complete fade
-  fadeStartAge: 10000   // Start fading after 10 seconds
+  fadeStartAge: 10000,  // Start fading after 10 seconds
+  innerRadius: 0.05,    // Inner radius for DONUT type
+  outerRadius: 0.07,    // Outer radius for DONUT type
 };
 
 /**
  * Creates circle markers on the globe
  */
-export class PointMarkerEffect implements Effect {
+export class PointMarkerEffect extends BaseEffect {
   private marker: THREE.Mesh;
-  private geometry: THREE.CircleGeometry;
+  private geometry: THREE.CircleGeometry | THREE.RingGeometry;
   private material: THREE.MeshBasicMaterial;
   private config: PointMarkerConfig;
   private createTime: number;
-  private globeEl: any;
-  private scene: THREE.Scene | null = null;
-  private isTerminated: boolean = false;
 
-  /**
-   * Create a new point marker effect
-   */
   constructor(
-    public lat: number,
-    public lng: number,
-    public intensity: number = 0.5,
+    lat: number,
+    lng: number,
+    intensity: number = 0.5,
     config: Partial<PointMarkerConfig> = {}
   ) {
+    super(lat, lng, intensity);
     this.config = { ...DEFAULT_MARKER_CONFIG, ...config };
     this.createTime = Date.now();
 
-    // Create circle geometry
-    this.geometry = new THREE.CircleGeometry(
-      this.config.radius, 
-      this.config.resolution
-    );
+    // Create geometry based on marker type
+    if (this.config.markerType === MarkerType.CIRCLE) {
+      this.geometry = new THREE.CircleGeometry(
+        this.config.radius,
+        this.config.resolution
+      );
+    } else {
+      this.geometry = new THREE.RingGeometry(
+        this.config.innerRadius,
+        this.config.outerRadius,
+        this.config.resolution,
+        0,
+        0,
+        Math.PI * 2
+      );
+    }
 
     // Create material
     this.material = new THREE.MeshBasicMaterial({
@@ -83,11 +91,13 @@ export class PointMarkerEffect implements Effect {
       createdAt: this.createTime,
       intensity: this.intensity
     };
+
+    // Register resources for cleanup
+    this.registerResource(this.geometry);
+    this.registerResource(this.material);
+    this.registerResource(this.marker);
   }
 
-  /**
-   * Initialize the effect
-   */
   initialize(scene: THREE.Scene, globeEl: any): void {
     this.globeEl = globeEl;
     this.scene = scene;
@@ -96,9 +106,6 @@ export class PointMarkerEffect implements Effect {
     }
   }
 
-  /**
-   * Update the effect based on time
-   */
   update(currentTime: number): boolean {
     // If already terminated, don't continue
     if (this.isTerminated) return false;
@@ -115,14 +122,14 @@ export class PointMarkerEffect implements Effect {
     if (age < this.config.fadeInDuration) {
       const fadeRatio = age / this.config.fadeInDuration;
       this.material.opacity = Math.min(this.config.opacity, fadeRatio * this.config.opacity);
-    } 
+    }
     // Full visibility stage
     else if (age < this.config.fadeStartAge) {
       this.material.opacity = this.config.opacity;
-    } 
+    }
     // Fade out stage
     else {
-      const fadeRatio = 1 - ((age - this.config.fadeStartAge) / 
+      const fadeRatio = 1 - ((age - this.config.fadeStartAge) /
                            (this.config.maxAge - this.config.fadeStartAge));
       this.material.opacity = Math.max(0, Math.min(this.config.opacity, fadeRatio * this.config.opacity));
     }
@@ -130,9 +137,6 @@ export class PointMarkerEffect implements Effect {
     return true;
   }
 
-  /**
-   * Position the effect on the globe
-   */
   positionOnGlobe(lat: number, lng: number, altitude: number = this.config.altitude): void {
     if (!this.globeEl) return;
 
@@ -151,45 +155,16 @@ export class PointMarkerEffect implements Effect {
     );
   }
 
-  /**
-   * Immediately terminate the effect
-   */
-  terminateImmediately() {
-    if (this.isTerminated) return;
-    this.isTerminated = true;
-
+  terminateImmediately(): void {
     this.material.opacity = 0;
-
-    // Remove from scene
-    if (this.scene) {
-      this.scene.remove(this.marker);
-    }
-
-    // Clean up resources
-    this.dispose();
+    super.terminateImmediately();
   }
 
-  /**
-   * Get the Three.js object for this effect
-   */
   getObject(): THREE.Object3D {
     return this.marker;
   }
 
-  /**
-   * Dispose resources
-   */
   dispose(): void {
-    if (this.geometry) {
-      this.geometry.dispose();
-    }
-
-    if (this.material) {
-      this.material.dispose();
-    }
-
-    if (this.marker.parent) {
-      this.marker.parent.remove(this.marker);
-    }
+    super.dispose();
   }
 }

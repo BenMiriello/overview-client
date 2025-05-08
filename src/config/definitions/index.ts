@@ -1,7 +1,7 @@
 import { CloudsConfig, CLOUDS_UI_KEYS } from './clouds';
-import { 
-  LightningConfig, 
-  ZigZagConfig, 
+import {
+  LightningConfig,
+  LightningBoltConfig,
   MarkerConfig,
   LIGHTNING_UI_KEYS,
   MARKER_UI_KEYS
@@ -15,8 +15,8 @@ export const GlobalConfig = {
     clouds: CloudsConfig,
     lightning: {
       ...LightningConfig,
-      zigZagConfig: ZigZagConfig,
-      markerConfig: MarkerConfig
+      lightningBoltConfig: LightningBoltConfig,
+      markerConfig: MarkerConfig,
     }
   }
 };

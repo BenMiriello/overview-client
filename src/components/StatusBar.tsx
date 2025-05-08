@@ -15,9 +15,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   if (connected) {
     return (
       <div className="status-bar">
-        Connected | 
-        Lightning Effects: {lightningLayer?.getActiveZigZagCount() || 0} | 
-        Markers: {lightningLayer?.getMarkerCount() || 0} | 
+        Connected |
+        Lightning Effects: {lightningLayer?.getActiveLightningBoltCount() || 0} |
+        Markers: {lightningLayer?.getMarkerCount() || 0} |
         Last update: {lastUpdate}
       </div>
     );
