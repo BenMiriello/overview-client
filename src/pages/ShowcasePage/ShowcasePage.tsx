@@ -11,7 +11,7 @@ const ShowcasePage = () => {
   return (
     <div className="showcase-page">
       <Canvas 
-        camera={{ position: [0, 0, 6], fov: 50 }} // Zoomed in 25% (from 8 to 6)
+        camera={{ position: [0, 0, 6], fov: 50 }}
         style={{ background: '#000' }}
       >
         <Scene detail={detail} speed={speed} />
