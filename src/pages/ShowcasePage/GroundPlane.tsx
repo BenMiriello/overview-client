@@ -11,8 +11,8 @@ interface FlashData {
   intensity: number;
   position: THREE.Vector2;
   speed: number;
+  currentSpeed: number; // Track current speed for immediate updates
   startTime: number;
-  duration: number;
 }
 
 // Custom ground with localized illumination
@@ -24,9 +24,14 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
     intensity: 0, 
     position: new THREE.Vector2(0, 0),
     speed: speed,
-    startTime: 0,
-    duration: 1500 // Default duration in ms
+    currentSpeed: speed,
+    startTime: 0
   });
+
+  // Update speed reference when prop changes
+  useEffect(() => {
+    flashData.current.currentSpeed = speed;
+  }, [speed]);
 
   // Custom shader material for the ground with improved grid and glow
   const material = useMemo(() => {
@@ -34,8 +39,7 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
       uniforms: {
         flashIntensity: { value: 0.0 },
         flashPosition: { value: new THREE.Vector2(0, 0) },
-        gridScale: { value: 20.0 },
-        falloffRadius: { value: 6.0 }
+        time: { value: 0.0 }
       },
       vertexShader: `
         varying vec2 vUv;
@@ -50,66 +54,57 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
       fragmentShader: `
         uniform float flashIntensity;
         uniform vec2 flashPosition;
-        uniform float gridScale;
-        uniform float falloffRadius;
+        uniform float time;
 
         varying vec2 vUv;
         varying vec3 vPos;
 
-        // Improved grid function with increased thickness
+        // Improved grid function that creates thick, consistent lines
         float getGrid(vec2 uv, float size) {
-          // Calculate grid cell boundaries with increased thickness
-          vec2 cell = abs(fract(uv * size - 0.5) - 0.5);
-
-          // Create thicker lines by reducing the fwidth multiplier
-          // Lower values = thicker lines
-          vec2 fw = fwidth(uv * size) * 0.5; // Changed from 0.7 to 0.5 for thicker lines
-
-          // Calculate falloff from grid lines
-          vec2 grid = smoothstep(vec2(0.0), fw, cell);
-
-          // Combine x and y components
-          return 1.0 - min(grid.x, grid.y);
+          // Calculate distance to nearest grid line 
+          vec2 grid = abs(fract(uv * size - 0.5) - 0.5);
+          
+          // Calculate wider lines with a fixed pixel width 
+          // 0.2 = thicker lines, 0.4 = thinner lines
+          vec2 pixelWidth = fwidth(uv * size) * 0.25;
+          
+          // Create smooth falloff to prevent aliasing
+          return 1.0 - smoothstep(0.0, pixelWidth.x, grid.x) * smoothstep(0.0, pixelWidth.y, grid.y);
         }
 
         void main() {
-          // All grid lines should be exactly the same color and thickness
+          // Calculate consistent grid with dimmer color
           float primaryGrid = getGrid(vUv, 2.0);
           float secondaryGrid = getGrid(vUv, 16.0);
-
-          // Use the same coefficient for both grids to ensure consistency
+          
+          // Combine grids with same brightness
           float grid = max(primaryGrid, secondaryGrid);
-
-          // Base grid color - pure white for all lines
+          
+          // Create consistent grid color (dimmer white/gray)
           vec3 baseColor = vec3(0.0);
-          vec3 gridLineColor = vec3(1.0); // Pure white for all lines
+          vec3 gridLineColor = vec3(0.7, 0.7, 0.7); // Less bright, consistent gray for all lines
           vec3 gridColor = mix(baseColor, gridLineColor, grid);
-
-          // Calculate distance from center (the strike position) for the glow effect
-          // Use center position (0,0) which is where the strike is happening
-          vec2 centeredPosition = vec2(0.0, 0.0);
-          float dist = length((vUv - 0.5) * 2.0 - centeredPosition);
-
-          // Create a radial falloff for the glow effect
-          // This places the glow directly under the strike
-          float glowFalloff = 1.0 - smoothstep(0.0, 0.5, dist);
-
-          // Combine with flash intensity for final glow effect
-          float glowStrength = flashIntensity * glowFalloff * 0.5;
-
-          // Glow color - slight blue tint for lightning effect
+          
+          // Centered glow effect
+          float dist = distance((vUv - 0.5) * 2.0, vec2(0.0));
+          float glow = 1.0 - smoothstep(0.0, 0.5, dist); // Radial glow centered at origin
+          
+          // Glow effect controlled by flashIntensity - slightly blue-white
           vec3 glowColor = vec3(0.9, 0.95, 1.0);
-
-          // Apply glow to both grid lines and spaces between
+          
+          // Create grid with glow effect - applied to both grid lines and spaces between
+          float glowStrength = flashIntensity * glow * 0.7; // Reduced brightness
+          
+          // Combine grid with glow 
           vec3 finalColor = mix(gridColor, glowColor, glowStrength);
-
+          
           // Fade out at edges
           float edgeFade = 1.0 - smoothstep(0.4, 0.95, length((vUv - 0.5) * 2.0));
           finalColor *= edgeFade;
-
-          // Calculate alpha - make grid lines fully visible and add glow
-          float alpha = min(1.0, grid + glowStrength * 0.7) * edgeFade;
-
+          
+          // Calculate alpha for grid lines and glow
+          float alpha = (grid * 0.7 + glowStrength * 0.5) * edgeFade;
+          
           gl_FragColor = vec4(finalColor, alpha);
         }
       `,
@@ -123,76 +118,76 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
     materialRef.current = material;
   }
 
-  // Synchronized animation update with exact timing to match lightning
-  useFrame(() => {
-    if (flashData.current.active && materialRef.current) {
-      const currentTime = Date.now();
-      const elapsed = currentTime - flashData.current.startTime;
-      const duration = flashData.current.duration;
-
-      // Match the exact animation phases of the lightning effect
-      if (elapsed < duration) {
-        const phaseRatio = elapsed / duration;
-
-        // First third: fade in
-        if (phaseRatio < 0.33) {
-          const fadeInProgress = phaseRatio / 0.33;
-          flashData.current.intensity = Math.min(1.0, fadeInProgress);
+  // Handle flash animation with sync to lightning strike
+  useFrame(({ clock }) => {
+    // Immediately apply current speed when it changes
+    if (materialRef.current && flashData.current.active) {
+      const elapsedTime = (clock.getElapsedTime() - flashData.current.startTime);
+      const currentSpeed = flashData.current.currentSpeed;
+      
+      // Scale time by speed to make animation faster/slower immediately when speed changes
+      const scaledTime = elapsedTime * currentSpeed;
+      const totalDuration = 1.5; // seconds
+      
+      if (scaledTime <= totalDuration) {
+        // Animation phases to match lightning
+        if (scaledTime < 0.5) {
+          // Fade in (0-0.5s scaled)
+          const fadeProgress = scaledTime / 0.5;
+          flashData.current.intensity = fadeProgress;
         } 
-        // Second third: full brightness
-        else if (phaseRatio < 0.66) {
+        else if (scaledTime < 1.0) {
+          // Full brightness (0.5-1.0s scaled)
           flashData.current.intensity = 1.0;
         } 
-        // Final third: fade out
         else {
-          const fadeOutProgress = (phaseRatio - 0.66) / 0.34;
-          flashData.current.intensity = Math.max(0.0, 1.0 - fadeOutProgress);
+          // Fade out (1.0-1.5s scaled)
+          const fadeProgress = (scaledTime - 1.0) / 0.5;
+          flashData.current.intensity = Math.max(0, 1.0 - fadeProgress);
         }
-
-        // Update material uniform
+        
+        // Update material
         materialRef.current.uniforms.flashIntensity.value = flashData.current.intensity;
       } else {
-        // Animation complete
+        // End animation
         flashData.current.active = false;
         flashData.current.intensity = 0;
         materialRef.current.uniforms.flashIntensity.value = 0;
       }
+    }
+    
+    // Update time uniform
+    if (materialRef.current) {
+      materialRef.current.uniforms.time.value = clock.getElapsedTime();
     }
   });
 
   // Listen for lightning strikes
   useEffect(() => {
     const handleLightning = (event: CustomEvent) => {
+      // Update speed immediately when strike happens
       const strikeSpeed = event.detail?.speed || speed;
-
-      // Calculate duration to match the lightning strike exactly
-      // This ensures the ground glow fades out with the lightning
-      const baseDuration = 1500; // ms - should match lightning duration
-      const duration = baseDuration / strikeSpeed;
-
-      // Always use centered position for the glow
-      const position = new THREE.Vector2(0, 0);
-
-      // Configure flash data with precise timing
+      
+      // Reset flash data with current time
       flashData.current = {
         active: true,
-        intensity: 0.0, // Start at zero and follow the animation curve
-        position: position,
+        intensity: 0.0, // Start at zero and animate up
+        position: new THREE.Vector2(0, 0), // Always centered
         speed: strikeSpeed,
-        startTime: Date.now(),
-        duration: duration
+        currentSpeed: strikeSpeed, // Track current speed
+        startTime: performance.now() / 1000 // Convert to seconds
       };
 
       // Update material uniforms
       if (materialRef.current) {
-        materialRef.current.uniforms.flashPosition.value = position;
+        materialRef.current.uniforms.flashPosition.value = new THREE.Vector2(0, 0);
         materialRef.current.uniforms.flashIntensity.value = 0;
       }
     };
 
     // Listen for custom lightning strike events
     window.addEventListener('lightning-strike', handleLightning as EventListener);
-
+    
     return () => {
       window.removeEventListener('lightning-strike', handleLightning as EventListener);
     };
