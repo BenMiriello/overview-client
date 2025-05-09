@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 import { BaseEffect } from './core/BaseEffect';
 import { BaseEffectConfig } from './core/EffectInterface';
-import { MarkerType } from '../types';
+
+export enum MarkerType {
+  CIRCLE = 'CIRCLE',
+  DONUT = 'DONUT'
+}
 
 export interface PointMarkerConfig extends BaseEffectConfig {
   markerType: MarkerType;  // Type of marker (CIRCLE or DONUT)
@@ -34,9 +38,6 @@ export const DEFAULT_MARKER_CONFIG: PointMarkerConfig = {
   outerRadius: 0.07,    // Outer radius for DONUT type
 };
 
-/**
- * Creates circle markers on the globe
- */
 export class PointMarkerEffect extends BaseEffect {
   private marker: THREE.Mesh;
   private geometry: THREE.CircleGeometry | THREE.RingGeometry;
@@ -71,7 +72,6 @@ export class PointMarkerEffect extends BaseEffect {
       );
     }
 
-    // Create material
     this.material = new THREE.MeshBasicMaterial({
       color: this.config.color,
       transparent: true,
@@ -80,13 +80,12 @@ export class PointMarkerEffect extends BaseEffect {
       depthWrite: false
     });
 
-    // Create mesh
     this.marker = new THREE.Mesh(this.geometry, this.material);
 
-    // Set rendering order (highest renders on top)
-    this.marker.renderOrder = 30;
+    /** Render order is important. Be careful when changing it.
+     * Even though clouds are transparent, they can still obscure other elements beneath them if order is changed. */
+    this.marker.renderOrder = 30; // (highest value renders on top)
 
-    // Store metadata
     this.marker.userData = {
       createdAt: this.createTime,
       intensity: this.intensity
@@ -107,12 +106,10 @@ export class PointMarkerEffect extends BaseEffect {
   }
 
   update(currentTime: number): boolean {
-    // If already terminated, don't continue
     if (this.isTerminated) return false;
 
     const age = currentTime - this.createTime;
 
-    // If past max age, effect is done
     if (age > this.config.maxAge) {
       this.terminateImmediately();
       return false;
@@ -151,7 +148,7 @@ export class PointMarkerEffect extends BaseEffect {
 
     this.marker.quaternion.setFromUnitVectors(
       new THREE.Vector3(0, 0, 1), // Default circle marker orientation (Z axis)
-      normal                       // Direction to face
+      normal                      // Direction to face
     );
   }
 

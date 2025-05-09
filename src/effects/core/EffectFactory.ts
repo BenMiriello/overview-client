@@ -2,9 +2,6 @@ import { Effect } from './EffectInterface';
 import { LightningBoltEffect, LightningBoltEffectConfig } from '../LightningBoltEffect/LightningBoltEffect';
 import { PointMarkerEffect, PointMarkerConfig } from '../PointMarkerEffect';
 
-/**
- * Factory for creating different types of visual effects
- */
 export class EffectFactory {
   static createLightningBoltEffect(
     lat: number, 
@@ -41,7 +38,6 @@ export class EffectFactory {
           options.intensity || 0.5, 
           options.config
         );
-      // Future effect types can be added here
       default:
         console.warn(`Unknown effect type: ${type}`);
         return null;

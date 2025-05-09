@@ -1,2 +1,2 @@
 export * from './LightningBoltEffect';
-export * from './LightningStrikeLogic';
+export * from './PathfindingLogic';
