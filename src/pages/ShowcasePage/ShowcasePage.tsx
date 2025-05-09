@@ -100,15 +100,14 @@ const ShowcasePage = () => {
       }
     };
 
-    // Animation loop
     const clock = new THREE.Clock();
+
     const animate = () => {
       const currentTime = Date.now();
       const deltaTime = clock.getDelta();
 
       // Generate a new strike at random intervals
       if (currentTime > nextStrikeTime) {
-        // Random position
         const lat = (Math.random() * 180) - 90;
         const lng = (Math.random() * 360) - 180;
 
