@@ -1,0 +1,83 @@
+.bibliography-page {
+    background: #121212;
+    color: #e0e0e0;
+    min-height: 100vh;
+    padding: 40px 20px;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+
+h1 {
+    font-size: 2.4rem;
+    text-align: center;
+    margin-bottom: 1rem;
+    color: #ffffff;
+}
+
+.intro {
+    max-width: 700px;
+    margin: 0 auto 3rem;
+    text-align: center;
+    font-size: 1.2rem;
+    line-height: 1.6;
+    color: #aaaaaa;
+}
+
+.bibliography-content {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+h2 {
+    font-size: 1.8rem;
+    margin: 2rem 0 1rem;
+    color: #4a9eff;
+    border-bottom: 1px solid #333;
+    padding-bottom: 0.5rem;
+}
+
+ul {
+    list-style: none;
+    padding: 0;
+}
+
+li {
+    margin-bottom: 1.5rem;
+    padding: 0.5rem 0;
+}
+
+a {
+    color: #61dafb;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1.1rem;
+    display: inline-block;
+    margin-bottom: 0.5rem;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+li p {
+    margin: 0;
+    color: #bbbbbb;
+    line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+    h1 {
+        font-size: 1.8rem;
+    }
+
+    .intro {
+        font-size: 1rem;
+    }
+
+    h2 {
+        font-size: 1.4rem;
+    }
+
+    a {
+        font-size: 1rem;
+    }
+}
