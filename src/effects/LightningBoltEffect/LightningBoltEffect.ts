@@ -54,9 +54,8 @@ export class LightningBoltEffect extends BaseEffect {
   private group: THREE.Group;
   private config: LightningBoltEffectConfig;
   private createTime: number;
-  private random: () => number;
-  private startTime: number; // Track animation start time for speed adjustment
-  private animationPhase: number = 0; // Track current animation phase for immediate speed changes
+  private startTime: number; // Track animation start time for synchronization 
+  private animationPhase: number = 0; // Track current animation phase
 
   /**
    * Create a new lightning bolt effect
@@ -109,6 +108,13 @@ export class LightningBoltEffect extends BaseEffect {
     }
   }
 
+  /**
+   * Set exact start time for synchronization with ground effect
+   */
+  setStartTime(time: number): void {
+    this.startTime = time;
+  }
+
   initialize(scene: THREE.Scene, globeEl: any): void {
     this.globeEl = globeEl;
     this.scene = scene;
@@ -150,29 +156,29 @@ export class LightningBoltEffect extends BaseEffect {
     if (this.isTerminated) return false;
 
     // Get elapsed time in seconds and scale by current speed
-    const elapsedTime = (performance.now() / 1000) - this.startTime;
+    const elapsed = performance.now() / 1000 - this.startTime;
     const speedFactor = this.config.speed || 1.0;
     
     // Scale time by speed factor
-    const scaledTime = elapsedTime * speedFactor;
+    const scaledElapsed = elapsed * speedFactor;
     
     // Total animation time in seconds
     const totalDuration = this.config.duration / 1000; // Convert ms to seconds
     
     // If past total duration, effect is done
-    if (scaledTime > totalDuration) {
+    if (scaledElapsed > totalDuration) {
       this.terminateImmediately();
       return false;
     }
 
-    // Animation phases with 3 equal segments
+    // Animation phases with 3 equal segments for precise synchronization
     const phaseLength = totalDuration / 3;
     
-    // Update animation based on scaled time
-    if (scaledTime < phaseLength) {
+    // Update animation based on scaled time with exact phases
+    if (scaledElapsed < phaseLength) {
       // Fade in phase (0 - 1/3)
-      const progress = scaledTime / phaseLength;
-      this.animationPhase = 1; // Track phase for speed changes
+      const progress = scaledElapsed / phaseLength;
+      this.animationPhase = 1; // Track phase
       this.material.opacity = progress;
       this.branches.forEach(branch => {
         if (branch.material instanceof THREE.LineBasicMaterial) {
@@ -180,9 +186,9 @@ export class LightningBoltEffect extends BaseEffect {
         }
       });
     } 
-    else if (scaledTime < phaseLength * 2) {
+    else if (scaledElapsed < phaseLength * 2) {
       // Full brightness phase (1/3 - 2/3)
-      this.animationPhase = 2; // Track phase for speed changes
+      this.animationPhase = 2; // Track phase
       this.material.opacity = 1.0;
       this.branches.forEach(branch => {
         if (branch.material instanceof THREE.LineBasicMaterial) {
@@ -192,8 +198,8 @@ export class LightningBoltEffect extends BaseEffect {
     } 
     else {
       // Fade out phase (2/3 - 3/3)
-      this.animationPhase = 3; // Track phase for speed changes
-      const fadeProgress = (scaledTime - phaseLength * 2) / phaseLength;
+      this.animationPhase = 3; // Track phase
+      const fadeProgress = (scaledElapsed - phaseLength * 2) / phaseLength;
       const opacity = Math.max(0, 1.0 - fadeProgress);
       
       this.material.opacity = opacity;

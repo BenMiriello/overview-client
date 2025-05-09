@@ -24,6 +24,7 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
   const timeRef = useRef<number>(0);
   const strikePending = useRef<boolean>(false);
   const currentSpeedRef = useRef<number>(speed);
+  const startTimeRef = useRef<number>(0);
 
   // Update the current speed ref when the prop changes
   useEffect(() => {
@@ -44,6 +45,9 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
       strikeRef.current = null;
     }
 
+    // Store exact start time for synchronization
+    startTimeRef.current = performance.now() / 1000;
+
     // Mock globe element - adjusted to ensure strike reaches ground
     const mockGlobeEl: MockGlobeEl = {
       getCoords: (lat: number, lng: number, alt: number) => {
@@ -60,8 +64,8 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
       }
     };
 
-    // Duration scales with speed
-    const baseDuration = 1500; // Base duration in milliseconds
+    // Base duration - same for all animations for synchronization
+    const baseDuration = 1500; // milliseconds
     
     const config = {
       ...DEFAULT_LIGHTNING_BOLT_CONFIG,
@@ -80,12 +84,16 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
     const strike = new LightningBoltEffect(0, 0, config);
     strike.initialize(scene, mockGlobeEl);
     strikeRef.current = strike;
+    
+    // Set precise start time for the strike
+    strikeRef.current.setStartTime(startTimeRef.current);
 
-    // Notify ground to light up
+    // Notify ground to light up with exact same start time
     window.dispatchEvent(new CustomEvent('lightning-strike', {
       detail: { 
-        position: new THREE.Vector2(0, 0), // Center position
-        speed: currentSpeedRef.current
+        position: new THREE.Vector2(0, 0),
+        speed: currentSpeedRef.current,
+        startTime: startTimeRef.current // Pass exact start time for synchronization
       }
     }));
 
@@ -111,7 +119,7 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
   }, []);  // Only run on mount
 
   // Animation updates
-  useFrame(({clock}) => {
+  useFrame(() => {
     const currentTime = Date.now();
     
     // Check if we should create a new strike

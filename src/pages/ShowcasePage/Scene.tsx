@@ -10,13 +10,18 @@ interface SceneProps {
 }
 
 const Scene = ({ detail = 1.0, speed = 1.0 }: SceneProps) => {
-  // Use correct type for OrbitControls ref with default value
-  const controlsRef = useRef(null);
+  // Use object type instead of null
+  const controlsRef = useRef<any>();
 
   // Lock camera to horizontal rotation
   useFrame(() => {
     if (controlsRef.current) {
-      controlsRef.current.setPolarAngle(Math.PI / 2);
+      // Access controls object properties safely
+      const controls = controlsRef.current;
+      if (controls.minPolarAngle !== undefined) {
+        controls.minPolarAngle = Math.PI / 2;
+        controls.maxPolarAngle = Math.PI / 2;
+      }
     }
   });
 
@@ -24,6 +29,7 @@ const Scene = ({ detail = 1.0, speed = 1.0 }: SceneProps) => {
     <>
       <ambientLight intensity={0.15} />
       
+      {/* Rotated by 20 degrees around Y axis */}
       <group rotation={[0, Math.PI * 20 / 180, 0]}>
         <GroundPlane speed={speed} />
         <LightningController detail={detail} speed={speed} />
