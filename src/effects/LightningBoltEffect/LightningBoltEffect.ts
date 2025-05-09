@@ -23,6 +23,7 @@ export interface LightningBoltEffectConfig extends BaseEffectConfig {
   duration: number;          // Total duration in milliseconds
   randomSeed?: number;       // Optional seed for deterministic randomness
   speed?: number;            // Speed multiplier for animations
+  random: (seed: number) => number;
 }
 
 /**
@@ -40,7 +41,7 @@ export const DEFAULT_LIGHTNING_BOLT_CONFIG: LightningBoltEffectConfig = {
   maxBranches: 4,            // Number of branches
   duration: 1500,            // Total duration - must match with ground plane
   fadeOutDuration: 300,      // Fade out duration
-  speed: 1.0                 // Default speed
+  speed: 1.0,                 // Default speed
 };
 
 /**
@@ -158,13 +159,13 @@ export class LightningBoltEffect extends BaseEffect {
     // Get elapsed time in seconds and scale by current speed
     const elapsed = performance.now() / 1000 - this.startTime;
     const speedFactor = this.config.speed || 1.0;
-    
+
     // Scale time by speed factor
     const scaledElapsed = elapsed * speedFactor;
-    
+
     // Total animation time in seconds
     const totalDuration = this.config.duration / 1000; // Convert ms to seconds
-    
+
     // If past total duration, effect is done
     if (scaledElapsed > totalDuration) {
       this.terminateImmediately();
@@ -173,7 +174,7 @@ export class LightningBoltEffect extends BaseEffect {
 
     // Animation phases with 3 equal segments for precise synchronization
     const phaseLength = totalDuration / 3;
-    
+
     // Update animation based on scaled time with exact phases
     if (scaledElapsed < phaseLength) {
       // Fade in phase (0 - 1/3)
@@ -185,7 +186,7 @@ export class LightningBoltEffect extends BaseEffect {
           branch.material.opacity = progress;
         }
       });
-    } 
+    }
     else if (scaledElapsed < phaseLength * 2) {
       // Full brightness phase (1/3 - 2/3)
       this.animationPhase = 2; // Track phase
@@ -201,7 +202,7 @@ export class LightningBoltEffect extends BaseEffect {
       this.animationPhase = 3; // Track phase
       const fadeProgress = (scaledElapsed - phaseLength * 2) / phaseLength;
       const opacity = Math.max(0, 1.0 - fadeProgress);
-      
+
       this.material.opacity = opacity;
       this.branches.forEach(branch => {
         if (branch.material instanceof THREE.LineBasicMaterial) {

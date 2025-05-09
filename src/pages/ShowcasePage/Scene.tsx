@@ -11,7 +11,7 @@ interface SceneProps {
 
 const Scene = ({ detail = 1.0, speed = 1.0 }: SceneProps) => {
   // Use object type instead of null
-  const controlsRef = useRef<any>();
+  const controlsRef = useRef<any>(null);
 
   // Lock camera to horizontal rotation
   useFrame(() => {

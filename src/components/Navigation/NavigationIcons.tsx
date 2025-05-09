@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import * as THREE from 'three';
+import './NavigationIcons.css'
 
 interface NavigationIconsProps {
   currentPage: 'globe' | 'lightning' | 'bibliography';
@@ -15,23 +16,20 @@ const NavigationIcons: React.FC<NavigationIconsProps> = ({ currentPage }) => {
 
     // Create a mini globe animation
     const container = globeIconRef.current;
-    
-    // Setup scene
+
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-    camera.position.z = 2.5;
-    
+    camera.position.z = 2.7;
+
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     renderer.setSize(40, 40);
     renderer.setClearColor(0x000000, 0);
-    
-    // Clear existing content and append renderer
+
     while (container.firstChild) {
       container.removeChild(container.firstChild);
     }
     container.appendChild(renderer.domElement);
-    
-    // Create wireframe globe
+
     const geometry = new THREE.SphereGeometry(1, 12, 8);
     const wireframe = new THREE.WireframeGeometry(geometry);
     const line = new THREE.LineSegments(
@@ -39,17 +37,15 @@ const NavigationIcons: React.FC<NavigationIconsProps> = ({ currentPage }) => {
       new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 })
     );
     scene.add(line);
-    
-    // Animation
+
     const animate = () => {
       line.rotation.y += 0.01;
       renderer.render(scene, camera);
       return requestAnimationFrame(animate);
     };
-    
+
     const animationId = animate();
-    
-    // Cleanup
+
     return () => {
       cancelAnimationFrame(animationId);
       renderer.dispose();
@@ -73,9 +69,10 @@ const NavigationIcons: React.FC<NavigationIconsProps> = ({ currentPage }) => {
           <div ref={globeIconRef}></div>
         </Link>
       )}
-      
+
       {/* Lightning icon - top right */}
-      {currentPage !== 'lightning' && (
+      {/* {currentPage !== 'lightning' && ( */}
+      {
         <Link 
           to="/lightning" 
           className="nav-icon lightning-icon"
@@ -90,8 +87,8 @@ const NavigationIcons: React.FC<NavigationIconsProps> = ({ currentPage }) => {
             />
           </svg>
         </Link>
-      )}
-      
+      }
+
       {/* Bibliography icon - bottom right */}
       {currentPage !== 'bibliography' && (
         <Link 
@@ -113,43 +110,6 @@ const NavigationIcons: React.FC<NavigationIconsProps> = ({ currentPage }) => {
           </svg>
         </Link>
       )}
-      
-      <style jsx>{`
-        .nav-icon {
-          position: fixed;
-          width: 40px;
-          height: 40px;
-          background: rgba(0, 0, 0, 0.3);
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 1000;
-          transition: transform 0.2s ease;
-          backdrop-filter: blur(4px);
-          border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        
-        .nav-icon:hover {
-          transform: scale(1.2);
-          background: rgba(0, 0, 0, 0.5);
-        }
-        
-        .globe-icon {
-          top: 20px;
-          left: 20px;
-        }
-        
-        .lightning-icon {
-          top: 20px;
-          right: 20px;
-        }
-        
-        .bibliography-icon {
-          bottom: 20px;
-          right: 20px;
-        }
-      `}</style>
     </>
   );
 };

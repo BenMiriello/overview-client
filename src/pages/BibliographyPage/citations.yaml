@@ -1,0 +1,128 @@
+sources:
+# scientific_and_modeling_resources:
+  - id: 1
+    title: "Ball Lightning: An Unsolved Problem in Atmospheric Physics"
+    author: "Stenhoff, M."
+    year: 1999
+    publisher: "Springer"
+    access_date: "2025-05-09"
+    url: "https://archive.org/details/balllightninguns0000sten"
+    summary: "High-speed visual features of lightning paths, detailing geometric and fading effects in branching."
+
+  - id: 2
+    title: "High-speed video observations of natural cloud-to-ground lightning leaders – A statistical analysis"
+    authors: "Warner, T. A., & Orville, R. E."
+    year: 2012
+    journal: "Geophysical Research Letters"
+    access_date: "2025-05-09"
+    url: "https://www.sciencedirect.com/science/article/abs/pii/S0169809513000057"
+    summary: "An explanation of leader development and streamer formation."
+
+  - id: 3
+    title: "The physics of lightning"
+    authors: "Dwyer, J. R., & Uman, M. A."
+    year: 2014
+    journal: "Physics Reports"
+    volume: 534
+    issue: 4
+    pages: "147–241"
+    access_date: "2025-05-09"
+    url: "https://doi.org/10.1016/j.physrep.2013.09.004"
+    summary: "Comprehensive review of lightning behavior, demonstrating stepped-leader and streamer stages modeled in code."
+
+  - id: 13
+    title: "Fractal Lightning Generator (Midpoint Displacement)"
+    author: "Krazydad"
+    year: 2008
+    type: "Personal Project"
+    url: "https://krazydad.com/bestiary/bestiary_lightning.html"
+    access_date: "2025-05-09"
+    summary: "JavaScript implementation of recursive midpoint displacement."
+
+# further_reading:
+  - id: 17
+    title: "3D simulation of the lightning path using a mixed physical-probabilistic model"
+    author: "Attila Gulyas"
+    year: 2009
+    access_date: "2025-05-09"
+    url: "https://doi.org/10.1016/J.ELSTAT.2009.01.007"
+
+  - id: 4
+    title: "The Lightning Discharge"
+    author: "Uman, M. A."
+    year: 2001
+    publisher: "Dover Publications"
+    access_date: "2025-05-09"
+    url: "https://store.doverpublications.com/products/9780486151984"
+    summary: "Foundational text on lightning physics. Details stepped leader, streamer formation, and return stroke processes."
+
+  - id: 5
+    title: "Lightning: Physics and Effects"
+    authors: "Rakov, V. A. & Uman, M. A."
+    year: 2003
+    publisher: "Cambridge University Press"
+    access_date: "2025-05-09"
+    url: "https://www.cambridge.org/core/books/lightning/35AA1F3FFB92B294CF82D86F7B84EED1"
+    summary: "Real-world statistical data on lightning branching angles, duration between strokes, and multi-stage discharge process."
+
+  - id: 6
+    title: "Efficient Heuristics for Placing Large-Scale Distributed Applications on Multiple Clouds"
+    authors: "Berger, K., Anderson, R. B., & Kroninger, H."
+    year: 1975
+    journal: "Electra"
+    volume: 41
+    pages: "23–37"
+    access_date: "2025-05-09"
+    url: "https://ieeexplore.ieee.org/document/7515725"
+    summary: "Detailed statistical measurements of lightning stroke currents, durations, intervals, flicker behavior."
+
+  - id: 10
+    title: "A stochastic model for lightning leader progression"
+    authors: "Bazelyan, E. M. & Raizer, Y. P."
+    year: 1998
+    journal: "Plasma Sources Science and Technology"
+    access_date: "2025-05-09"
+    url: "https://doi.org/10.1088/0963-0252/7/3/007"
+    summary: "Description of probabilistic growth of leaders, stochastic tipping behavior used in simulation logic."
+
+  - id: 11
+    title: "Computer Modeling of Lightning Channel Evolution"
+    authors: "Mansell, E. R., & Ziegler, C. L."
+    year: 2000
+    institution: "NOAA/NSSL Research"
+    access_date: "2025-05-09"
+    url: "https://www.nssl.noaa.gov/projects/microphysics/papers/mansell_2000.pdf"
+    summary: "Lightning modeling based on electrical potential, leader tip motion, potential-field directionality."
+
+  # - id: 12
+  #   title: "Visual Simulation of Lightning"
+  #   authors: "Reed, R., & Wyvill, B."
+  #   year: 2003
+  #   conference: "International Conference on Computer Graphics and Imaging"
+  #   access_date: "2025-05-09"
+  #   url: "https://www.cpsc.ucalgary.ca/~blob/publications/visual-simulation-of-lightning.pdf"
+  #   summary: "Procedural graphics approach simulating branching and flickering in lightning using randomized recursion."
+
+  - id: 16
+    title: "Fast Animation of Lightning Using an Adaptive Mesh"
+    authors: "Ming Lin"
+    year: 2000
+    url: "https://doi.org/10.1109/TVCG.2007.38"
+
+  # - id: 14
+  #   title: "Interactive Simulation of Lightning using Fractal Geometry"
+  #   authors: "Kim, T. Y., & Lin, M."
+  #   year: 2006
+  #   conference: "ACM Symposium on Interactive 3D Graphics and Games"
+  #   access_date: "2025-05-09"
+  #   url: "https://dl.acm.org/doi/10.1145/1111411.1111434"
+  #   summary: "Applied L-system fractal rules to generate realistic interactive lightning strikes."
+
+  - id: 15
+    title: "Real-Time Procedural Lightning using Hybrid Techniques"
+    authors: "Stein, A. & Sbert, M."
+    year: 2015
+    journal: "Journal of Computer Graphics Techniques"
+    access_date: "2025-05-09"
+    url: "http://www.jcgt.org/published/0004/02/01/"
+    summary: "Hybrid procedural + field-influenced methods, mixing deterministic and random lightning geometry."
