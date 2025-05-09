@@ -12,6 +12,7 @@
     width: 100%;
     display: flex;
     justify-content: center;
+    gap: 20px;
     pointer-events: none;
 }
 

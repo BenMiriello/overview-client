@@ -2,11 +2,16 @@ import { useRef } from 'react';
 import { OrbitControls } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import GroundPlane from './GroundPlane';
-import CloudGrid from './CloudGrid';
 import LightningController from './LightningController';
 
-const Scene = ({ detail }: { detail: number | undefined }) => {
-  const controlsRef = useRef();
+interface SceneProps {
+  detail?: number;
+  speed?: number;
+}
+
+const Scene = ({ detail = 1.0, speed = 1.0 }: SceneProps) => {
+  // Set correct type for OrbitControls ref
+  const controlsRef = useRef<typeof OrbitControls>(null);
 
   // Lock camera to horizontal rotation
   useFrame(() => {
@@ -18,9 +23,13 @@ const Scene = ({ detail }: { detail: number | undefined }) => {
   return (
     <>
       <ambientLight intensity={0.15} />
-      <GroundPlane />
-      <CloudGrid />
-      <LightningController detail={detail} />
+      
+      {/* Rotated by 20 degrees around Y axis */}
+      <group rotation={[0, Math.PI * 20 / 180, 0]}>
+        <GroundPlane speed={speed} />
+        <LightningController detail={detail} speed={speed} />
+      </group>
+      
       <OrbitControls 
         ref={controlsRef}
         enableZoom={false}
