@@ -20,25 +20,27 @@ export interface LightningBoltEffectConfig extends BaseEffectConfig {
   branchChance: number;      // Probability (0-1) of creating a branch at each segment
   branchFactor: number;      // Length of the branches relative to main line
   maxBranches: number;       // Maximum number of branches
-  duration: number;
+  duration: number;          // Total duration in milliseconds
   randomSeed?: number;       // Optional seed for deterministic randomness
+  speed?: number;            // Speed multiplier for animations
 }
 
 /**
  * Default lightning bolt configuration
  */
 export const DEFAULT_LIGHTNING_BOLT_CONFIG: LightningBoltEffectConfig = {
-  startAltitude: 0.05, // Default that will be updated to match cloud layer height
-  endAltitude: 0.0005, // Very close to surface
-  color: 0xffffff,                           // Color: white
-  lineWidth: 3.5,                            // Thickness of line
-  lineSegments: 12,                          // More segments for smoother lightning
-  jitterAmount: 0.004,                       // Reduced to 1/5 of previous value
-  branchChance: 0.4,                         // Chance of branches
-  branchFactor: 0.7,                         // Length of branches
-  maxBranches: 4,                            // Number of branches
-  duration: 1000,                            // Total duration
-  fadeOutDuration: 300,                       // Fade out duration
+  startAltitude: 0.05,       // Default that will be updated to match cloud layer height
+  endAltitude: 0.0005,       // Very close to surface
+  color: 0xffffff,           // Color: white
+  lineWidth: 3.5,            // Thickness of line
+  lineSegments: 12,          // More segments for smoother lightning
+  jitterAmount: 0.004,       // Reduced to 1/5 of previous value
+  branchChance: 0.4,         // Chance of branches
+  branchFactor: 0.7,         // Length of branches
+  maxBranches: 4,            // Number of branches
+  duration: 1500,            // Total duration - must match with ground plane
+  fadeOutDuration: 300,      // Fade out duration
+  speed: 1.0                 // Default speed
 };
 
 /**
@@ -134,33 +136,40 @@ export class LightningBoltEffect extends BaseEffect {
     // If already terminated, don't continue
     if (this.isTerminated) return false;
 
-    const age = currentTime - this.createTime;
-
-    // Fixed animation durations
-    const drawDuration = 500;        // 0.5 seconds to draw the lightning strike
-    const displayDuration = 500;     // 0.5 seconds to keep it visible
-    const fadeOutDuration = 500;     // 0.5 seconds to fade out
-    const totalDuration = 1500;      // 1.5 seconds total
-
-    // If past total duration, effect is done
-    if (age > totalDuration) {
+    const elapsed = currentTime - this.createTime;
+    const speedFactor = this.config.speed || 1.0;
+    
+    // Calculate elapsed time adjusted by speed
+    const scaledElapsed = elapsed * speedFactor;
+    
+    // Total duration from config
+    const totalDuration = this.config.duration || 1500;
+    
+    // If past total duration (adjusted by speed), effect is done
+    if (scaledElapsed > totalDuration) {
       this.terminateImmediately();
       return false;
     }
 
-    // Animation phases
-    if (age <= drawDuration) {
-      // Drawing phase (0-0.5s)
-      const progress = age / drawDuration;
-      this.material.opacity = progress;
+    // Calculate animation phase (0.0 to 1.0)
+    const phase = scaledElapsed / totalDuration;
+    
+    // Animation phases: fade in (0-0.33), full brightness (0.33-0.66), fade out (0.66-1.0)
+    // This exactly matches the ground plane animation phases
+    if (phase < 0.33) {
+      // Fade in phase - progressive brightening
+      const fadeInProgress = phase / 0.33;
+      const opacity = fadeInProgress;
+      
+      this.material.opacity = opacity;
       this.branches.forEach(branch => {
         if (branch.material instanceof THREE.LineBasicMaterial) {
-          branch.material.opacity = progress;
+          branch.material.opacity = opacity;
         }
       });
     } 
-    else if (age <= drawDuration + displayDuration) {
-      // Static display phase (0.5-1.0s)
+    else if (phase < 0.66) {
+      // Full brightness phase
       this.material.opacity = 1.0;
       this.branches.forEach(branch => {
         if (branch.material instanceof THREE.LineBasicMaterial) {
@@ -169,10 +178,10 @@ export class LightningBoltEffect extends BaseEffect {
       });
     } 
     else {
-      // Fade out phase (1.0-1.5s)
-      const fadeProgress = (age - (drawDuration + displayDuration)) / fadeOutDuration;
-      const opacity = Math.max(0, 1.0 - fadeProgress);
-
+      // Fade out phase
+      const fadeOutProgress = (phase - 0.66) / 0.34;
+      const opacity = Math.max(0, 1.0 - fadeOutProgress);
+      
       this.material.opacity = opacity;
       this.branches.forEach(branch => {
         if (branch.material instanceof THREE.LineBasicMaterial) {

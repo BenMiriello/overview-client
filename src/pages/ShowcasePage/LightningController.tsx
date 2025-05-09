@@ -23,6 +23,12 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
   const strikeRef = useRef<LightningBoltEffect | null>(null);
   const timeRef = useRef<number>(0);
   const strikePending = useRef<boolean>(false);
+  const currentSpeedRef = useRef<number>(speed);
+
+  // Update the current speed ref when the prop changes
+  useEffect(() => {
+    currentSpeedRef.current = speed;
+  }, [speed]);
 
   // Create a lightning strike and coordinate with ground illumination
   const createNewStrike = () => {
@@ -32,11 +38,11 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
       strikeRef.current = null;
     }
 
-    // Mock globe element - adjusted to bring strike closer
+    // Mock globe element - adjusted to ensure strike reaches ground
     const mockGlobeEl: MockGlobeEl = {
       getCoords: (lat: number, lng: number, alt: number) => {
-        // Scale to fit properly in scene - adjusted height
-        const y = alt * 3.0 - 1.5; // Brought 25% closer again
+        // Make sure the strike extends all the way to the ground plane at y=-1.8
+        const y = alt * 3.0 - 1.5;
         return new THREE.Vector3(0, y, 0);
       },
       _mainSphere: {
@@ -46,17 +52,22 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
       }
     };
 
-    // Create strike config
+    // Create strike config with speed-adjusted durations
+    // Base duration scaled inversely by speed (faster speed = shorter duration)
+    const baseDuration = 1500; // Match this with ground plane animation
+    const duration = Math.round(baseDuration / currentSpeedRef.current);
+    
     const config = {
       ...DEFAULT_LIGHTNING_BOLT_CONFIG,
       startAltitude: 1.0,
-      endAltitude: 0.0,
+      endAltitude: -0.1, // Ensure it reaches below ground level (-1.8)
       lineSegments: Math.floor(10 * detail),
       lineWidth: 3 * detail,
       jitterAmount: 0.008 * detail,
       branchChance: 0.4 * detail,
       maxBranches: Math.floor(4 * detail),
-      duration: 1800, // Slightly longer duration to match grid fade
+      duration: duration, // Speed-adjusted duration
+      speed: currentSpeedRef.current // Pass speed directly to the effect
     };
 
     // Create centered strike
@@ -64,17 +75,22 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
     strike.initialize(scene, mockGlobeEl);
     strikeRef.current = strike;
 
-    // Notify ground to light up - at exactly the same time
+    // Notify ground to light up - trigger the event exactly when lightning starts
+    // The ground plane will handle timing synchronization
     window.dispatchEvent(new CustomEvent('lightning-strike', {
       detail: { 
-        position: new THREE.Vector2(0, 0),
-        speed: speed
+        position: new THREE.Vector2(0, 0), // Center position
+        speed: currentSpeedRef.current,
+        duration: duration // Pass duration to ensure synchronization
       }
     }));
 
     // Reset flags - interval between strikes adjusted by speed
     strikePending.current = false;
-    timeRef.current = Date.now() + (3000 + Math.random() * 2000) / speed;
+    // Faster speed = shorter interval between strikes
+    const baseInterval = 3500; // Base interval in milliseconds
+    const randomVariation = 1500; // Random variation to add unpredictability
+    timeRef.current = Date.now() + (baseInterval + Math.random() * randomVariation) / currentSpeedRef.current;
   };
 
   useEffect(() => {
@@ -106,7 +122,9 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
       // If strike is done and no new strike is pending, schedule a new one
       if (!isAlive && !strikePending.current) {
         strikePending.current = true;
-        setTimeout(createNewStrike, 500);
+        // Faster speed = shorter interval between strikes
+        const waitTime = 500 / currentSpeedRef.current;
+        setTimeout(createNewStrike, waitTime);
       }
     }
   });

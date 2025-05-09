@@ -80,7 +80,9 @@ export function createLightningStrikeGeometry(
   }
 
   // Last point is exact surface position
-  points.push(new THREE.Vector3(surfacePoint.x, surfacePoint.y, surfacePoint.z));
+  // Make sure it extends all the way to the ground (-1.8 in scene coordinates)
+  const groundPoint = new THREE.Vector3(surfacePoint.x, -1.8, surfacePoint.z);
+  points.push(groundPoint);
 
   return new THREE.BufferGeometry().setFromPoints(points);
 }

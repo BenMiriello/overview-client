@@ -10,8 +10,8 @@ interface SceneProps {
 }
 
 const Scene = ({ detail = 1.0, speed = 1.0 }: SceneProps) => {
-  // Set correct type for OrbitControls ref
-  const controlsRef = useRef<typeof OrbitControls>(null);
+  // Fix type for OrbitControls ref - using proper OrbitControls instance type
+  const controlsRef = useRef(null);
 
   // Lock camera to horizontal rotation
   useFrame(() => {
