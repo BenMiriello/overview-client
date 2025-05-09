@@ -1,6 +1,7 @@
 import { useRef, useCallback } from 'react';
 import { useLightningData } from '../services/dataStreams/hooks';
 import { StatusBar, GlobeComponent } from '../components';
+import { NavigationIcons } from '../components/Navigation';
 import { LightningLayer, CloudLayer } from '../layers';
 import { GlobeLayerManager } from '../managers';
 
@@ -39,8 +40,9 @@ const GlobePage = () => {
         lastUpdate={lastUpdate}
         lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
       />
+      <NavigationIcons currentPage="globe" />
     </div>
-  )
-}
+  );
+};
 
 export default GlobePage;

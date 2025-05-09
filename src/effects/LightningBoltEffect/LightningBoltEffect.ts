@@ -65,7 +65,6 @@ export class LightningBoltEffect extends BaseEffect {
     super(lat, lng, 0.5); // Default intensity
     this.config = { ...DEFAULT_LIGHTNING_BOLT_CONFIG, ...config };
     this.createTime = Date.now();
-    console.log('LightningBoltEffect constructor called', { lat, lng, config });
 
     const seed = this.config.randomSeed || Math.random() * 10000;
     this.random = createRandomGenerator(seed);
@@ -96,7 +95,6 @@ export class LightningBoltEffect extends BaseEffect {
   }
 
   initialize(scene: THREE.Scene, globeEl: any): void {
-    console.log('LightningBoltEffect initialize called', this.lat, this.lng);
     this.globeEl = globeEl;
     this.scene = scene;
     if (scene && !this.group.parent) {
