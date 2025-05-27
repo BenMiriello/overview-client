@@ -63,14 +63,14 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
         float getGrid(vec2 uv, float size) {
           // Calculate distance to nearest grid line 
           vec2 grid = abs(fract(uv * size - 0.5) - 0.5);
-          
+
           // Calculate very thick lines with fixed pixel width
           // Lower value = thicker lines (0.15 is very thick)
           vec2 pixelWidth = fwidth(uv * size) * 0.15;
-          
+
           // Create smooth grid lines with anti-aliasing to prevent pixelation
           vec2 lines = smoothstep(vec2(0.0), pixelWidth * 2.0, grid);
-          
+
           // Combine x and y lines
           return 1.0 - (lines.x * lines.y);
         }
@@ -79,35 +79,35 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
           // Calculate consistent grid with much darker color
           float primaryGrid = getGrid(vUv, 2.0);
           float secondaryGrid = getGrid(vUv, 16.0);
-          
+
           // Combine grids with same brightness
           float grid = max(primaryGrid, secondaryGrid);
-          
+
           // Create darker grid color (much dimmer gray)
           vec3 baseColor = vec3(0.0);
           vec3 gridLineColor = vec3(0.4, 0.4, 0.4); // Much darker gray (0.4 instead of 0.7)
           vec3 gridColor = mix(baseColor, gridLineColor, grid);
-          
+
           // Centered glow effect
           float dist = distance((vUv - 0.5) * 2.0, vec2(0.0));
           float glow = 1.0 - smoothstep(0.0, 0.5, dist); // Radial glow centered at origin
-          
+
           // Glow effect controlled by flashIntensity - slightly blue-white
           vec3 glowColor = vec3(0.9, 0.95, 1.0);
-          
+
           // Create grid with glow effect (reduced intensity)
           float glowStrength = flashIntensity * glow * 0.6; // Dimmer glow (0.6)
-          
+
           // Combine grid with glow 
           vec3 finalColor = mix(gridColor, glowColor, glowStrength);
-          
+
           // Fade out at edges
           float edgeFade = 1.0 - smoothstep(0.4, 0.95, length((vUv - 0.5) * 2.0));
           finalColor *= edgeFade;
-          
+
           // Calculate alpha for grid lines and glow
           float alpha = (grid * 0.7 + glowStrength * 0.5) * edgeFade;
-          
+
           gl_FragColor = vec4(finalColor, alpha);
         }
       `,
@@ -129,16 +129,16 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
       const now = performance.now() / 1000;
       const elapsed = now - flashData.current.startTime;
       const currentSpeed = flashData.current.currentSpeed;
-      
+
       // Apply speed factor to time
       const scaledElapsed = elapsed * currentSpeed;
       const totalDuration = 1.5; // Total animation time in seconds
-      
+
       if (scaledElapsed <= totalDuration) {
         // Animation phases exactly matching lightning effect
         const phase1 = totalDuration / 3; // First third: fade in
         const phase2 = phase1 * 2;        // Second third: full brightness
-        
+
         if (scaledElapsed < phase1) {
           // Fade in phase - perfectly synchronized with lightning 
           const fadeProgress = scaledElapsed / phase1;
@@ -153,7 +153,7 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
           const fadeProgress = (scaledElapsed - phase2) / phase1;
           flashData.current.intensity = Math.max(0, 1.0 - fadeProgress);
         }
-        
+
         // Update material
         materialRef.current.uniforms.flashIntensity.value = flashData.current.intensity;
       } else {
@@ -163,7 +163,7 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
         materialRef.current.uniforms.flashIntensity.value = 0;
       }
     }
-    
+
     // Update time uniform regardless
     if (materialRef.current) {
       materialRef.current.uniforms.time.value = clock.getElapsedTime();
@@ -176,7 +176,7 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
       // Get exact start time from strike event for perfect synchronization
       const startTime = event.detail?.startTime || performance.now() / 1000;
       const strikeSpeed = event.detail?.speed || speed;
-      
+
       // Reset flash data with exact same timing as the lightning strike
       flashData.current = {
         active: true,
@@ -196,7 +196,7 @@ const GroundPlane = ({ speed = 1.0 }: GroundPlaneProps) => {
 
     // Listen for custom lightning strike events
     window.addEventListener('lightning-strike', handleLightning as EventListener);
-    
+
     return () => {
       window.removeEventListener('lightning-strike', handleLightning as EventListener);
     };

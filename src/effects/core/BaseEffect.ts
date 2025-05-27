@@ -5,6 +5,7 @@ export abstract class BaseEffect implements Effect {
   protected scene: THREE.Scene | null = null;
   protected globeEl: any;
   protected isTerminated: boolean = false;
+  protected isCompleted: boolean = false;
   protected resources: (THREE.BufferGeometry | THREE.Material | THREE.Object3D)[] = [];
 
   constructor(
@@ -22,7 +23,15 @@ export abstract class BaseEffect implements Effect {
     this.resources.push(resource);
   }
 
-  terminateImmediately(): void {
+  protected markComplete(): void {
+    this.isCompleted = true;
+  }
+
+  isComplete(): boolean {
+    return this.isCompleted;
+  }
+
+  terminate(): void {
     if (this.isTerminated) return;
     this.isTerminated = true;
 
@@ -32,6 +41,10 @@ export abstract class BaseEffect implements Effect {
     }
 
     this.dispose();
+  }
+
+  terminateImmediately(): void {
+    this.terminate();
   }
 
   dispose(): void {

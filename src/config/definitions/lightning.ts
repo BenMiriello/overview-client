@@ -7,12 +7,7 @@ export const LightningConfig = {
 export const LightningBoltConfig = {
   startAltitude: 0.02, // Will be overwritten to sync with cloud height when cloud layer is enabled
   endAltitude: 0.0005,
-  lineWidth: 3.5,
-  lineSegments: 8,
-  jitterAmount: 0.02,
-  branchChance: 0.4,
-  branchFactor: 0.7,
-  maxBranches: 4,
+  resolution: 0.7,     // Complexity level (0-1)
   duration: 1000,
   fadeOutDuration: 300,
   color: 0xffffff

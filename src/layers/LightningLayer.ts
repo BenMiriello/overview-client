@@ -1,6 +1,6 @@
 import { BaseLayer } from './LayerInterface';
 import { LightningStrike } from '../models/LightningStrike';
-import { LightningBoltEffect } from '../effects/LightningBoltEffect/LightningBoltEffect';
+import { LightningBoltEffect, LightningBoltEffectConfig } from '../effects/LightningBoltEffect';
 import { PointMarkerEffect } from '../effects/PointMarkerEffect';
 import { getConfig, setConfig } from '../config';
 import { DataStream } from '../services/dataStreams/interfaces';
@@ -79,29 +79,24 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     if (this.lightningBoltEffects.has(strike.id)) {
       const oldEffect = this.lightningBoltEffects.get(strike.id);
       if (oldEffect) {
-        oldEffect.terminateImmediately();
+        oldEffect.terminate();
         this.lightningBoltEffects.delete(strike.id);
       }
     }
 
-    // Get lightning bolt configuration values
-    const config = {
+    const config: LightningBoltEffectConfig = {
+      lat: strike.lat,
+      lng: strike.lng,
       startAltitude: this.startAltitude,
-      lineWidth: getConfig<number>('layers.lightning.lightningBoltConfig.lineWidth')             || 3.5,
-      lineSegments: getConfig<number>('layers.lightning.lightningBoltConfig.lineSegments')       || 8,
-      jitterAmount: getConfig<number>('layers.lightning.lightningBoltConfig.jitterAmount')       || 0.02,
-      branchChance: getConfig<number>('layers.lightning.lightningBoltConfig.branchChance')       || 0.4,
-      branchFactor: getConfig<number>('layers.lightning.lightningBoltConfig.branchFactor')       || 0.7,
-      maxBranches: getConfig<number>('layers.lightning.lightningBoltConfig.maxBranches')         || 4,
-      duration: getConfig<number>('layers.lightning.lightningBoltConfig.duration')               || 1000,
-      fadeOutDuration: getConfig<number>('layers.lightning.lightningBoltConfig.fadeOutDuration') || 300
+      groundAltitude: 0,
+      resolution: getConfig<number>('layers.lightning.lightningBoltConfig.resolution') || 0.7,
+      seed: Math.random() * 10000,
+      enableScreenFlash: false, // Only enable for showcase
+      duration: getConfig<number>('layers.lightning.lightningBoltConfig.duration') || 1.0,
+      fadeTime: getConfig<number>('layers.lightning.lightningBoltConfig.fadeOutDuration') / 1000 || 0.3
     };
 
-    const effect = new LightningBoltEffect(strike.lat, strike.lng, config);
-
-    effect.initialize(this.scene, this.globeEl);
-    // Position at the surface level - the lightning bolt height is handled by its internal geometry
-    effect.positionOnGlobe(strike.lat, strike.lng, 0);
+    const effect = new LightningBoltEffect(this.scene, this.globeEl, config);
 
     this.lightningBoltEffects.set(strike.id, effect);
 
@@ -157,7 +152,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     removeIds.forEach(id => {
     const effect = this.lightningBoltEffects.get(id);
     if (effect) {
-    effect.terminateImmediately();
+    effect.terminate();
     this.lightningBoltEffects.delete(id);
     }
     });
@@ -169,7 +164,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
 
   private clearLightningBoltEffects(): void {
     this.lightningBoltEffects.forEach((effect) => {
-      effect.terminateImmediately();
+      effect.terminate();
     });
 
     this.lightningBoltEffects.clear();
@@ -183,7 +178,8 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     const completedLightningBoltIds: string[] = [];
 
     this.lightningBoltEffects.forEach((effect, id) => {
-      const isActive = effect.update(currentTime);
+      effect.update(currentTime);
+      const isActive = !effect.isComplete();
 
       if (!isActive) {
         completedLightningBoltIds.push(id);
@@ -200,7 +196,8 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     const completedMarkerIds: string[] = [];
 
     this.markerEffects.forEach((effect, id) => {
-      const isActive = effect.update(currentTime);
+      effect.update(currentTime);
+      const isActive = !effect.isComplete();
 
       if (!isActive) {
         completedMarkerIds.push(id);
@@ -231,13 +228,13 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     if (removeCount <= 0) return;
 
     markers.slice(0, removeCount).forEach(([id, effect]) => {
-      effect.terminateImmediately();
+      effect.terminate();
       this.markerEffects.delete(id);
 
       // Also remove any associated lightning bolt effect
       const lightningBolt = this.lightningBoltEffects.get(id);
       if (lightningBolt) {
-        lightningBolt.terminateImmediately();
+        lightningBolt.terminate();
         this.lightningBoltEffects.delete(id);
         this.activeEffects = this.activeEffects.filter(e => e.id !== id);
       }
@@ -255,13 +252,13 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   clear(): void {
     // Clear lightning bolt effects with proper cleanup
     this.lightningBoltEffects.forEach(effect => {
-      effect.terminateImmediately();
+      effect.terminate();
     });
     this.lightningBoltEffects.clear();
 
     // Clear markers with proper cleanup
     this.markerEffects.forEach(effect => {
-      effect.terminateImmediately();
+      effect.terminate();
     });
     this.markerEffects.clear();
 

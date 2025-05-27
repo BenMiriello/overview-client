@@ -114,7 +114,7 @@ export class PointMarkerEffect extends BaseEffect {
 
     // If past max age, effect is done
     if (age > this.config.maxAge) {
-      this.terminateImmediately();
+      this.markComplete();
       return false;
     }
 

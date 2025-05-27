@@ -1,346 +1,227 @@
 import * as THREE from 'three';
-import { BaseEffect } from '../core/BaseEffect';
-import { BaseEffectConfig } from '../core/EffectInterface';
-import { 
-  createRandomGenerator, 
-  createLightningStrikeGeometry, 
-  createBranches 
-} from './LightningStrikeLogic';
+import { Effect } from '../core/EffectInterface';
 
-/**
- * Configuration for lightning bolt effects
- */
-export interface LightningBoltEffectConfig extends BaseEffectConfig {
-  startAltitude: number;     // Starting height of the lightning strike (above surface)
-  endAltitude: number;       // Ending height of the lightning strike (surface level)
-  color: number;             // Color of the lightning (hex)
-  lineWidth: number;         // Width/thickness of the lines
-  lineSegments: number;      // Number of line segments
-  jitterAmount: number;      // How much randomness in the lightning path
-  branchChance: number;      // Probability (0-1) of creating a branch at each segment
-  branchFactor: number;      // Length of the branches relative to main line
-  maxBranches: number;       // Maximum number of branches
-  duration: number;          // Total duration in milliseconds
-  randomSeed?: number;       // Optional seed for deterministic randomness
-  speed?: number;            // Speed multiplier for animations
-  random: (seed: number) => number;
+import { SteppedLeader, ReturnStroke } from './physics';
+import { LeaderRenderer, StrokeRenderer, FlashEffect, ScreenFlashEffect } from './rendering';
+import { LightningConfig, LightningPhase, LightningCoordinateTransform } from './LightningTypes';
+
+export interface LightningBoltEffectConfig extends LightningConfig {
+  duration: number;
+  fadeTime: number;
 }
 
-/**
- * Default lightning bolt configuration
- */
-export const DEFAULT_LIGHTNING_BOLT_CONFIG: LightningBoltEffectConfig = {
-  startAltitude: 0.05,       // Default that will be updated to match cloud layer height
-  endAltitude: 0.0005,       // Very close to surface
-  color: 0xffffff,           // Color: white
-  lineWidth: 3.5,            // Thickness of line
-  lineSegments: 12,          // More segments for smoother lightning
-  jitterAmount: 0.004,       // Reduced to 1/5 of previous value
-  branchChance: 0.4,         // Chance of branches
-  branchFactor: 0.7,         // Length of branches
-  maxBranches: 4,            // Number of branches
-  duration: 1500,            // Total duration - must match with ground plane
-  fadeOutDuration: 300,      // Fade out duration
-  speed: 1.0,                 // Default speed
-};
-
-/**
- * Creates lightning bolt effects that can represent lightning strikes
- */
-export class LightningBoltEffect extends BaseEffect {
-  private geometry: THREE.BufferGeometry;
-  private material: THREE.LineBasicMaterial;
-  private mainLine: THREE.Line;
-  private branches: THREE.Line[] = [];
-  private group: THREE.Group;
+export class LightningBoltEffect implements Effect {
+  private scene: THREE.Scene;
+  private globeEl: any;
   private config: LightningBoltEffectConfig;
-  private createTime: number;
-  private startTime: number; // Track animation start time for synchronization 
-  private animationPhase: number = 0; // Track current animation phase
 
-  /**
-   * Create a new lightning bolt effect
-   */
-  constructor(
-    lat: number,
-    lng: number,
-    config: Partial<LightningBoltEffectConfig> = {}
-  ) {
-    super(lat, lng, 0.5); // Default intensity
-    this.config = { ...DEFAULT_LIGHTNING_BOLT_CONFIG, ...config };
-    this.createTime = Date.now();
-    this.startTime = performance.now() / 1000; // Convert to seconds
+  private phase: LightningPhase = LightningPhase.SEARCHING;
+  private phaseStartTime: number = 0;
+  private stepsTaken: number = 0;
 
-    const seed = this.config.randomSeed || Math.random() * 10000;
-    this.random = createRandomGenerator(seed);
+  private coordinateTransform: LightningCoordinateTransform;
+  private steppedLeader: SteppedLeader;
+  private returnStroke: ReturnStroke | null = null;
 
-    this.group = new THREE.Group();
-    // Set rendering order (higher renders on top)
-    this.group.renderOrder = 20;
+  private leaderRenderer: LeaderRenderer;
+  private strokeRenderer: StrokeRenderer;
+  private flashEffect: FlashEffect | null = null;
+  private screenFlash: ScreenFlashEffect | null = null;
 
-    // Initialize with empty geometry, will create actual geometry in initialize()
-    this.geometry = new THREE.BufferGeometry();
+  private mainGroup: THREE.Group;
 
-    this.material = new THREE.LineBasicMaterial({
-      color: this.config.color,
-      transparent: true,
-      opacity: 0, // Start invisible and fade in
-      linewidth: this.config.lineWidth,
-      depthWrite: false, // Don't write to depth buffer
-    });
+  private isCompleted: boolean = false;
+  private isTerminated: boolean = false;
 
-    this.mainLine = new THREE.Line(this.geometry, this.material);
-    this.group.add(this.mainLine);
-
-    // Register resources for cleanup
-    this.registerResource(this.geometry);
-    this.registerResource(this.material);
-    this.registerResource(this.group);
-    this.registerResource(this.mainLine);
-  }
-
-  /**
-   * Update the current speed setting
-   * This allows for immediate speed changes even during animation
-   */
-  updateSpeed(speed: number): void {
-    if (this.config.speed !== speed) {
-      this.config.speed = speed;
-    }
-  }
-
-  /**
-   * Set exact start time for synchronization with ground effect
-   */
-  setStartTime(time: number): void {
-    this.startTime = time;
-  }
-
-  initialize(scene: THREE.Scene, globeEl: any): void {
-    this.globeEl = globeEl;
+  constructor(scene: THREE.Scene, globeEl: any, config: LightningBoltEffectConfig) {
     this.scene = scene;
-    if (scene && !this.group.parent) {
-      scene.add(this.group);
-    }
+    this.globeEl = globeEl;
+    this.config = config;
 
-    // Now that we have globeEl, create the actual geometry
-    this.group.remove(this.mainLine);  // Remove old line with empty geometry
-    this.geometry = createLightningStrikeGeometry(
-      this.lat, 
-      this.lng, 
-      this.globeEl, 
-      this.config, 
-      this.random
-    );
-    this.mainLine = new THREE.Line(this.geometry, this.material);
-    this.group.add(this.mainLine);
+    this.coordinateTransform = new LightningCoordinateTransform(globeEl);
 
-    // Create branches after initialization when globeEl is available
-    const branchResult = createBranches(
-      this.globeEl,
-      this.config,
-      this.geometry,
-      this.material,
-      this.random,
-      (resource) => this.registerResource(resource)
+    const start = this.coordinateTransform.toWorldCoordinates(
+      config.lat,
+      config.lng,
+      config.startAltitude
     );
 
-    this.branches = branchResult.branches;
-    branchResult.lines.forEach(line => this.group.add(line));
+    const ground = this.coordinateTransform.getGroundPoint(config.lat, config.lng);
+
+    this.steppedLeader = new SteppedLeader(start, ground, config.seed);
+
+    this.leaderRenderer = new LeaderRenderer();
+    this.strokeRenderer = new StrokeRenderer();
+
+    this.mainGroup = new THREE.Group();
+    this.scene.add(this.mainGroup);
+
+    this.phaseStartTime = Date.now();
   }
 
-  /**
-   * Update the effect based on time
-   */
-  update(currentTime: number): boolean {
-    // If already terminated, don't continue
-    if (this.isTerminated) return false;
+  update(currentTime: number): void {
+    const phaseElapsed = (currentTime - this.phaseStartTime) / 1000;
 
-    // Get elapsed time in seconds and scale by current speed
-    const elapsed = performance.now() / 1000 - this.startTime;
-    const speedFactor = this.config.speed || 1.0;
+    switch (this.phase) {
+      case LightningPhase.SEARCHING:
+        this.updateSearchingPhase(phaseElapsed);
+        break;
 
-    // Scale time by speed factor
-    const scaledElapsed = elapsed * speedFactor;
+      case LightningPhase.CONNECTED:
+        this.updateConnectedPhase(phaseElapsed);
+        break;
 
-    // Total animation time in seconds
-    const totalDuration = this.config.duration / 1000; // Convert ms to seconds
+      case LightningPhase.STRIKING:
+        this.updateStrikingPhase(phaseElapsed);
+        break;
 
-    // If past total duration, effect is done
-    if (scaledElapsed > totalDuration) {
-      this.terminateImmediately();
-      return false;
+      case LightningPhase.FADING:
+        this.updateFadingPhase(phaseElapsed);
+        break;
     }
 
-    // Animation phases with 3 equal segments for precise synchronization
-    const phaseLength = totalDuration / 3;
-
-    // Update animation based on scaled time with exact phases
-    if (scaledElapsed < phaseLength) {
-      // Fade in phase (0 - 1/3)
-      const progress = scaledElapsed / phaseLength;
-      this.animationPhase = 1; // Track phase
-      this.material.opacity = progress;
-      this.branches.forEach(branch => {
-        if (branch.material instanceof THREE.LineBasicMaterial) {
-          branch.material.opacity = progress;
-        }
-      });
-    }
-    else if (scaledElapsed < phaseLength * 2) {
-      // Full brightness phase (1/3 - 2/3)
-      this.animationPhase = 2; // Track phase
-      this.material.opacity = 1.0;
-      this.branches.forEach(branch => {
-        if (branch.material instanceof THREE.LineBasicMaterial) {
-          branch.material.opacity = 1.0;
-        }
-      });
-    } 
-    else {
-      // Fade out phase (2/3 - 3/3)
-      this.animationPhase = 3; // Track phase
-      const fadeProgress = (scaledElapsed - phaseLength * 2) / phaseLength;
-      const opacity = Math.max(0, 1.0 - fadeProgress);
-
-      this.material.opacity = opacity;
-      this.branches.forEach(branch => {
-        if (branch.material instanceof THREE.LineBasicMaterial) {
-          branch.material.opacity = opacity;
-        }
-      });
+    if (this.flashEffect && !this.flashEffect.update()) {
+      this.mainGroup.remove(this.flashEffect.getLight());
+      this.flashEffect.dispose();
+      this.flashEffect = null;
     }
 
-    return true;
+    if (this.screenFlash && !this.screenFlash.update()) {
+      this.screenFlash = null;
+    }
   }
 
-  /**
-   * Update the starting altitude for this effect
-   */
-  updateStartAltitude(altitude: number): void {
-    if (this.config.startAltitude !== altitude) {
-      this.config.startAltitude = altitude;
+  private updateSearchingPhase(elapsed: number): void {
+    const stepInterval = 0.05; // Slower steps to be visible
+    const totalStepsNeeded = Math.floor(elapsed / stepInterval);
+    const stepsToTake = totalStepsNeeded - this.stepsTaken;
 
-      // Rebuild the geometry with the new altitude
-      if (this.group && this.group.parent) {
-        // Remove old line and create new one
-        this.group.remove(this.mainLine);
-        this.geometry = createLightningStrikeGeometry(
-          this.lat, 
-          this.lng, 
-          this.globeEl, 
-          this.config, 
-          this.random
-        );
-        this.mainLine = new THREE.Line(this.geometry, this.material);
-        this.group.add(this.mainLine);
+    for (let i = 0; i < stepsToTake && i < 2; i++) { // Fewer steps per frame
+      if (!this.steppedLeader.step()) {
+        this.transitionToPhase(LightningPhase.CONNECTED);
+        return;
+      }
+      this.stepsTaken++;
+    }
 
-        // Recreate branches with new coordinates
-        this.branches.forEach(branch => {
-          this.group.remove(branch);
-          if (branch.geometry) branch.geometry.dispose();
-          if (branch.material instanceof THREE.Material) branch.material.dispose();
-        });
-        this.branches = [];
+    // Clear previous frame's render
+    this.leaderRenderer.clear();
 
-        const branchResult = createBranches(
-          this.globeEl,
-          this.config,
-          this.geometry,
-          this.material,
-          this.random,
-          (resource) => this.registerResource(resource)
-        );
+    const leaderGroup = this.leaderRenderer.render(this.steppedLeader.getSegments());
+    this.mainGroup.add(leaderGroup);
+  }
 
-        this.branches = branchResult.branches;
-        branchResult.lines.forEach(line => this.group.add(line));
+  private updateConnectedPhase(elapsed: number): void {
+    // Keep showing stepped leader during this phase
+    const leaderGroup = this.leaderRenderer.render(this.steppedLeader.getSegments());
+    this.mainGroup.add(leaderGroup);
+
+    if (elapsed > 0.05) { // Shorter pause
+      this.returnStroke = new ReturnStroke(this.steppedLeader.getSegments());
+      this.transitionToPhase(LightningPhase.STRIKING);
+
+      if (this.config.enableScreenFlash) {
+        this.screenFlash = new ScreenFlashEffect(0.15);
       }
     }
   }
 
-  /**
-   * Position the effect on the globe
-   * With our new approach using world coordinates, we don't need to position or rotate the group
-   */
-  positionOnGlobe(lat: number, lng: number, altitude: number = 0): void {
-    if (!this.globeEl) return;
-
-    // Store lat/lng values for use in createLightningStrikeGeometry
-    this.lat = lat;
-    this.lng = lng;
-
-    // If we already initialized, we need to rebuild the geometry with the new coords
-    if (this.group && this.group.parent) {
-      // Remove old line and create new one
-      this.group.remove(this.mainLine);
-      this.geometry = createLightningStrikeGeometry(
-        this.lat, 
-        this.lng, 
-        this.globeEl, 
-        this.config, 
-        this.random
-      );
-      this.mainLine = new THREE.Line(this.geometry, this.material);
-      this.group.add(this.mainLine);
-
-      // Recreate branches with new coordinates
-      this.branches.forEach(branch => {
-        this.group.remove(branch);
-        if (branch.geometry) branch.geometry.dispose();
-        if (branch.material instanceof THREE.Material) branch.material.dispose();
-      });
-      this.branches = [];
-
-      const branchResult = createBranches(
-        this.globeEl,
-        this.config,
-        this.geometry,
-        this.material,
-        this.random,
-        (resource) => this.registerResource(resource)
-      );
-
-      this.branches = branchResult.branches;
-      branchResult.lines.forEach(line => this.group.add(line));
+  private updateStrikingPhase(elapsed: number): void {
+    if (!this.returnStroke) {
+      this.transitionToPhase(LightningPhase.FADING);
+      return;
     }
 
-    // Since we're using world coordinates directly, we don't need
-    // to position, rotate or scale the group
-    this.group.position.set(0, 0, 0);
-    this.group.quaternion.identity();
-    this.group.scale.set(1, 1, 1);
+    const flashIntensity = Math.exp(-elapsed * 4);
+
+    // Clear previous renders
+    this.leaderRenderer.clear();
+    this.mainGroup.clear();
+
+    const strokeGroup = this.strokeRenderer.render(
+      this.returnStroke.getStroke(),
+      flashIntensity
+    );
+    this.mainGroup.add(strokeGroup);
+
+    if (!this.flashEffect && elapsed < 0.05) {
+      const flash = this.returnStroke.getFlashEffect();
+      if (flash) {
+        this.flashEffect = new FlashEffect({
+          center: new THREE.Vector3(flash.center.x, flash.center.y, flash.center.z),
+          intensity: flash.intensity * 2, // Stronger flash
+          duration: 0.5,
+          color: new THREE.Color(0.9, 0.9, 1.0)
+        });
+        this.mainGroup.add(this.flashEffect.getLight());
+      }
+    } else if (this.flashEffect) {
+      // Re-add flash effect if it still exists
+      this.mainGroup.add(this.flashEffect.getLight());
+    }
+
+    if (elapsed > 0.3) { // Shorter strike phase
+      this.transitionToPhase(LightningPhase.FADING);
+    }
   }
 
-  /**
-   * Immediately terminate the effect and remove from scene
-   */
-  terminateImmediately(): void {
-    // Ensure all materials are set to zero opacity
-    this.material.opacity = 0;
-    this.branches.forEach(branch => {
-      if (branch.material instanceof THREE.LineBasicMaterial) {
-        branch.material.opacity = 0;
+  private updateFadingPhase(elapsed: number): void {
+    const fadeProgress = elapsed / this.config.fadeTime;
+
+    if (fadeProgress >= 1) {
+      this.markComplete();
+      return;
+    }
+
+    const opacity = 1 - fadeProgress;
+    this.mainGroup.traverse((child) => {
+      if (child instanceof THREE.Line) {
+        const material = child.material as THREE.LineBasicMaterial;
+        material.opacity = material.opacity * opacity;
       }
     });
-
-    super.terminateImmediately();
   }
 
-  /**
-   * Get the Three.js group containing the effect
-   */
-  getObject(): THREE.Group {
-    return this.group;
+  private transitionToPhase(newPhase: LightningPhase): void {
+    this.phase = newPhase;
+    this.phaseStartTime = Date.now();
+    this.stepsTaken = 0;
   }
 
-  /**
-   * Dispose resources
-   */
-  dispose(): void {
-    // Clear references
-    this.branches = [];
+  isComplete(): boolean {
+    return this.isCompleted;
+  }
 
-    // Call parent dispose to clean up registered resources
-    super.dispose();
+  protected markComplete(): void {
+    this.isCompleted = true;
+  }
+
+  terminate(): void {
+    if (this.isTerminated) return;
+    this.isTerminated = true;
+    this.leaderRenderer.dispose();
+    this.strokeRenderer.dispose();
+
+    if (this.flashEffect) {
+      this.mainGroup.remove(this.flashEffect.getLight());
+      this.flashEffect.dispose();
+    }
+
+    if (this.screenFlash) {
+      this.screenFlash.dispose();
+    }
+
+    if (this.mainGroup.parent) {
+      this.mainGroup.parent.remove(this.mainGroup);
+    }
+
+    this.mainGroup.traverse((child) => {
+      if (child instanceof THREE.Line) {
+        child.geometry.dispose();
+        if (child.material instanceof THREE.Material) {
+          child.material.dispose();
+        }
+      }
+    });
   }
 }

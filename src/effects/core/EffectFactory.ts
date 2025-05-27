@@ -41,7 +41,6 @@ export class EffectFactory {
           options.intensity || 0.5, 
           options.config
         );
-      // Future effect types can be added here
       default:
         console.warn(`Unknown effect type: ${type}`);
         return null;

@@ -33,7 +33,7 @@ const ShowcasePage = () => {
           />
           <span>{detail.toFixed(1)}</span>
         </div>
-        
+
         <div className="slider-container">
           <label htmlFor="speed-slider">Speed:</label>
           <input
