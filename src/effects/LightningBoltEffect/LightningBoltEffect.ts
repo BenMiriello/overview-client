@@ -1,89 +1,90 @@
 import * as THREE from 'three';
-import { Effect } from '../core/EffectInterface';
-
-import { SteppedLeader, ReturnStroke } from './physics';
-import { LeaderRenderer, StrokeRenderer, FlashEffect, ScreenFlashEffect } from './rendering';
-import { LightningConfig, LightningPhase, LightningCoordinateTransform } from './LightningTypes';
+import { simulateBolt, createConfig, DetailLevel, Vec3 } from './simulation';
+import { BoltAnimator, createTimeline, AnimationPhase } from './animation';
+import { BoltRenderer } from './rendering/BoltRenderer';
+import { ScreenFlashEffect } from './rendering/FlashEffect';
+import { LightningConfig, LightningCoordinateTransform } from './LightningTypes';
 
 export interface LightningBoltEffectConfig extends LightningConfig {
   duration: number;
   fadeTime: number;
+  detailLevel?: DetailLevel;
+  worldStart?: Vec3;
+  worldEnd?: Vec3;
 }
 
-export class LightningBoltEffect implements Effect {
-  private scene: THREE.Scene;
-  private globeEl: any;
+export class LightningBoltEffect {
   private config: LightningBoltEffectConfig;
 
-  private phase: LightningPhase = LightningPhase.SEARCHING;
-  private phaseStartTime: number = 0;
-  private stepsTaken: number = 0;
-
-  private coordinateTransform: LightningCoordinateTransform;
-  private steppedLeader: SteppedLeader;
-  private returnStroke: ReturnStroke | null = null;
-
-  private leaderRenderer: LeaderRenderer;
-  private strokeRenderer: StrokeRenderer;
-  private flashEffect: FlashEffect | null = null;
+  private animator: BoltAnimator | null = null;
+  private renderer: BoltRenderer;
   private screenFlash: ScreenFlashEffect | null = null;
-
-  private mainGroup: THREE.Group;
+  private screenFlashFired: boolean = false;
 
   private isCompleted: boolean = false;
   private isTerminated: boolean = false;
 
   constructor(scene: THREE.Scene, globeEl: any, config: LightningBoltEffectConfig) {
-    this.scene = scene;
-    this.globeEl = globeEl;
     this.config = config;
 
-    this.coordinateTransform = new LightningCoordinateTransform(globeEl);
+    this.renderer = new BoltRenderer(scene);
 
-    const start = this.coordinateTransform.toWorldCoordinates(
-      config.lat,
-      config.lng,
-      config.startAltitude
-    );
+    const detailLevel = config.detailLevel ?? DetailLevel.GLOBE;
+    const simConfig = createConfig(detailLevel);
 
-    const ground = this.coordinateTransform.getGroundPoint(config.lat, config.lng);
+    let worldStart: Vec3;
+    let worldEnd: Vec3;
 
-    this.steppedLeader = new SteppedLeader(start, ground, config.seed);
+    if (config.worldStart && config.worldEnd) {
+      worldStart = config.worldStart;
+      worldEnd = config.worldEnd;
+    } else {
+      const coordTransform = new LightningCoordinateTransform(globeEl);
+      const ws = coordTransform.toWorldCoordinates(config.lat, config.lng, config.startAltitude);
+      const we = coordTransform.getGroundPoint(config.lat, config.lng);
+      worldStart = { x: ws.x, y: ws.y, z: ws.z };
+      worldEnd = { x: we.x, y: we.y, z: we.z };
+    }
 
-    this.leaderRenderer = new LeaderRenderer();
-    this.strokeRenderer = new StrokeRenderer();
+    const normalizedStart: Vec3 = { x: 0, y: 0.5, z: 0 };
+    const normalizedEnd: Vec3 = { x: 0, y: -0.5, z: 0 };
 
-    this.mainGroup = new THREE.Group();
-    this.scene.add(this.mainGroup);
+    const result = simulateBolt({
+      start: normalizedStart,
+      end: normalizedEnd,
+      seed: config.seed ?? Date.now(),
+      config: simConfig,
+    });
 
-    this.phaseStartTime = Date.now();
+    const timeline = createTimeline(result.geometry, detailLevel);
+    this.animator = new BoltAnimator(result.geometry, timeline);
+    this.renderer.setGeometry(result.geometry, worldStart, worldEnd);
   }
 
   update(currentTime: number): void {
-    const phaseElapsed = (currentTime - this.phaseStartTime) / 1000;
+    if (this.isCompleted || this.isTerminated) return;
 
-    switch (this.phase) {
-      case LightningPhase.SEARCHING:
-        this.updateSearchingPhase(phaseElapsed);
-        break;
-
-      case LightningPhase.CONNECTED:
-        this.updateConnectedPhase(phaseElapsed);
-        break;
-
-      case LightningPhase.STRIKING:
-        this.updateStrikingPhase(phaseElapsed);
-        break;
-
-      case LightningPhase.FADING:
-        this.updateFadingPhase(phaseElapsed);
-        break;
+    if (!this.animator!.isStarted()) {
+      this.animator!.start(currentTime);
     }
 
-    if (this.flashEffect && !this.flashEffect.update()) {
-      this.mainGroup.remove(this.flashEffect.getLight());
-      this.flashEffect.dispose();
-      this.flashEffect = null;
+    const state = this.animator!.update(currentTime);
+
+    if (state.phase === AnimationPhase.COMPLETE) {
+      this.isCompleted = true;
+      return;
+    }
+
+    this.renderer.render(state);
+
+    if (
+      state.phase === AnimationPhase.RETURN_STROKE &&
+      state.strokeCount === 0 &&
+      !this.screenFlashFired &&
+      this.config.enableScreenFlash
+    ) {
+      this.screenFlashFired = true;
+      this.screenFlash = new ScreenFlashEffect(0.15);
     }
 
     if (this.screenFlash && !this.screenFlash.update()) {
@@ -91,137 +92,23 @@ export class LightningBoltEffect implements Effect {
     }
   }
 
-  private updateSearchingPhase(elapsed: number): void {
-    const stepInterval = 0.05; // Slower steps to be visible
-    const totalStepsNeeded = Math.floor(elapsed / stepInterval);
-    const stepsToTake = totalStepsNeeded - this.stepsTaken;
-
-    for (let i = 0; i < stepsToTake && i < 2; i++) { // Fewer steps per frame
-      if (!this.steppedLeader.step()) {
-        this.transitionToPhase(LightningPhase.CONNECTED);
-        return;
-      }
-      this.stepsTaken++;
-    }
-
-    // Clear previous frame's render
-    this.leaderRenderer.clear();
-
-    const leaderGroup = this.leaderRenderer.render(this.steppedLeader.getSegments());
-    this.mainGroup.add(leaderGroup);
-  }
-
-  private updateConnectedPhase(elapsed: number): void {
-    // Keep showing stepped leader during this phase
-    const leaderGroup = this.leaderRenderer.render(this.steppedLeader.getSegments());
-    this.mainGroup.add(leaderGroup);
-
-    if (elapsed > 0.05) { // Shorter pause
-      this.returnStroke = new ReturnStroke(this.steppedLeader.getSegments());
-      this.transitionToPhase(LightningPhase.STRIKING);
-
-      if (this.config.enableScreenFlash) {
-        this.screenFlash = new ScreenFlashEffect(0.15);
-      }
-    }
-  }
-
-  private updateStrikingPhase(elapsed: number): void {
-    if (!this.returnStroke) {
-      this.transitionToPhase(LightningPhase.FADING);
-      return;
-    }
-
-    const flashIntensity = Math.exp(-elapsed * 4);
-
-    // Clear previous renders
-    this.leaderRenderer.clear();
-    this.mainGroup.clear();
-
-    const strokeGroup = this.strokeRenderer.render(
-      this.returnStroke.getStroke(),
-      flashIntensity
-    );
-    this.mainGroup.add(strokeGroup);
-
-    if (!this.flashEffect && elapsed < 0.05) {
-      const flash = this.returnStroke.getFlashEffect();
-      if (flash) {
-        this.flashEffect = new FlashEffect({
-          center: new THREE.Vector3(flash.center.x, flash.center.y, flash.center.z),
-          intensity: flash.intensity * 2, // Stronger flash
-          duration: 0.5,
-          color: new THREE.Color(0.9, 0.9, 1.0)
-        });
-        this.mainGroup.add(this.flashEffect.getLight());
-      }
-    } else if (this.flashEffect) {
-      // Re-add flash effect if it still exists
-      this.mainGroup.add(this.flashEffect.getLight());
-    }
-
-    if (elapsed > 0.3) { // Shorter strike phase
-      this.transitionToPhase(LightningPhase.FADING);
-    }
-  }
-
-  private updateFadingPhase(elapsed: number): void {
-    const fadeProgress = elapsed / this.config.fadeTime;
-
-    if (fadeProgress >= 1) {
-      this.markComplete();
-      return;
-    }
-
-    const opacity = 1 - fadeProgress;
-    this.mainGroup.traverse((child) => {
-      if (child instanceof THREE.Line) {
-        const material = child.material as THREE.LineBasicMaterial;
-        material.opacity = material.opacity * opacity;
-      }
-    });
-  }
-
-  private transitionToPhase(newPhase: LightningPhase): void {
-    this.phase = newPhase;
-    this.phaseStartTime = Date.now();
-    this.stepsTaken = 0;
+  updateResolution(width: number, height: number): void {
+    this.renderer.updateResolution(width, height);
   }
 
   isComplete(): boolean {
     return this.isCompleted;
   }
 
-  protected markComplete(): void {
-    this.isCompleted = true;
-  }
-
   terminate(): void {
     if (this.isTerminated) return;
     this.isTerminated = true;
-    this.leaderRenderer.dispose();
-    this.strokeRenderer.dispose();
 
-    if (this.flashEffect) {
-      this.mainGroup.remove(this.flashEffect.getLight());
-      this.flashEffect.dispose();
-    }
+    this.renderer.dispose();
 
     if (this.screenFlash) {
       this.screenFlash.dispose();
+      this.screenFlash = null;
     }
-
-    if (this.mainGroup.parent) {
-      this.mainGroup.parent.remove(this.mainGroup);
-    }
-
-    this.mainGroup.traverse((child) => {
-      if (child instanceof THREE.Line) {
-        child.geometry.dispose();
-        if (child.material instanceof THREE.Material) {
-          child.material.dispose();
-        }
-      }
-    });
   }
 }

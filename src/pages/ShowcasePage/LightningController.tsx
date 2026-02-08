@@ -1,143 +1,102 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
-import { LightningBoltEffect, LightningBoltEffectConfig } from '../../effects/LightningBoltEffect';
+import { LightningBoltEffect, LightningBoltEffectConfig, DetailLevel } from '../../effects/LightningBoltEffect';
 
 interface LightningControllerProps {
   detail?: number;
   speed?: number;
 }
 
-interface MockGlobeEl {
-  getCoords: (lat: number, lng: number, alt: number) => THREE.Vector3;
-  _mainSphere: {
-    geometry: {
-      parameters: { radius: number }
-    }
-  };
-}
+const SHOWCASE_START = { x: 0, y: 1.5, z: 0 };
+const SHOWCASE_END = { x: 0, y: -1.8, z: 0 };
 
-// Mock globe element for showcase
-const mockGlobeEl: MockGlobeEl = {
-  getCoords: (lat: number, lng: number, alt: number) => {
-    // Map normalized altitude (0-1) to Y position in showcase scene
-    const groundY = -1.8;
-    const cloudY = 1.5;
-
-    const y = groundY + (cloudY - groundY) * alt;
-
-    // Add horizontal spread based on lat/lng
-    const spreadRadius = 0.5;
-    const x = lat * spreadRadius;
-    const z = lng * spreadRadius;
-
-    return new THREE.Vector3(x, y, z);
-  },
-  _mainSphere: {
-    geometry: {
-      parameters: { radius: 3 }
-    }
-  }
-};
-
-// LightningController - handles strike generation with improved timing
 const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerProps) => {
-  const { scene } = useThree();
+  const { scene, size } = useThree();
   const strikeRef = useRef<LightningBoltEffect | null>(null);
-  const timeRef = useRef<number>(0);
-  const strikePending = useRef<boolean>(false);
-  const currentSpeedRef = useRef<number>(speed);
-  const startTimeRef = useRef<number>(0);
+  const nextStrikeTime = useRef<number>(0);
+  const speedRef = useRef(speed);
 
-  // Update existing strike speed if one exists
   useEffect(() => {
-    currentSpeedRef.current = speed;
+    speedRef.current = speed;
   }, [speed]);
 
-  // Create a lightning strike with random position
-  const createNewStrike = () => {
-    // Clean up previous strike if it exists
+  const createNewStrike = useCallback(() => {
     if (strikeRef.current) {
       strikeRef.current.terminate();
       strikeRef.current = null;
     }
 
-    // Store exact start time for synchronization
-    startTimeRef.current = performance.now() / 1000;
-
-    // Base duration - same for all animations for synchronization
-    const baseDuration = 1500; // milliseconds
-
-    // Random position within reasonable bounds
-    const randomLat = (Math.random() - 0.5) * 2; // -1 to 1
-    const randomLng = (Math.random() - 0.5) * 2; // -1 to 1
+    const spread = 0.3;
+    const offsetX = (Math.random() - 0.5) * spread;
+    const offsetZ = (Math.random() - 0.5) * spread;
 
     const config: LightningBoltEffectConfig = {
-      lat: randomLat,
-      lng: randomLng,
-      startAltitude: 1.0,  // Normalized altitude (1.0 = cloud level)
-      groundAltitude: 0,   // Normalized altitude (0 = ground)
+      lat: 0,
+      lng: 0,
+      startAltitude: 1.0,
+      groundAltitude: 0,
       resolution: detail,
-      seed: Math.random() * 10000,
+      seed: Math.random() * 0xFFFFFFFF,
       enableScreenFlash: true,
-      duration: baseDuration / 1000,
-      fadeTime: 0.3
+      duration: 1.5,
+      fadeTime: 0.3,
+      detailLevel: DetailLevel.SHOWCASE,
+      worldStart: { x: offsetX, y: SHOWCASE_START.y, z: offsetZ },
+      worldEnd: { x: offsetX * 0.3, y: SHOWCASE_END.y, z: offsetZ * 0.3 },
     };
 
-    // Create centered strike
-    const strike = new LightningBoltEffect(scene, mockGlobeEl, config);
+    const strike = new LightningBoltEffect(scene, null, config);
+    strike.updateResolution(size.width, size.height);
     strikeRef.current = strike;
 
-    // Notify ground to light up with exact same start time
     window.dispatchEvent(new CustomEvent('lightning-strike', {
-      detail: { 
+      detail: {
         position: new THREE.Vector2(0, 0),
-        speed: currentSpeedRef.current,
-        startTime: startTimeRef.current // Pass exact start time for synchronization
+        speed: speedRef.current,
+        startTime: performance.now() / 1000,
       }
     }));
 
-    // Reset flags - interval between strikes adjusted by speed
-    strikePending.current = false;
+    const baseInterval = 3500;
+    const randomVariation = 1500;
+    nextStrikeTime.current = performance.now() + (baseInterval + Math.random() * randomVariation) / speedRef.current;
+  }, [scene, size.width, size.height, detail]);
 
-    // Calculate next strike time - faster speed = shorter interval
-    const baseInterval = 3500; // Base interval in milliseconds
-    const randomVariation = 1500; // Random variation to add unpredictability
-    timeRef.current = Date.now() + (baseInterval + Math.random() * randomVariation) / currentSpeedRef.current;
-  };
-
+  // Resolution updates
   useEffect(() => {
-    // Initial strike after a short delay
-    const timeout = setTimeout(createNewStrike, 500);
+    if (strikeRef.current) {
+      strikeRef.current.updateResolution(size.width, size.height);
+    }
+  }, [size.width, size.height]);
 
+  // Initial strike
+  useEffect(() => {
+    const timer = setTimeout(createNewStrike, 500);
     return () => {
-      clearTimeout(timeout);
+      clearTimeout(timer);
       if (strikeRef.current) {
         strikeRef.current.terminate();
+        strikeRef.current = null;
       }
     };
-  }, []);  // Only run on mount
+  }, []);
 
-  // Animation updates
   useFrame(() => {
-    const currentTime = Date.now();
+    const now = performance.now();
 
-    // Check if we should create a new strike
-    if (currentTime > timeRef.current && !strikePending.current) {
-      strikePending.current = true;
-      setTimeout(createNewStrike, 100);
+    if (strikeRef.current) {
+      strikeRef.current.update(now);
+
+      if (strikeRef.current.isComplete()) {
+        strikeRef.current.terminate();
+        strikeRef.current = null;
+        nextStrikeTime.current = now + 500 / speedRef.current;
+      }
     }
 
-    // Update existing strike with current speed
-    if (strikeRef.current) {
-      strikeRef.current.update(currentTime);
-      const isAlive = !strikeRef.current.isComplete();
-
-      // If strike is done and no new strike is pending, schedule a new one
-      if (!isAlive && !strikePending.current) {
-        strikePending.current = true;
-        setTimeout(createNewStrike, 500 / currentSpeedRef.current);
-      }
+    if (!strikeRef.current && now > nextStrikeTime.current) {
+      createNewStrike();
     }
   });
 
