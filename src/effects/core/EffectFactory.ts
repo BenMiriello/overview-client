@@ -7,11 +7,11 @@ import { PointMarkerEffect, PointMarkerConfig } from '../PointMarkerEffect';
  */
 export class EffectFactory {
   static createLightningBoltEffect(
-    lat: number, 
-    lng: number, 
+    _lat: number,
+    _lng: number,
     config?: Partial<LightningBoltEffectConfig>
   ): LightningBoltEffect {
-    return new LightningBoltEffect(lat, lng, config);
+    return new LightningBoltEffect(null as any, null, config as any);
   }
 
   static createPointMarkerEffect(
@@ -32,7 +32,7 @@ export class EffectFactory {
     switch (type.toLowerCase()) {
       case 'zigzag':
       case 'lightning':
-        return this.createLightningBoltEffect(lat, lng, options.config);
+        return this.createLightningBoltEffect(lat, lng, options.config) as unknown as Effect;
       case 'marker':
       case 'point':
         return this.createPointMarkerEffect(

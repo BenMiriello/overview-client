@@ -128,7 +128,7 @@ export class SteppedLeader {
   }
 
   private filterHeads(heads: Array<{point: Point3D, depth: number}>): Array<{point: Point3D, depth: number}> {
-    return heads.filter((h, i) => {
+    return heads.filter((h, _i) => {
       if (h.depth === 0) return true;
       if (h.depth > 2) return this.random() > 0.7;
       return this.random() > 0.3;

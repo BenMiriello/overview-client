@@ -80,13 +80,84 @@ function rotateAroundY(dir: Vec3, angle: number): Vec3 {
   };
 }
 
-function perturbDirection(dir: Vec3, amount: number, rng: SeededRNG): Vec3 {
+function perturbDirection(dir: Vec3, amount: number, rng: SeededRNG, downwardBias: number = 0): Vec3 {
   const perturb: Vec3 = {
     x: (rng.next() - 0.5) * 2 * amount,
-    y: (rng.next() - 0.5) * 2 * amount,
+    y: (rng.next() - 0.5) * 2 * amount - downwardBias,
     z: (rng.next() - 0.5) * 2 * amount,
   };
   return normalize(add(dir, perturb));
+}
+
+interface BranchContext {
+  segments: BoltSegment[];
+  nextSegmentId: number;
+}
+
+function addBranchesRecursive(
+  sourceSegments: BoltSegment[],
+  ctx: BranchContext,
+  config: SimulationConfig,
+  rng: SeededRNG,
+  depth: number,
+): void {
+  if (depth >= config.maxPostBranchDepth) return;
+
+  const branchProb = config.postBranchProb * Math.pow(config.subBranchProbDecay, depth);
+  const lengthMultiplier = Math.pow(config.subBranchLengthDecay, depth);
+  const intensity = 0.7 * Math.pow(config.branchIntensityDecay, depth);
+  const branchDepth = depth + 1;
+
+  const newBranchRoots: BoltSegment[] = [];
+
+  for (const seg of sourceSegments) {
+    if (rng.next() > branchProb) continue;
+
+    const mainDir = normalize(subtract(seg.end, seg.start));
+    const angleRange = config.postBranchAngleMax - config.postBranchAngleMin;
+    const angle = (config.postBranchAngleMin + rng.next() * angleRange) * Math.PI / 180;
+    const sign = rng.next() < 0.5 ? 1 : -1;
+    const branchDir = rotateAroundY(mainDir, angle * sign);
+
+    let pos = seg.end;
+    let dir = branchDir;
+    // Exponential distribution for branch lengths (many short, few long)
+    const u = rng.next();
+    const lambda = 3;
+    const t = -Math.log(1 - u * (1 - Math.exp(-lambda))) / lambda;
+    const baseBranchLength = config.postBranchMinLength + t * (config.postBranchMaxLength - config.postBranchMinLength);
+    const branchLength = Math.max(3, Math.floor(baseBranchLength * lengthMultiplier));
+    let parentId: number = seg.id;
+    let isFirstSegment = true;
+
+    for (let i = 0; i < branchLength; i++) {
+      const nextPos = add(pos, scale(dir, config.stepLength));
+      const newSeg: BoltSegment = {
+        id: ctx.nextSegmentId++,
+        start: pos,
+        end: nextPos,
+        depth: branchDepth,
+        parentSegmentId: parentId,
+        stepIndex: seg.stepIndex,
+        intensity,
+        isMainChannel: false,
+      };
+      ctx.segments.push(newSeg);
+
+      if (isFirstSegment) {
+        newBranchRoots.push(newSeg);
+        isFirstSegment = false;
+      }
+
+      dir = perturbDirection(dir, 0.2, rng, config.branchDownwardBias);
+      pos = nextPos;
+      parentId = newSeg.id;
+    }
+  }
+
+  if (newBranchRoots.length > 0) {
+    addBranchesRecursive(newBranchRoots, ctx, config, rng, depth + 1);
+  }
 }
 
 function addPostProcessBranches(
@@ -98,42 +169,12 @@ function addPostProcessBranches(
   const mainSegmentsSet = new Set(mainChannelIds);
   const mainSegments = segments.filter(s => mainSegmentsSet.has(s.id));
 
-  let nextSegmentId = segments.length > 0 ? Math.max(...segments.map(s => s.id)) + 1 : 0;
+  const ctx: BranchContext = {
+    segments,
+    nextSegmentId: segments.length > 0 ? Math.max(...segments.map(s => s.id)) + 1 : 0,
+  };
 
-  for (const seg of mainSegments) {
-    if (rng.next() > config.postBranchProb) continue;
-
-    const mainDir = normalize(subtract(seg.end, seg.start));
-    const angleRange = config.postBranchAngleMax - config.postBranchAngleMin;
-    const angle = (config.postBranchAngleMin + rng.next() * angleRange) * Math.PI / 180;
-    const sign = rng.next() < 0.5 ? 1 : -1;
-    const branchDir = rotateAroundY(mainDir, angle * sign);
-
-    let pos = seg.end;
-    let dir = branchDir;
-    const branchLengthRange = config.postBranchMaxLength - config.postBranchMinLength;
-    const branchLength = config.postBranchMinLength + Math.floor(rng.next() * branchLengthRange);
-    let parentId: number = seg.id;
-
-    for (let i = 0; i < branchLength; i++) {
-      const nextPos = add(pos, scale(dir, config.stepLength));
-      const newSeg: BoltSegment = {
-        id: nextSegmentId++,
-        start: pos,
-        end: nextPos,
-        depth: 1,
-        parentSegmentId: parentId,
-        stepIndex: seg.stepIndex,
-        intensity: 0.7,
-        isMainChannel: false,
-      };
-      segments.push(newSeg);
-
-      dir = perturbDirection(dir, 0.2, rng);
-      pos = nextPos;
-      parentId = newSeg.id;
-    }
-  }
+  addBranchesRecursive(mainSegments, ctx, config, rng, 0);
 }
 
 export function simulateBolt(input: SimulationInput): SimulationOutput {
@@ -216,20 +257,43 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
       }
     }
 
-    // Add a final segment to ground
+    // Create multiple jittered segments to ground (not one straight line)
     const closest = state.segments.find((s) => s.id === closestId)!;
-    const finalSeg: BoltSegment = {
-      id: state.nextSegmentId++,
-      start: closest.end,
-      end: { x: closest.end.x, y: end.y, z: closest.end.z },
-      depth: closest.depth,
-      parentSegmentId: closestId,
-      stepIndex: state.currentStep,
-      intensity: closest.intensity,
-      isMainChannel: false,
-    };
-    state.segments.push(finalSeg);
-    connectionSegmentId = finalSeg.id;
+    const distToGround = closest.end.y - end.y;
+    const numSteps = Math.max(1, Math.ceil(distToGround / config.stepLength));
+    const stepY = distToGround / numSteps;
+    const jitterAmount = config.stepLength * 1.5;
+
+    let pos = { ...closest.end };
+    let parentId = closestId;
+    let lastSegId = closestId;
+
+    for (let i = 0; i < numSteps; i++) {
+      const isLast = i === numSteps - 1;
+      const nextY = isLast ? end.y : pos.y - stepY;
+      const nextPos = {
+        x: pos.x + (rng.next() - 0.5) * jitterAmount,
+        y: nextY,
+        z: pos.z + (rng.next() - 0.5) * jitterAmount,
+      };
+
+      const seg: BoltSegment = {
+        id: state.nextSegmentId++,
+        start: pos,
+        end: nextPos,
+        depth: closest.depth,
+        parentSegmentId: parentId,
+        stepIndex: state.currentStep,
+        intensity: closest.intensity,
+        isMainChannel: false,
+      };
+      state.segments.push(seg);
+      lastSegId = seg.id;
+      parentId = seg.id;
+      pos = nextPos;
+    }
+
+    connectionSegmentId = lastSegId;
     didConnect = true;
   }
 
