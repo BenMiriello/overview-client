@@ -8,4 +8,7 @@ export default defineConfig({
     react(),
     ViteYaml(),
   ],
+  server: {
+    port: 5273,
+  },
 })

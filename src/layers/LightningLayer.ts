@@ -93,7 +93,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
       seed: Math.random() * 10000,
       enableScreenFlash: false, // Only enable for showcase
       duration: getConfig<number>('layers.lightning.lightningBoltConfig.duration') || 1.0,
-      fadeTime: getConfig<number>('layers.lightning.lightningBoltConfig.fadeOutDuration') / 1000 || 0.3
+      fadeTime: (getConfig<number>('layers.lightning.lightningBoltConfig.fadeOutDuration') ?? 300) / 1000
     };
 
     const effect = new LightningBoltEffect(this.scene, this.globeEl, config);

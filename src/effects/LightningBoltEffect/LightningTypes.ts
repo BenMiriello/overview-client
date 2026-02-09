@@ -1,11 +1,6 @@
-import { Point3D } from './physics';
+import { Vec3 } from './simulation';
 
-export enum LightningPhase {
-  SEARCHING = 'searching',
-  CONNECTED = 'connected',
-  STRIKING = 'striking',
-  FADING = 'fading'
-}
+export { DetailLevel } from './simulation';
 
 export interface LightningConfig {
   lat: number;
@@ -20,12 +15,12 @@ export interface LightningConfig {
 export class LightningCoordinateTransform {
   constructor(private globeEl: any) {}
 
-  toWorldCoordinates(lat: number, lng: number, altitude: number): Point3D {
+  toWorldCoordinates(lat: number, lng: number, altitude: number): Vec3 {
     const coords = this.globeEl.getCoords(lat, lng, altitude);
     return { x: coords.x, y: coords.y, z: coords.z };
   }
 
-  getGroundPoint(lat: number, lng: number): Point3D {
+  getGroundPoint(lat: number, lng: number): Vec3 {
     const surface = this.globeEl.getCoords(lat, lng, 0);
     return { x: surface.x, y: surface.y, z: surface.z };
   }

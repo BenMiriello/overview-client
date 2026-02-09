@@ -46,6 +46,14 @@ export interface SimulationConfig {
   postBranchMaxLength: number;
   postBranchAngleMin: number;
   postBranchAngleMax: number;
+  // Visual realism parameters
+  mainChannelJitter: number;
+  jitterDecayRate: number;
+  branchDownwardBias: number;
+  maxPostBranchDepth: number;
+  subBranchProbDecay: number;
+  subBranchLengthDecay: number;
+  branchIntensityDecay: number;
 }
 
 export interface FieldConfig {

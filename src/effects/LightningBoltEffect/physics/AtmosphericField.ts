@@ -13,10 +13,7 @@ export interface FieldPoint {
 
 export class AtmosphericField {
   private field: Map<string, ElectricField> = new Map();
-  private seed: number;
-
-  constructor(seed: number = Date.now()) {
-    this.seed = seed;
+  constructor(_seed: number = Date.now()) {
   }
 
   private hash(x: number, y: number, z: number): string {
@@ -87,8 +84,6 @@ export class AtmosphericField {
 
     if (!this.field.has(key)) {
       const baseAltitude = y;
-      const distanceFromCenter = Math.sqrt(x * x + z * z);
-
       const humidityNoise = this.noise3D(x * 0.05, y * 0.05, z * 0.05);
       const ionizationNoise = this.noise3D(x * 0.1 + 100, y * 0.1, z * 0.1 + 100);
 
