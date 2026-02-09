@@ -230,16 +230,19 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
     if (isConnected) {
       connected = true;
       connectionSegmentId = primarySegId;
-    } else if (head.depth === 0) {
-      // Only main channel continues - branches are dead-ends
-      newHeads.push({
-        id: state.nextHeadId++,
-        position: jitteredPosition,
-        direction: primary.direction,
-        depth: head.depth,
-        parentSegmentId: primarySegId,
-        stepIndex: state.currentStep,
-      });
+    } else {
+      // All depths continue, but branches have probability-based survival
+      const survivalProb = Math.pow(config.branchSurvivalDecay, head.depth);
+      if (head.depth === 0 || state.rng.next() < survivalProb) {
+        newHeads.push({
+          id: state.nextHeadId++,
+          position: jitteredPosition,
+          direction: primary.direction,
+          depth: head.depth,
+          parentSegmentId: primarySegId,
+          stepIndex: state.currentStep,
+        });
+      }
     }
 
     // Spawn branch heads from selectForHead results
@@ -263,8 +266,20 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
       });
 
       addChannelPoint(state.fieldCtx, branchPos);
-      // Branches are dead-ends during real-time growth
-      // Post-process will add longer visible branches after main channel completes
+
+      // Spawned branches can continue growing with survival probability
+      const branchDepth = head.depth + 1;
+      const survivalProb = Math.pow(config.branchSurvivalDecay, branchDepth);
+      if (state.rng.next() < survivalProb) {
+        newHeads.push({
+          id: state.nextHeadId++,
+          position: branchPos,
+          direction: branchCandidate.direction,
+          depth: branchDepth,
+          parentSegmentId: branchSegId,
+          stepIndex: state.currentStep,
+        });
+      }
     }
 
     if (state.segments.length >= config.maxSegments) break;

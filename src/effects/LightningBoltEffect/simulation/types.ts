@@ -35,6 +35,7 @@ export interface SimulationConfig {
   coneHalfAngle: number;
   maxBranchDepth: number;
   baseBranchProb: number;
+  branchSurvivalDecay: number;
   branchProgressDecay: number;
   maxBranchesPerStep: number;
   fieldConfig: FieldConfig;

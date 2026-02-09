@@ -11,6 +11,7 @@ export class BoltAnimator {
 
   private segmentById: Map<number, { depth: number; parentSegmentId: number | null; stepIndex: number; intensity: number; isMainChannel: boolean }>;
   private mainChannelReversed: number[];
+  private connectedSegments: Set<number>;
 
   constructor(geometry: BoltGeometry, timeline: BoltTimeline, speed: number = 1.0) {
     this.geometry = geometry;
@@ -30,21 +31,22 @@ export class BoltAnimator {
 
     // Main channel from ground upward (reversed for return stroke)
     this.mainChannelReversed = [...geometry.mainChannelIds].reverse();
+
+    // Build set of segments connected to main channel
+    this.connectedSegments = new Set(geometry.mainChannelIds);
+    const mainChannelSet = new Set(geometry.mainChannelIds);
+    for (const seg of geometry.segments) {
+      if (!seg.isMainChannel && seg.parentSegmentId !== null) {
+        if (mainChannelSet.has(seg.parentSegmentId) || this.connectedSegments.has(seg.parentSegmentId)) {
+          this.connectedSegments.add(seg.id);
+        }
+      }
+    }
   }
 
   start(currentTime: number): void {
     this.startTime = currentTime;
     this.started = true;
-    console.log('[BoltAnimator] Started:', {
-      startTime: currentTime,
-      speed: this.speed,
-      timeline: {
-        leaderDuration: this.timeline.leaderDuration,
-        totalSteps: this.timeline.totalSteps,
-        subsequentStrokes: this.timeline.subsequentStrokes,
-      },
-      segments: this.geometry.segments.length,
-    });
   }
 
   isStarted(): boolean {
@@ -56,8 +58,6 @@ export class BoltAnimator {
     return this.computeState(elapsed);
   }
 
-  private lastLoggedPhase: string = '';
-
   private computeState(elapsedMs: number): AnimationState {
     const { leaderDuration, connectionPause, returnStrokeDuration, strokeHoldDuration, fadeDuration, interstrokeInterval, subsequentStrokes } = this.timeline;
 
@@ -66,18 +66,10 @@ export class BoltAnimator {
 
     if (elapsedMs < leaderEnd) {
       const progress = elapsedMs / leaderEnd;
-      if (this.lastLoggedPhase !== 'LEADER' || Math.floor(progress * 10) !== Math.floor((elapsedMs - 16) / leaderEnd * 10)) {
-        this.lastLoggedPhase = 'LEADER';
-        console.log('[BoltAnimator] LEADER phase:', { elapsedMs: Math.round(elapsedMs), progress: progress.toFixed(2) });
-      }
       return this.leaderState(progress);
     }
 
     if (elapsedMs < pauseEnd) {
-      if (this.lastLoggedPhase !== 'PAUSE') {
-        this.lastLoggedPhase = 'PAUSE';
-        console.log('[BoltAnimator] CONNECTION_PAUSE phase:', { elapsedMs: Math.round(elapsedMs) });
-      }
       return this.connectionPauseState();
     }
 
@@ -114,11 +106,16 @@ export class BoltAnimator {
     const visible = new Set<number>();
     const brightness = new Map<number, number>();
 
+    const tipDistance = 5;
+
     for (const seg of this.geometry.segments) {
       if (seg.stepIndex <= targetStep) {
         visible.add(seg.id);
         const age = targetStep - seg.stepIndex;
-        const b = Math.max(0.3, 1 - age * 0.02) * seg.intensity;
+        const isTip = age < tipDistance;
+        const tipBrightness = isTip ? (1 - age / tipDistance) * 0.8 + 0.2 : 0;
+        const trailBrightness = Math.max(0.02, 0.15 * Math.exp(-age * 0.1));
+        const b = (isTip ? tipBrightness : trailBrightness) * seg.intensity;
         brightness.set(seg.id, b);
       }
     }
@@ -175,8 +172,12 @@ export class BoltAnimator {
 
     for (const seg of this.geometry.segments) {
       if (!seg.isMainChannel) {
-        const parentBrightness = brightness.get(seg.parentSegmentId!) ?? 0;
-        brightness.set(seg.id, parentBrightness * 0.3 * Math.exp(-seg.depth * 0.5));
+        if (this.connectedSegments.has(seg.id)) {
+          const parentBrightness = brightness.get(seg.parentSegmentId!) ?? 0;
+          brightness.set(seg.id, parentBrightness * 0.5 * Math.exp(-seg.depth * 0.3));
+        } else {
+          brightness.set(seg.id, 0.02 * Math.exp(-seg.depth * 0.5));
+        }
       }
     }
 
@@ -201,8 +202,10 @@ export class BoltAnimator {
     for (const seg of this.geometry.segments) {
       if (seg.isMainChannel) {
         brightness.set(seg.id, peak * decay);
+      } else if (this.connectedSegments.has(seg.id)) {
+        brightness.set(seg.id, 0.4 * Math.exp(-seg.depth * 0.3) * peak * decay);
       } else {
-        brightness.set(seg.id, 0.2 * Math.exp(-seg.depth * 0.5) * peak * decay);
+        brightness.set(seg.id, 0.02 * Math.exp(-seg.depth * 0.5) * decay);
       }
     }
 
@@ -223,9 +226,19 @@ export class BoltAnimator {
     const brightness = new Map<number, number>();
 
     for (const seg of this.geometry.segments) {
-      const base = seg.isMainChannel ? peak : 0.2 * Math.exp(-seg.depth * 0.5) * peak;
-      const mainFade = seg.isMainChannel ? (1 - fadeProgress * 0.7) : (1 - fadeProgress);
-      brightness.set(seg.id, base * Math.max(0, mainFade));
+      let base: number;
+      let fadeRate: number;
+      if (seg.isMainChannel) {
+        base = peak;
+        fadeRate = 0.7;
+      } else if (this.connectedSegments.has(seg.id)) {
+        base = 0.4 * Math.exp(-seg.depth * 0.3) * peak;
+        fadeRate = 0.85;
+      } else {
+        base = 0.02 * Math.exp(-seg.depth * 0.5);
+        fadeRate = 1.0;
+      }
+      brightness.set(seg.id, base * Math.max(0, 1 - fadeProgress * fadeRate));
     }
 
     return {
@@ -258,10 +271,6 @@ export class BoltAnimator {
   }
 
   private completeState(): AnimationState {
-    if (this.lastLoggedPhase !== 'COMPLETE') {
-      this.lastLoggedPhase = 'COMPLETE';
-      console.log('[BoltAnimator] COMPLETE');
-    }
     return {
       phase: AnimationPhase.COMPLETE,
       phaseProgress: 1,
