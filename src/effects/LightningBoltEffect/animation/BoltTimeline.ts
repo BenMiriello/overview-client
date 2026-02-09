@@ -16,22 +16,22 @@ export interface BoltTimeline {
 
 const TIMELINE_PRESETS: Record<DetailLevel, Omit<BoltTimeline, 'totalSteps' | 'connectionStep' | 'mainChannelLength'>> = {
   [DetailLevel.GLOBE]: {
-    leaderDuration: 200,
-    connectionPause: 30,
-    returnStrokeDuration: 50,
-    strokeHoldDuration: 80,
-    fadeDuration: 200,
-    subsequentStrokes: 2,
-    interstrokeInterval: 60,
+    leaderDuration: 250,
+    connectionPause: 20,
+    returnStrokeDuration: 40,
+    strokeHoldDuration: 60,
+    fadeDuration: 300,
+    subsequentStrokes: 1,
+    interstrokeInterval: 40,
   },
   [DetailLevel.SHOWCASE]: {
     leaderDuration: 800,
-    connectionPause: 50,
-    returnStrokeDuration: 80,
-    strokeHoldDuration: 150,
-    fadeDuration: 400,
-    subsequentStrokes: 4,
-    interstrokeInterval: 80,
+    connectionPause: 30,
+    returnStrokeDuration: 60,
+    strokeHoldDuration: 100,
+    fadeDuration: 500,
+    subsequentStrokes: 1,
+    interstrokeInterval: 50,
   },
 };
 

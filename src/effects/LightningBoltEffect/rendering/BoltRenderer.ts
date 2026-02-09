@@ -94,6 +94,8 @@ export class BoltRenderer {
   }
 
   render(state: AnimationState): void {
+    const BRIGHTNESS_THRESHOLD = 0.05;
+
     // Update each depth group's colors based on brightness
     for (const [depth, group] of this.depthGroups) {
       const { colors, segmentIds, geometry: geom } = group;
@@ -102,9 +104,10 @@ export class BoltRenderer {
 
       for (let i = 0; i < segmentIds.length; i++) {
         const segId = segmentIds[i];
-        const brightness = state.segmentBrightness.get(segId) ?? 0;
+        const rawBrightness = state.segmentBrightness.get(segId) ?? 0;
         const visible = state.visibleSegments.has(segId);
-        const alpha = visible ? brightness : 0;
+        // Below threshold = completely invisible
+        const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD) ? rawBrightness : 0;
 
         const r = baseColor.r * alpha;
         const g = baseColor.g * alpha;
@@ -131,9 +134,10 @@ export class BoltRenderer {
 
       for (let i = 0; i < segmentIds.length; i++) {
         const segId = segmentIds[i];
-        const brightness = state.segmentBrightness.get(segId) ?? 0;
+        const rawBrightness = state.segmentBrightness.get(segId) ?? 0;
         const visible = state.visibleSegments.has(segId);
-        const alpha = visible ? brightness * 0.4 : 0;
+        // Below threshold = completely invisible
+        const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD) ? rawBrightness * 0.4 : 0;
 
         const ci = i * 6;
         colors[ci] = 0.67 * alpha;
