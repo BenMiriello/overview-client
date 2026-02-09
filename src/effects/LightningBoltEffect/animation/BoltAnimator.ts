@@ -5,15 +5,17 @@ import { AnimationPhase, AnimationState } from './types';
 export class BoltAnimator {
   private geometry: BoltGeometry;
   private timeline: BoltTimeline;
+  private speed: number;
   private startTime: number = 0;
   private started: boolean = false;
 
   private segmentById: Map<number, { depth: number; parentSegmentId: number | null; stepIndex: number; intensity: number; isMainChannel: boolean }>;
   private mainChannelReversed: number[];
 
-  constructor(geometry: BoltGeometry, timeline: BoltTimeline) {
+  constructor(geometry: BoltGeometry, timeline: BoltTimeline, speed: number = 1.0) {
     this.geometry = geometry;
     this.timeline = timeline;
+    this.speed = Math.max(0.01, speed); // Prevent 0 or negative speeds
 
     this.segmentById = new Map();
     for (const seg of geometry.segments) {
@@ -33,6 +35,16 @@ export class BoltAnimator {
   start(currentTime: number): void {
     this.startTime = currentTime;
     this.started = true;
+    console.log('[BoltAnimator] Started:', {
+      startTime: currentTime,
+      speed: this.speed,
+      timeline: {
+        leaderDuration: this.timeline.leaderDuration,
+        totalSteps: this.timeline.totalSteps,
+        subsequentStrokes: this.timeline.subsequentStrokes,
+      },
+      segments: this.geometry.segments.length,
+    });
   }
 
   isStarted(): boolean {
@@ -40,9 +52,11 @@ export class BoltAnimator {
   }
 
   update(currentTime: number): AnimationState {
-    const elapsed = currentTime - this.startTime;
+    const elapsed = (currentTime - this.startTime) * this.speed;
     return this.computeState(elapsed);
   }
+
+  private lastLoggedPhase: string = '';
 
   private computeState(elapsedMs: number): AnimationState {
     const { leaderDuration, connectionPause, returnStrokeDuration, strokeHoldDuration, fadeDuration, interstrokeInterval, subsequentStrokes } = this.timeline;
@@ -51,10 +65,19 @@ export class BoltAnimator {
     const pauseEnd = leaderEnd + connectionPause;
 
     if (elapsedMs < leaderEnd) {
-      return this.leaderState(elapsedMs / leaderEnd);
+      const progress = elapsedMs / leaderEnd;
+      if (this.lastLoggedPhase !== 'LEADER' || Math.floor(progress * 10) !== Math.floor((elapsedMs - 16) / leaderEnd * 10)) {
+        this.lastLoggedPhase = 'LEADER';
+        console.log('[BoltAnimator] LEADER phase:', { elapsedMs: Math.round(elapsedMs), progress: progress.toFixed(2) });
+      }
+      return this.leaderState(progress);
     }
 
     if (elapsedMs < pauseEnd) {
+      if (this.lastLoggedPhase !== 'PAUSE') {
+        this.lastLoggedPhase = 'PAUSE';
+        console.log('[BoltAnimator] CONNECTION_PAUSE phase:', { elapsedMs: Math.round(elapsedMs) });
+      }
       return this.connectionPauseState();
     }
 
@@ -235,6 +258,10 @@ export class BoltAnimator {
   }
 
   private completeState(): AnimationState {
+    if (this.lastLoggedPhase !== 'COMPLETE') {
+      this.lastLoggedPhase = 'COMPLETE';
+      console.log('[BoltAnimator] COMPLETE');
+    }
     return {
       phase: AnimationPhase.COMPLETE,
       phaseProgress: 1,

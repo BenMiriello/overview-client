@@ -230,8 +230,8 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
     if (isConnected) {
       connected = true;
       connectionSegmentId = primarySegId;
-    } else {
-      // Continue main channel head (all depths can continue, not just depth 0)
+    } else if (head.depth === 0) {
+      // Only main channel continues - branches are dead-ends
       newHeads.push({
         id: state.nextHeadId++,
         position: jitteredPosition,
@@ -263,19 +263,8 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
       });
 
       addChannelPoint(state.fieldCtx, branchPos);
-
-      // Only spawn branch heads if not connected
-      const branchDy = branchPos.y - state.groundY;
-      if (Math.abs(branchDy) >= config.connectionThreshold) {
-        newHeads.push({
-          id: state.nextHeadId++,
-          position: branchPos,
-          direction: branchCandidate.direction,
-          depth: head.depth + 1,
-          parentSegmentId: branchSegId,
-          stepIndex: state.currentStep,
-        });
-      }
+      // Branches are dead-ends during real-time growth
+      // Post-process will add longer visible branches after main channel completes
     }
 
     if (state.segments.length >= config.maxSegments) break;
