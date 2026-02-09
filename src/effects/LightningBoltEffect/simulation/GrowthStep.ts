@@ -254,12 +254,13 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
       }
 
       const branchSegId = state.nextSegmentId++;
+      const branchDepth = head.depth + 1;
       state.segments.push({
         id: branchSegId,
         start: head.position,
         end: branchPos,
-        depth: head.depth + 1,
-        parentSegmentId: head.parentSegmentId,
+        depth: branchDepth,
+        parentSegmentId: primarySegId,
         stepIndex: state.currentStep,
         intensity: branchCandidate.fieldValue * 0.7,
         isMainChannel: false,
@@ -267,19 +268,15 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
 
       addChannelPoint(state.fieldCtx, branchPos);
 
-      // Spawned branches can continue growing with survival probability
-      const branchDepth = head.depth + 1;
-      const survivalProb = Math.pow(config.branchSurvivalDecay, branchDepth);
-      if (state.rng.next() < survivalProb) {
-        newHeads.push({
-          id: state.nextHeadId++,
-          position: branchPos,
-          direction: branchCandidate.direction,
-          depth: branchDepth,
-          parentSegmentId: branchSegId,
-          stepIndex: state.currentStep,
-        });
-      }
+      // Always let branches start - survival check applies on SUBSEQUENT steps only
+      newHeads.push({
+        id: state.nextHeadId++,
+        position: branchPos,
+        direction: branchCandidate.direction,
+        depth: branchDepth,
+        parentSegmentId: branchSegId,
+        stepIndex: state.currentStep,
+      });
     }
 
     if (state.segments.length >= config.maxSegments) break;

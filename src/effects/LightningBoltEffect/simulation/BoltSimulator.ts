@@ -138,7 +138,7 @@ function addBranchesRecursive(
         end: nextPos,
         depth: branchDepth,
         parentSegmentId: parentId,
-        stepIndex: seg.stepIndex,
+        stepIndex: seg.stepIndex + i + 1,
         intensity,
         isMainChannel: false,
       };

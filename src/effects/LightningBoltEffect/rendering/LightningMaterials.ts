@@ -25,6 +25,7 @@ export class LightningMaterials {
         transparent: true,
         opacity: 1.0,
         depthWrite: false,
+        blending: THREE.AdditiveBlending,
         vertexColors: true,
       });
       mat.resolution.set(window.innerWidth, window.innerHeight);
@@ -33,9 +34,9 @@ export class LightningMaterials {
 
     this.glowMaterial = new LineMaterial({
       color: 0xaaccff,
-      linewidth: 8,
+      linewidth: 5,
       transparent: true,
-      opacity: 0.3,
+      opacity: 0.2,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       vertexColors: true,
