@@ -11,6 +11,7 @@ export interface LightningBoltEffectConfig extends LightningConfig {
   detailLevel?: DetailLevel;
   worldStart?: Vec3;
   worldEnd?: Vec3;
+  speed?: number;
 }
 
 export class LightningBoltEffect {
@@ -56,8 +57,38 @@ export class LightningBoltEffect {
       config: simConfig,
     });
 
+    // Debug: analyze simulation output
+    const mainChannelSegs = result.geometry.segments.filter(s => s.isMainChannel);
+    const branchSegs = result.geometry.segments.filter(s => !s.isMainChannel);
+    const depthCounts: Record<number, number> = {};
+    for (const seg of result.geometry.segments) {
+      depthCounts[seg.depth] = (depthCounts[seg.depth] || 0) + 1;
+    }
+
+    // Compute Y distribution (how far does bolt get?)
+    const yValues = result.geometry.segments.map(s => s.end.y);
+    const minY = Math.min(...yValues);
+    const maxY = Math.max(...yValues);
+
+    console.log('[Simulation] Result:', {
+      totalSegments: result.geometry.segments.length,
+      mainChannel: mainChannelSegs.length,
+      branches: branchSegs.length,
+      depthCounts,
+      yRange: { min: minY.toFixed(3), max: maxY.toFixed(3) },
+      totalSteps: result.geometry.totalSteps,
+      connected: result.geometry.connectionStep > 0,
+      connectionStep: result.geometry.connectionStep,
+      configUsed: {
+        channelInfluence: simConfig.fieldConfig.channelInfluence,
+        jitterDecayRate: simConfig.jitterDecayRate,
+        mainChannelJitter: simConfig.mainChannelJitter,
+        maxBranchDepth: simConfig.maxBranchDepth,
+      }
+    });
+
     const timeline = createTimeline(result.geometry, detailLevel);
-    this.animator = new BoltAnimator(result.geometry, timeline);
+    this.animator = new BoltAnimator(result.geometry, timeline, config.speed ?? 1.0);
     this.renderer.setGeometry(result.geometry, worldStart, worldEnd);
   }
 

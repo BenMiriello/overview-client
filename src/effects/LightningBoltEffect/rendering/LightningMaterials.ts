@@ -25,6 +25,7 @@ export class LightningMaterials {
         transparent: true,
         opacity: 1.0,
         depthWrite: false,
+        vertexColors: true,
       });
       mat.resolution.set(window.innerWidth, window.innerHeight);
       this.tiers.push({ material: mat, linewidth: cfg.linewidth });
@@ -37,6 +38,7 @@ export class LightningMaterials {
       opacity: 0.3,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
+      vertexColors: true,
     });
     this.glowMaterial.resolution.set(window.innerWidth, window.innerHeight);
   }

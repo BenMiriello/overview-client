@@ -44,8 +44,10 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
       detailLevel: DetailLevel.SHOWCASE,
       worldStart: { x: offsetX, y: SHOWCASE_START.y, z: offsetZ },
       worldEnd: { x: offsetX * 0.3, y: SHOWCASE_END.y, z: offsetZ * 0.3 },
+      speed: speedRef.current,
     };
 
+    console.log('[LightningController] Creating strike with speed:', speedRef.current);
     const strike = new LightningBoltEffect(scene, null, config);
     strike.updateResolution(size.width, size.height);
     strikeRef.current = strike;

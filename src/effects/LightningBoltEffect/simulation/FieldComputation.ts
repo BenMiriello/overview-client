@@ -59,10 +59,10 @@ export function computeFieldAtPoint(point: Vec3, ctx: FieldContext, direction?: 
     field += config.groundInfluence / (groundDist + config.epsilon);
   }
 
-  // Directional bias: gently favor downward-pointing directions
+  // Directional bias: strongly favor downward-pointing directions
   if (direction) {
     const downwardness = -direction.y;
-    field *= 1 + downwardness * 0.15;
+    field *= 1 + downwardness * 0.6;
   }
 
   // Atmospheric noise
