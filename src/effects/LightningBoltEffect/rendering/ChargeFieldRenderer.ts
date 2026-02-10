@@ -3,6 +3,7 @@ import { AtmosphericModelData, VoronoiFieldData, VoronoiCellData, Vec3 } from '.
 
 const MAX_CELLS = 16;
 
+// Vertex shader for 2D charge planes
 const chargeVertexShader = `
 varying vec2 vPosition;
 
@@ -42,10 +43,46 @@ void main() {
 }
 `;
 
+// Vertex shader for 3D atmospheric charge sprites (billboarded)
+const atmosphericVertexShader = `
+varying vec2 vUv;
+
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+// Fragment shader for 3D atmospheric charge sprites
+const atmosphericFragmentShader = `
+uniform vec3 baseColor;
+uniform float intensity;
+uniform float opacity;
+
+varying vec2 vUv;
+
+void main() {
+  // Radial distance from center (0 at center, 1 at edge)
+  vec2 centered = vUv - 0.5;
+  float dist = length(centered) * 2.0;
+
+  if (dist > 1.0) {
+    discard;
+  }
+
+  // Cosine falloff matching Voronoi field
+  float falloff = (cos(dist * 3.14159) + 1.0) * 0.5;
+  float alpha = intensity * falloff * opacity;
+
+  gl_FragColor = vec4(baseColor, alpha);
+}
+`;
+
 export interface ChargeFieldRenderOptions {
   planeSize?: number;
   ceilingColor?: THREE.Color;
   groundColor?: THREE.Color;
+  atmosphericColor?: THREE.Color;
   opacity?: number;
 }
 
@@ -55,6 +92,8 @@ export class ChargeFieldRenderer {
   private groundPlane: THREE.Mesh | null = null;
   private ceilingMaterial: THREE.ShaderMaterial | null = null;
   private groundMaterial: THREE.ShaderMaterial | null = null;
+  private atmosphericSprites: THREE.Mesh[] = [];
+  private atmosphericMaterials: THREE.ShaderMaterial[] = [];
   private visible: boolean = true;
   private options: Required<ChargeFieldRenderOptions>;
 
@@ -64,6 +103,7 @@ export class ChargeFieldRenderer {
       planeSize: options.planeSize ?? 1.0,
       ceilingColor: options.ceilingColor ?? new THREE.Color(0.7, 0.85, 1.0),
       groundColor: options.groundColor ?? new THREE.Color(0.9, 0.7, 0.5),
+      atmosphericColor: options.atmosphericColor ?? new THREE.Color(0.85, 0.95, 1.0),
       opacity: options.opacity ?? 0.2,
     };
   }
@@ -103,6 +143,11 @@ export class ChargeFieldRenderer {
       worldMidZ
     );
     this.scene.add(this.groundPlane);
+
+    // Create atmospheric charge sprites (3D)
+    if (atmosphere.atmosphericCharge) {
+      this.createAtmosphericSprites(atmosphere.atmosphericCharge);
+    }
   }
 
   private createMaterial(
@@ -161,10 +206,49 @@ export class ChargeFieldRenderer {
     return mesh;
   }
 
+  private createAtmosphericSprites(field: VoronoiFieldData): void {
+    const cells = field.cells.slice(0, MAX_CELLS);
+
+    for (const cell of cells) {
+      const size = cell.falloffRadius * 2;
+      const geometry = new THREE.PlaneGeometry(size, size);
+
+      const material = new THREE.ShaderMaterial({
+        vertexShader: atmosphericVertexShader,
+        fragmentShader: atmosphericFragmentShader,
+        uniforms: {
+          baseColor: { value: this.options.atmosphericColor },
+          intensity: { value: cell.intensity },
+          opacity: { value: this.options.opacity * 1.5 },
+        },
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+
+      const sprite = new THREE.Mesh(geometry, material);
+      sprite.position.set(cell.center.x, cell.center.y, cell.center.z);
+      sprite.visible = this.visible;
+
+      // Make sprite face camera (billboarding done via onBeforeRender)
+      sprite.onBeforeRender = (renderer, scene, camera) => {
+        sprite.quaternion.copy(camera.quaternion);
+      };
+
+      this.atmosphericSprites.push(sprite);
+      this.atmosphericMaterials.push(material);
+      this.scene.add(sprite);
+    }
+  }
+
   setVisible(visible: boolean): void {
     this.visible = visible;
     if (this.ceilingPlane) this.ceilingPlane.visible = visible;
     if (this.groundPlane) this.groundPlane.visible = visible;
+    for (const sprite of this.atmosphericSprites) {
+      sprite.visible = visible;
+    }
   }
 
   isVisible(): boolean {
@@ -190,5 +274,14 @@ export class ChargeFieldRenderer {
       this.groundMaterial.dispose();
       this.groundMaterial = null;
     }
+    for (const sprite of this.atmosphericSprites) {
+      this.scene.remove(sprite);
+      sprite.geometry.dispose();
+    }
+    for (const material of this.atmosphericMaterials) {
+      material.dispose();
+    }
+    this.atmosphericSprites = [];
+    this.atmosphericMaterials = [];
   }
 }
