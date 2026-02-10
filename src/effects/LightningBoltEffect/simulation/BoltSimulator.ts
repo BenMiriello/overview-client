@@ -100,6 +100,7 @@ function addBranchesRecursive(
   config: SimulationConfig,
   rng: SeededRNG,
   depth: number,
+  groundY: number,
 ): void {
   if (depth >= config.maxPostBranchDepth) return;
 
@@ -108,7 +109,11 @@ function addBranchesRecursive(
   const intensity = 0.7 * Math.pow(config.branchIntensityDecay, depth);
   const branchDepth = depth + 1;
 
-  const newBranchRoots: BoltSegment[] = [];
+  console.log(`[PostProcess] depth=${depth}, branchDepth=${branchDepth}, sourceSegments=${sourceSegments.length}, branchProb=${branchProb.toFixed(3)}, lengthMult=${lengthMultiplier.toFixed(3)}`);
+
+  const allNewBranchSegments: BoltSegment[] = [];
+  let branchCount = 0;
+  const branchLengths: number[] = [];
 
   for (const seg of sourceSegments) {
     if (rng.next() > branchProb) continue;
@@ -121,14 +126,17 @@ function addBranchesRecursive(
 
     let pos = seg.end;
     let dir = branchDir;
-    // Exponential distribution for branch lengths (many short, few long)
-    const u = rng.next();
-    const lambda = 3;
-    const t = -Math.log(1 - u * (1 - Math.exp(-lambda))) / lambda;
-    const baseBranchLength = config.postBranchMinLength + t * (config.postBranchMaxLength - config.postBranchMinLength);
+    // Branch length proportional to distance from branch point to ground
+    const distToGround = Math.max(0.05, seg.end.y - groundY);
+    const distInSteps = distToGround / config.stepLength;
+    // Branch extends 30-50% of remaining distance
+    const fraction = 0.3 + rng.next() * 0.2;
+    const baseBranchLength = Math.max(5, Math.floor(distInSteps * fraction));
     const branchLength = Math.max(3, Math.floor(baseBranchLength * lengthMultiplier));
     let parentId: number = seg.id;
-    let isFirstSegment = true;
+
+    branchCount++;
+    branchLengths.push(branchLength);
 
     for (let i = 0; i < branchLength; i++) {
       const nextPos = add(pos, scale(dir, config.stepLength));
@@ -143,11 +151,7 @@ function addBranchesRecursive(
         isMainChannel: false,
       };
       ctx.segments.push(newSeg);
-
-      if (isFirstSegment) {
-        newBranchRoots.push(newSeg);
-        isFirstSegment = false;
-      }
+      allNewBranchSegments.push(newSeg);
 
       dir = perturbDirection(dir, 0.2, rng, config.branchDownwardBias);
       pos = nextPos;
@@ -155,8 +159,17 @@ function addBranchesRecursive(
     }
   }
 
-  if (newBranchRoots.length > 0) {
-    addBranchesRecursive(newBranchRoots, ctx, config, rng, depth + 1);
+  if (branchLengths.length > 0) {
+    const avgLen = branchLengths.reduce((a, b) => a + b, 0) / branchLengths.length;
+    const minLen = Math.min(...branchLengths);
+    const maxLen = Math.max(...branchLengths);
+    const totalSegs = allNewBranchSegments.length;
+    const avgLenUnits = avgLen * config.stepLength;
+    console.log(`[PostProcess] Created ${branchCount} branches at depth ${branchDepth}: avgLen=${avgLen.toFixed(1)} segs (${avgLenUnits.toFixed(4)} units), min=${minLen}, max=${maxLen}, totalSegs=${totalSegs}`);
+  }
+
+  if (allNewBranchSegments.length > 0) {
+    addBranchesRecursive(allNewBranchSegments, ctx, config, rng, depth + 1, groundY);
   }
 }
 
@@ -165,6 +178,7 @@ function addPostProcessBranches(
   mainChannelIds: number[],
   config: SimulationConfig,
   rng: SeededRNG,
+  groundY: number,
 ): void {
   const mainSegmentsSet = new Set(mainChannelIds);
   const mainSegments = segments.filter(s => mainSegmentsSet.has(s.id));
@@ -174,7 +188,7 @@ function addPostProcessBranches(
     nextSegmentId: segments.length > 0 ? Math.max(...segments.map(s => s.id)) + 1 : 0,
   };
 
-  addBranchesRecursive(mainSegments, ctx, config, rng, 0);
+  addBranchesRecursive(mainSegments, ctx, config, rng, 0, groundY);
 }
 
 export function simulateBolt(input: SimulationInput): SimulationOutput {
@@ -304,7 +318,7 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
 
   // Add branches via post-processing
   if (mainChannelIds.length > 0) {
-    addPostProcessBranches(state.segments, mainChannelIds, config, rng);
+    addPostProcessBranches(state.segments, mainChannelIds, config, rng, end.y);
   }
 
   // Normalize intensities to [0, 1]
@@ -320,15 +334,17 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
 
   let maxDepth = 0;
   let branchCount = 0;
+  let maxStepIndex = state.currentStep;
   for (const seg of state.segments) {
     if (seg.depth > maxDepth) maxDepth = seg.depth;
     if (seg.depth > 0) branchCount++;
+    if (seg.stepIndex > maxStepIndex) maxStepIndex = seg.stepIndex;
   }
 
   const geometry: BoltGeometry = {
     segments: state.segments,
     mainChannelIds,
-    totalSteps: state.currentStep,
+    totalSteps: maxStepIndex,
     connectionStep: state.currentStep,
     bounds: computeBounds(state.segments),
   };
@@ -341,6 +357,61 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
     connected: didConnect,
     elapsedMs: performance.now() - t0,
   };
+
+  // Debug: log segment counts by depth
+  const depthCounts: Record<number, number> = {};
+  for (const seg of state.segments) {
+    depthCounts[seg.depth] = (depthCounts[seg.depth] || 0) + 1;
+  }
+  console.log('[Simulation] Segment counts by depth:', depthCounts);
+
+  // Debug: log stepIndex ranges per depth
+  const stepIndexRanges: Record<number, { min: number; max: number }> = {};
+  for (const seg of state.segments) {
+    if (!stepIndexRanges[seg.depth]) {
+      stepIndexRanges[seg.depth] = { min: seg.stepIndex, max: seg.stepIndex };
+    } else {
+      if (seg.stepIndex < stepIndexRanges[seg.depth].min) stepIndexRanges[seg.depth].min = seg.stepIndex;
+      if (seg.stepIndex > stepIndexRanges[seg.depth].max) stepIndexRanges[seg.depth].max = seg.stepIndex;
+    }
+  }
+  // Log expanded ranges
+  for (const [depth, range] of Object.entries(stepIndexRanges)) {
+    console.log(`[Simulation] depth ${depth} stepIndex: min=${range.min}, max=${range.max}`);
+  }
+  console.log('[Simulation] totalSteps (maxStepIndex):', maxStepIndex);
+
+  // Log segment lengths by depth
+  const lengthsByDepth: Record<number, number[]> = {};
+  for (const seg of state.segments) {
+    const dx = seg.end.x - seg.start.x;
+    const dy = seg.end.y - seg.start.y;
+    const dz = seg.end.z - seg.start.z;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!lengthsByDepth[seg.depth]) lengthsByDepth[seg.depth] = [];
+    lengthsByDepth[seg.depth].push(len);
+  }
+  for (const [depth, lengths] of Object.entries(lengthsByDepth)) {
+    const avg = lengths.reduce((a, b) => a + b, 0) / lengths.length;
+    const total = lengths.reduce((a, b) => a + b, 0);
+    console.log(`[Simulation] depth ${depth}: ${lengths.length} segments, avg length=${avg.toFixed(4)}, total length=${total.toFixed(4)}`);
+  }
+
+  // Log Y-range (vertical extent) by depth
+  const yRangeByDepth: Record<number, { minY: number; maxY: number }> = {};
+  for (const seg of state.segments) {
+    const minY = Math.min(seg.start.y, seg.end.y);
+    const maxY = Math.max(seg.start.y, seg.end.y);
+    if (!yRangeByDepth[seg.depth]) {
+      yRangeByDepth[seg.depth] = { minY, maxY };
+    } else {
+      if (minY < yRangeByDepth[seg.depth].minY) yRangeByDepth[seg.depth].minY = minY;
+      if (maxY > yRangeByDepth[seg.depth].maxY) yRangeByDepth[seg.depth].maxY = maxY;
+    }
+  }
+  for (const [depth, range] of Object.entries(yRangeByDepth)) {
+    console.log(`[Simulation] depth ${depth} Y-range: ${range.maxY.toFixed(3)} to ${range.minY.toFixed(3)} (span: ${(range.maxY - range.minY).toFixed(3)})`);
+  }
 
   return { geometry, stats };
 }

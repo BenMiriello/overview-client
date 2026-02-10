@@ -12,10 +12,10 @@ export class LightningMaterials {
 
   constructor() {
     const tierConfigs = [
-      { linewidth: 4, color: 0xeeeeff },
-      { linewidth: 3, color: 0xccccff },
-      { linewidth: 2, color: 0xaaaaee },
-      { linewidth: 1.5, color: 0x8888dd },
+      { linewidth: 4, color: 0xffffff },
+      { linewidth: 2.5, color: 0xeeeeff },
+      { linewidth: 1.8, color: 0xddddff },
+      { linewidth: 1.2, color: 0xccccff },
     ];
 
     for (const cfg of tierConfigs) {
