@@ -7,7 +7,7 @@ import {
 } from './types';
 import { SeededRNG } from './prng';
 import { computeFieldAtPoint, FieldContext, addChannelPoint } from './FieldComputation';
-import { computeDBMProbabilities, sampleFromDistribution, selectBranches } from './BranchSelection';
+import { computeDBMProbabilities, sampleFromDistribution } from './BranchSelection';
 import { AtmosphericModel } from './AtmosphericModel';
 
 export interface GrowthState {
@@ -115,20 +115,60 @@ function generateCandidateDirections(
   return directions;
 }
 
+/**
+ * Competition-based death filter.
+ * Leaders die based on how far behind the frontrunner they are.
+ * The leading head always survives; others have survival probability
+ * based on their lag and progress.
+ */
+function filterByCompetition(
+  heads: SimHead[],
+  groundY: number,
+  rng: SeededRNG,
+  ceilingY: number = 0.5
+): SimHead[] {
+  if (heads.length <= 1) return heads;
+
+  // Find the leader (closest to ground = lowest y)
+  const sorted = [...heads].sort((a, b) => a.position.y - b.position.y);
+  const leaderY = sorted[0].position.y;
+  const leaderId = sorted[0].id;
+  const totalProgress = ceilingY - groundY;
+
+  return heads.filter(head => {
+    // Leader always survives
+    if (head.id === leaderId) return true;
+
+    // How far behind the leader?
+    const lag = head.position.y - leaderY;
+    const lagRatio = lag / totalProgress;
+
+    // How much progress has this head made?
+    const progress = (ceilingY - head.position.y) / totalProgress;
+
+    // Base survival probability
+    let survivalProb = 0.97;
+
+    // Penalty for falling behind (up to -30%)
+    survivalProb -= lagRatio * 0.3;
+
+    // Bonus for progress (up to +10%)
+    survivalProb += progress * 0.1;
+
+    // Clamp to reasonable range
+    survivalProb = Math.max(0.6, Math.min(0.99, survivalProb));
+
+    return rng.next() < survivalProb;
+  });
+}
+
 export function growthStep(state: GrowthState, config: SimulationConfig): StepResult {
   if (state.activeHeads.length === 0) {
     return { connected: false, terminated: true, connectionSegmentId: null };
   }
 
-  // Protect 1 frontrunner (closest to ground) - the leading seeker
-  // Others have flat death rate - creates varied branch lengths
-  const sortedByProgress = [...state.activeHeads].sort((a, b) => a.position.y - b.position.y);
-  const frontrunnerIds = new Set(sortedByProgress.slice(0, 1).map(h => h.id));
-
-  state.activeHeads = state.activeHeads.filter(head => {
-    if (frontrunnerIds.has(head.id)) return true; // Frontrunners survive
-    return state.rng.next() >= config.branchDeathRate; // Flat death rate for others
-  });
+  // Competition-based death: heads falling behind have lower survival probability
+  state.activeHeads = filterByCompetition(state.activeHeads, state.groundY, state.rng);
 
   if (state.activeHeads.length === 0) {
     return { connected: false, terminated: true, connectionSegmentId: null };
@@ -139,6 +179,36 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
   let connectionSegmentId: number | null = null;
 
   const stepProgress = state.currentStep / config.maxSteps;
+
+  // Event-based branching: decide at step level which heads will branch
+  // Target ~0.6 branches per step on average, with noise for burstiness
+  const avgNoisePos = state.activeHeads[0]?.position ?? { x: 0, y: 0, z: 0 };
+  const noiseVal = state.fieldCtx.noise3D(avgNoisePos.x * 3, avgNoisePos.y * 3, avgNoisePos.z * 3);
+  const burstFactor = 1 + noiseVal * 0.6; // 0.4 to 1.6x
+
+  const baseBranchRate = config.branchProbAtStart +
+    (config.branchProbAtEnd - config.branchProbAtStart) * stepProgress;
+  const targetBranches = baseBranchRate * 5 * burstFactor; // ~0.3 branches per step average
+
+  // Poisson-like: for each potential branch, roll dice
+  let numBranches = 0;
+  for (let i = 0; i < Math.ceil(targetBranches * 2); i++) {
+    if (state.rng.next() < targetBranches / Math.ceil(targetBranches * 2)) {
+      numBranches++;
+    }
+  }
+
+  // Select which heads will branch (generation < 3)
+  const eligibleForBranching = state.activeHeads
+    .filter(h => h.generation < 3)
+    .map(h => h.id);
+
+  // Shuffle and take numBranches
+  for (let i = eligibleForBranching.length - 1; i > 0; i--) {
+    const j = Math.floor(state.rng.next() * (i + 1));
+    [eligibleForBranching[i], eligibleForBranching[j]] = [eligibleForBranching[j], eligibleForBranching[i]];
+  }
+  const selectedToBranch = new Set(eligibleForBranching.slice(0, numBranches));
 
   for (const head of state.activeHeads) {
     const directions = generateCandidateDirections(
@@ -219,59 +289,49 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
       });
     }
 
-    // Allow sub-branching up to generation 3, with noise-modulated probability
-    const maxGeneration = 3;
-    const canBranch = head.generation < maxGeneration;
-
-    // Bursty branching: modulate probability with spatial noise
-    const noiseVal = state.fieldCtx.noise3D(
-      head.position.x * 2,
-      head.position.y * 2,
-      head.position.z * 2
-    );
-    const burstFactor = 1 + noiseVal * 0.8; // 0.2 to 1.8x multiplier
-
-    const branchIndices = !canBranch ? [] : selectBranches(
-      candidates,
-      probs,
-      primaryIndex,
-      stepProgress,
-      config.branchProbAtStart * burstFactor,
-      config.branchProbAtEnd * burstFactor,
-      config.maxBranchesPerStep,
-      state.rng,
-    );
-
-    for (const branchIdx of branchIndices) {
-      const branchCandidate = candidates[branchIdx];
-      let branchPos = branchCandidate.position;
-
-      if (branchPos.y < state.groundY) {
-        branchPos = { ...branchPos, y: state.groundY };
+    // Event-based branching: only branch if this head was selected
+    if (selectedToBranch.has(head.id)) {
+      // Pick best non-primary candidate for branching
+      let bestBranchIdx = -1;
+      let bestBranchField = -Infinity;
+      for (let i = 0; i < candidates.length; i++) {
+        if (i !== primaryIndex && candidates[i].fieldValue > bestBranchField) {
+          bestBranchField = candidates[i].fieldValue;
+          bestBranchIdx = i;
+        }
       }
 
-      const branchSegId = state.nextSegmentId++;
-      state.segments.push({
-        id: branchSegId,
-        start: head.position,
-        end: branchPos,
-        parentSegmentId: primarySegId,
-        stepIndex: state.currentStep,
-        intensity: branchCandidate.fieldValue * 0.8,
-      });
+      if (bestBranchIdx >= 0) {
+        const branchCandidate = candidates[bestBranchIdx];
+        let branchPos = branchCandidate.position;
 
-      addChannelPoint(state.fieldCtx, branchPos);
+        if (branchPos.y < state.groundY) {
+          branchPos = { ...branchPos, y: state.groundY };
+        }
 
-      newHeads.push({
-        id: state.nextHeadId++,
-        position: branchPos,
-        direction: branchCandidate.direction,
-        parentSegmentId: branchSegId,
-        stepIndex: state.currentStep,
-        age: 0,
-        isFromBranch: true,
-        generation: head.generation + 1,
-      });
+        const branchSegId = state.nextSegmentId++;
+        state.segments.push({
+          id: branchSegId,
+          start: head.position,
+          end: branchPos,
+          parentSegmentId: primarySegId,
+          stepIndex: state.currentStep,
+          intensity: branchCandidate.fieldValue * 0.8,
+        });
+
+        addChannelPoint(state.fieldCtx, branchPos);
+
+        newHeads.push({
+          id: state.nextHeadId++,
+          position: branchPos,
+          direction: branchCandidate.direction,
+          parentSegmentId: branchSegId,
+          stepIndex: state.currentStep,
+          age: 0,
+          isFromBranch: true,
+          generation: head.generation + 1,
+        });
+      }
     }
 
     if (state.segments.length >= config.maxSegments) break;
