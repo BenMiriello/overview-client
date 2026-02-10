@@ -118,6 +118,20 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
     return { connected: false, terminated: true, connectionSegmentId: null };
   }
 
+  // Protect 1 frontrunner (closest to ground) - the leading seeker
+  // Others have flat death rate - creates varied branch lengths
+  const sortedByProgress = [...state.activeHeads].sort((a, b) => a.position.y - b.position.y);
+  const frontrunnerIds = new Set(sortedByProgress.slice(0, 1).map(h => h.id));
+
+  state.activeHeads = state.activeHeads.filter(head => {
+    if (frontrunnerIds.has(head.id)) return true; // Frontrunners survive
+    return state.rng.next() >= config.branchDeathRate; // Flat death rate for others
+  });
+
+  if (state.activeHeads.length === 0) {
+    return { connected: false, terminated: true, connectionSegmentId: null };
+  }
+
   const newHeads: SimHead[] = [];
   let connected = false;
   let connectionSegmentId: number | null = null;
@@ -197,10 +211,14 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
         direction: primary.direction,
         parentSegmentId: primarySegId,
         stepIndex: state.currentStep,
+        age: head.age + 1,
+        isFromBranch: head.isFromBranch,
+        generation: head.generation,
       });
     }
 
-    const branchIndices = selectBranches(
+    // Only frontrunners can spawn branches (they're the active seekers)
+    const branchIndices = !frontrunnerIds.has(head.id) ? [] : selectBranches(
       candidates,
       probs,
       primaryIndex,
@@ -231,23 +249,36 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
 
       addChannelPoint(state.fieldCtx, branchPos);
 
-      if (state.rng.next() < config.branchSurvivalProb) {
-        newHeads.push({
-          id: state.nextHeadId++,
-          position: branchPos,
-          direction: branchCandidate.direction,
-          parentSegmentId: branchSegId,
-          stepIndex: state.currentStep,
-        });
-      }
+      newHeads.push({
+        id: state.nextHeadId++,
+        position: branchPos,
+        direction: branchCandidate.direction,
+        parentSegmentId: branchSegId,
+        stepIndex: state.currentStep,
+        age: 0,
+        isFromBranch: true,
+        generation: head.generation + 1,
+      });
     }
 
     if (state.segments.length >= config.maxSegments) break;
   }
 
+  // Random culling: primary path protected, branches shuffled randomly
   if (newHeads.length > config.maxActiveHeads) {
-    newHeads.sort(() => state.rng.next() - 0.5);
-    newHeads.length = config.maxActiveHeads;
+    const primary = newHeads.filter(h => !h.isFromBranch);
+    const branches = newHeads.filter(h => h.isFromBranch);
+
+    // Fisher-Yates shuffle for random selection
+    for (let i = branches.length - 1; i > 0; i--) {
+      const j = Math.floor(state.rng.next() * (i + 1));
+      [branches[i], branches[j]] = [branches[j], branches[i]];
+    }
+
+    const toKeep = config.maxActiveHeads - primary.length;
+    newHeads.length = 0;
+    newHeads.push(...primary);
+    newHeads.push(...branches.slice(0, Math.max(0, toKeep)));
   }
 
   state.activeHeads = newHeads;

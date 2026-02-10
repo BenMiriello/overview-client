@@ -53,7 +53,7 @@ export function selectBranches(
     return [];
   }
 
-  const branchProb = branchProbAtStart * (1 - stepProgress) + branchProbAtEnd * stepProgress;
+  const branchProb = branchProbAtEnd + (branchProbAtStart - branchProbAtEnd) * Math.exp(-stepProgress * 2);
 
   const indices = candidates.map((_, i) => i);
   indices.sort((a, b) => probs[b] - probs[a]);
