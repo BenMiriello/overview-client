@@ -95,6 +95,7 @@ export class ChargeFieldRenderer {
   private atmosphericSprites: THREE.Mesh[] = [];
   private atmosphericMaterials: THREE.ShaderMaterial[] = [];
   private visible: boolean = true;
+  private atmosphericVisible: boolean = true;
   private options: Required<ChargeFieldRenderOptions>;
 
   constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
@@ -229,7 +230,7 @@ export class ChargeFieldRenderer {
 
       const sprite = new THREE.Mesh(geometry, material);
       sprite.position.set(cell.center.x, cell.center.y, cell.center.z);
-      sprite.visible = this.visible;
+      sprite.visible = this.visible && this.atmosphericVisible;
 
       // Make sprite face camera (billboarding done via onBeforeRender)
       sprite.onBeforeRender = (renderer, scene, camera) => {
@@ -247,12 +248,23 @@ export class ChargeFieldRenderer {
     if (this.ceilingPlane) this.ceilingPlane.visible = visible;
     if (this.groundPlane) this.groundPlane.visible = visible;
     for (const sprite of this.atmosphericSprites) {
-      sprite.visible = visible;
+      sprite.visible = visible && this.atmosphericVisible;
     }
   }
 
   isVisible(): boolean {
     return this.visible;
+  }
+
+  setAtmosphericVisible(visible: boolean): void {
+    this.atmosphericVisible = visible;
+    for (const sprite of this.atmosphericSprites) {
+      sprite.visible = this.visible && visible;
+    }
+  }
+
+  isAtmosphericVisible(): boolean {
+    return this.atmosphericVisible;
   }
 
   dispose(): void {
