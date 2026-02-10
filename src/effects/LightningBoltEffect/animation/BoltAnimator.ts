@@ -201,13 +201,22 @@ export class BoltAnimator {
       }
     }
 
+    // Start with main channel segments
     const currentlyConnected = new Set(reachedMainChannel);
+
+    // Also include root segments (multi-leader starting points)
+    for (const seg of this.geometry.segments) {
+      if (seg.parentSegmentId === null && seg.stepIndex <= targetStep) {
+        currentlyConnected.add(seg.id);
+      }
+    }
+
+    // Expand to include connected branches
     let changed = true;
     while (changed) {
       changed = false;
       for (const seg of this.geometry.segments) {
-        if (!seg.isMainChannel &&
-            seg.stepIndex <= targetStep &&
+        if (seg.stepIndex <= targetStep &&
             seg.parentSegmentId !== null &&
             currentlyConnected.has(seg.parentSegmentId) &&
             !currentlyConnected.has(seg.id)) {

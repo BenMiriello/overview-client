@@ -8,6 +8,7 @@ import {
 import { SeededRNG } from './prng';
 import { computeFieldAtPoint, FieldContext, addChannelPoint } from './FieldComputation';
 import { computeDBMProbabilities, sampleFromDistribution, selectBranches } from './BranchSelection';
+import { AtmosphericModel } from './AtmosphericModel';
 
 export interface GrowthState {
   activeHeads: SimHead[];
@@ -18,6 +19,7 @@ export interface GrowthState {
   currentStep: number;
   rng: SeededRNG;
   groundY: number;
+  atmosphere?: AtmosphericModel;
 }
 
 export interface StepResult {
@@ -217,14 +219,25 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
       });
     }
 
-    // Only frontrunners can spawn branches (they're the active seekers)
-    const branchIndices = !frontrunnerIds.has(head.id) ? [] : selectBranches(
+    // Allow sub-branching up to generation 3, with noise-modulated probability
+    const maxGeneration = 3;
+    const canBranch = head.generation < maxGeneration;
+
+    // Bursty branching: modulate probability with spatial noise
+    const noiseVal = state.fieldCtx.noise3D(
+      head.position.x * 2,
+      head.position.y * 2,
+      head.position.z * 2
+    );
+    const burstFactor = 1 + noiseVal * 0.8; // 0.2 to 1.8x multiplier
+
+    const branchIndices = !canBranch ? [] : selectBranches(
       candidates,
       probs,
       primaryIndex,
       stepProgress,
-      config.branchProbAtStart,
-      config.branchProbAtEnd,
+      config.branchProbAtStart * burstFactor,
+      config.branchProbAtEnd * burstFactor,
       config.maxBranchesPerStep,
       state.rng,
     );

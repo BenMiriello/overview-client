@@ -12,6 +12,7 @@ import {
 import { createSeededRNG } from './prng';
 import { createFieldContext, addChannelPoint } from './FieldComputation';
 import { growthStep, GrowthState } from './GrowthStep';
+import { createAtmosphericModel, AtmosphericModel } from './AtmosphericModel';
 
 function segmentLength(seg: SimSegment): number {
   const dx = seg.end.x - seg.start.x;
@@ -134,6 +135,48 @@ function computeBounds(segments: BoltSegment[]): { min: Vec3; max: Vec3 } {
   return { min, max };
 }
 
+function createInitialHeads(
+  atmosphere: AtmosphericModel,
+  target: Vec3,
+  rng: { next(): number }
+): SimHead[] {
+  const heads: SimHead[] = [];
+  const startingPoints = atmosphere.startingPoints;
+
+  // Use at least 1, at most 4 starting points
+  const maxLeaders = Math.min(4, startingPoints.length);
+  const numLeaders = Math.max(1, maxLeaders);
+
+  for (let i = 0; i < numLeaders; i++) {
+    const pos = startingPoints[i] ?? { x: 0, y: atmosphere.ceilingY, z: 0 };
+
+    // Direction toward ground target with slight randomization
+    const dx = target.x - pos.x + (rng.next() - 0.5) * 0.1;
+    const dy = target.y - pos.y;
+    const dz = target.z - pos.z + (rng.next() - 0.5) * 0.1;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    const direction: Vec3 = {
+      x: dx / len,
+      y: dy / len,
+      z: dz / len,
+    };
+
+    heads.push({
+      id: i,
+      position: { ...pos },
+      direction,
+      parentSegmentId: null,
+      stepIndex: 0,
+      age: 0,
+      isFromBranch: false,
+      generation: 0,
+    });
+  }
+
+  return heads;
+}
+
 export function simulateBolt(input: SimulationInput): SimulationOutput {
   const t0 = performance.now();
   const { start, end, seed, config } = input;
@@ -147,42 +190,30 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
   const useSpatialGrid = config.detailLevel === DetailLevel.SHOWCASE;
   const fieldCtx = createFieldContext(end.y, fieldConfig, useSpatialGrid);
 
-  addChannelPoint(fieldCtx, start);
+  // Create atmospheric model with ceiling charge distribution
+  const atmoRng = rng.fork();
+  const atmosphere = createAtmosphericModel(atmoRng, start.y, end.y);
 
-  const initialDirection: Vec3 = {
-    x: end.x - start.x,
-    y: end.y - start.y,
-    z: end.z - start.z,
-  };
-  const dirLen = Math.sqrt(
-    initialDirection.x ** 2 + initialDirection.y ** 2 + initialDirection.z ** 2,
-  );
-  const normDir: Vec3 = {
-    x: initialDirection.x / dirLen,
-    y: initialDirection.y / dirLen,
-    z: initialDirection.z / dirLen,
-  };
+  // Spawn initial heads from ceiling charge peaks (multi-leader)
+  const initialHeads = createInitialHeads(atmosphere, end, rng);
 
-  const initialHead: SimHead = {
-    id: 0,
-    position: start,
-    direction: normDir,
-    parentSegmentId: null,
-    stepIndex: 0,
-    age: 0,
-    isFromBranch: false,
-    generation: 0,
-  };
+  // Add all starting points to field context
+  for (const head of initialHeads) {
+    addChannelPoint(fieldCtx, head.position);
+  }
+
+  console.log(`[Simulation] Spawning ${initialHeads.length} leaders from charge peaks`);
 
   const state: GrowthState = {
-    activeHeads: [initialHead],
+    activeHeads: initialHeads,
     segments: [],
     fieldCtx,
-    nextHeadId: 1,
+    nextHeadId: initialHeads.length,
     nextSegmentId: 0,
     currentStep: 0,
     rng,
     groundY: end.y,
+    atmosphere,
   };
 
   let didConnect = false;
