@@ -49,6 +49,16 @@ export class BoltAnimator {
         }
       }
     }
+
+    // Debug: log connectivity stats
+    const connectedByDepth: Record<number, number> = {};
+    for (const seg of geometry.segments) {
+      if (this.connectedSegments.has(seg.id)) {
+        connectedByDepth[seg.depth] = (connectedByDepth[seg.depth] || 0) + 1;
+      }
+    }
+    console.log('[Animator] Connected segments by depth:', connectedByDepth);
+    console.log('[Animator] Total segments:', geometry.segments.length, 'Connected:', this.connectedSegments.size);
   }
 
   start(currentTime: number): void {
@@ -108,14 +118,22 @@ export class BoltAnimator {
     return this.interstrokeState(strokeIndex);
   }
 
+  private lastLoggedProgress: number = -1;
+
   private leaderState(progress: number): AnimationState {
     const targetStep = Math.floor(progress * this.timeline.totalSteps);
     const visible = new Set<number>();
     const brightness = new Map<number, number>();
 
-    const tipDistance = 8;
-    const trailFadeDistance = 15;
+    const TIP_DISTANCE = 5;
     const BRIGHTNESS_CUTOFF = 0.03;
+
+    // Log once at ~50% progress
+    const shouldLog = progress >= 0.5 && this.lastLoggedProgress < 0.5;
+    if (shouldLog) {
+      this.lastLoggedProgress = progress;
+      console.log('[Leader] progress:', progress.toFixed(2), 'targetStep:', targetStep, 'totalSteps:', this.timeline.totalSteps);
+    }
 
     // Build connected set dynamically based on what we've reached
     const reachedMainChannel = new Set<number>();
@@ -143,26 +161,64 @@ export class BoltAnimator {
       }
     }
 
+    if (shouldLog) {
+      const connectedByDepth: Record<number, number> = {};
+      for (const seg of this.geometry.segments) {
+        if (currentlyConnected.has(seg.id)) {
+          connectedByDepth[seg.depth] = (connectedByDepth[seg.depth] || 0) + 1;
+        }
+      }
+      console.log('[Leader] currentlyConnected by depth:', connectedByDepth);
+    }
+
     for (const seg of this.geometry.segments) {
-      // ONLY show if connected to current progress
       if (!currentlyConnected.has(seg.id)) continue;
       if (seg.stepIndex > targetStep) continue;
 
       const age = targetStep - seg.stepIndex;
-      if (age > trailFadeDistance) continue;
+
+      // Base brightness by depth - main channel stays bright, branches dimmer
+      const depthFactor = Math.pow(0.7, seg.depth);
 
       let b: number;
-      if (age < tipDistance) {
-        b = (1 - age / tipDistance) * 0.9 + 0.1;
+      if (age < TIP_DISTANCE) {
+        // Active tip area - brightest
+        b = depthFactor * (0.8 + 0.2 * (1 - age / TIP_DISTANCE));
       } else {
-        b = 0.12 * Math.exp(-(age - tipDistance) * 0.4);
+        // Trail - main channel stays visible, branches fade based on depth
+        if (seg.isMainChannel) {
+          // Main channel: slow fade, stays at ~60% minimum
+          b = Math.max(0.6, 1 - age * 0.005);
+        } else {
+          // Branches: fade slower and stay visible at ~35% minimum
+          b = Math.max(0.35, depthFactor * (1 - age * 0.01));
+        }
       }
 
-      // Hard cutoff - don't render dim segments
       if (b < BRIGHTNESS_CUTOFF) continue;
 
       visible.add(seg.id);
       brightness.set(seg.id, b * seg.intensity);
+    }
+
+    if (shouldLog) {
+      const visibleByDepth: Record<number, number> = {};
+      const brightnessByDepth: Record<number, number[]> = {};
+      for (const seg of this.geometry.segments) {
+        if (visible.has(seg.id)) {
+          visibleByDepth[seg.depth] = (visibleByDepth[seg.depth] || 0) + 1;
+          const b = brightness.get(seg.id) ?? 0;
+          if (!brightnessByDepth[seg.depth]) brightnessByDepth[seg.depth] = [];
+          brightnessByDepth[seg.depth].push(b);
+        }
+      }
+      console.log('[Leader] visible by depth:', visibleByDepth);
+      for (const [depth, values] of Object.entries(brightnessByDepth)) {
+        const avg = values.reduce((a, b) => a + b, 0) / values.length;
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        console.log(`[Leader] depth ${depth} brightness: avg=${avg.toFixed(3)}, min=${min.toFixed(3)}, max=${max.toFixed(3)}`);
+      }
     }
 
     return {

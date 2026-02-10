@@ -231,9 +231,8 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
       connected = true;
       connectionSegmentId = primarySegId;
     } else {
-      // All depths continue, but branches have probability-based survival
-      const survivalProb = Math.pow(config.branchSurvivalDecay, head.depth);
-      if (head.depth === 0 || state.rng.next() < survivalProb) {
+      // All branches continue until maxBranchDepth (no survival decay)
+      if (head.depth < config.maxBranchDepth) {
         newHeads.push({
           id: state.nextHeadId++,
           position: jitteredPosition,
