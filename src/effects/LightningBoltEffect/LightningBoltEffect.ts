@@ -58,7 +58,7 @@ export class LightningBoltEffect {
     });
 
     const timeline = createTimeline(result.geometry, detailLevel);
-    this.animator = new BoltAnimator(result.geometry, timeline, config.speed ?? 1.0);
+    this.animator = new BoltAnimator(result.geometry, timeline, simConfig, config.speed ?? 1.0);
     this.renderer.setGeometry(result.geometry, worldStart, worldEnd);
   }
 

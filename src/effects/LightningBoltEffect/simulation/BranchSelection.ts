@@ -22,52 +22,54 @@ export function computeDBMProbabilities(candidates: Candidate[], eta: number): n
   return powers;
 }
 
+export function sampleFromDistribution(probs: number[], rng: SeededRNG): number {
+  const r = rng.next();
+  let cumulative = 0;
+  for (let i = 0; i < probs.length; i++) {
+    cumulative += probs[i];
+    if (r < cumulative) {
+      return i;
+    }
+  }
+  return probs.length - 1;
+}
+
 export interface SelectionResult {
   primaryIndex: number;
   branchIndices: number[];
 }
 
-/**
- * From a set of candidates belonging to a single head, select the primary
- * growth direction and any emergent branches.
- */
-export function selectForHead(
-  headCandidates: Candidate[],
-  headProbabilities: number[],
-  headDepth: number,
+export function selectBranches(
+  candidates: Candidate[],
+  probs: number[],
+  primaryIndex: number,
   stepProgress: number,
-  maxBranchDepth: number,
-  baseBranchProb: number,
-  branchProgressDecay: number,
+  branchProbAtStart: number,
+  branchProbAtEnd: number,
   maxBranchesPerStep: number,
   rng: SeededRNG,
-): SelectionResult {
-  // Sort indices by probability descending
-  const indices = headCandidates.map((_, i) => i);
-  indices.sort((a, b) => headProbabilities[b] - headProbabilities[a]);
-
-  const primaryIndex = indices[0];
-  const branchIndices: number[] = [];
-
-  if (indices.length <= 1 || headDepth >= maxBranchDepth) {
-    return { primaryIndex, branchIndices };
+): number[] {
+  if (candidates.length <= 1) {
+    return [];
   }
 
-  const primaryProb = headProbabilities[primaryIndex];
-  if (primaryProb === 0) return { primaryIndex, branchIndices };
+  const branchProb = branchProbAtStart * (1 - stepProgress) + branchProbAtEnd * stepProgress;
 
-  const progressDecay = Math.max(1.0 - stepProgress * branchProgressDecay, 0.15);
+  const indices = candidates.map((_, i) => i);
+  indices.sort((a, b) => probs[b] - probs[a]);
+
+  const branchIndices: number[] = [];
   let branchCount = 0;
 
-  for (let i = 1; i < indices.length && branchCount < maxBranchesPerStep; i++) {
-    const idx = indices[i];
+  for (const idx of indices) {
+    if (idx === primaryIndex) continue;
+    if (branchCount >= maxBranchesPerStep) break;
 
-    const branchProb = baseBranchProb * progressDecay;
     if (rng.next() < branchProb) {
       branchIndices.push(idx);
       branchCount++;
     }
   }
 
-  return { primaryIndex, branchIndices };
+  return branchIndices;
 }

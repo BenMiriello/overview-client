@@ -4,6 +4,23 @@ export interface Vec3 {
   z: number;
 }
 
+export interface SimHead {
+  id: number;
+  position: Vec3;
+  direction: Vec3;
+  parentSegmentId: number | null;
+  stepIndex: number;
+}
+
+export interface SimSegment {
+  id: number;
+  start: Vec3;
+  end: Vec3;
+  parentSegmentId: number | null;
+  stepIndex: number;
+  intensity: number;
+}
+
 export interface BoltSegment {
   id: number;
   start: Vec3;
@@ -13,6 +30,8 @@ export interface BoltSegment {
   stepIndex: number;
   intensity: number;
   isMainChannel: boolean;
+  distanceFromMain: number;
+  isDeadEnd: boolean;
 }
 
 export interface BoltGeometry {
@@ -33,28 +52,20 @@ export interface SimulationConfig {
   maxSteps: number;
   candidateCount: number;
   coneHalfAngle: number;
-  maxBranchDepth: number;
-  baseBranchProb: number;
-  branchSurvivalDecay: number;
-  branchProgressDecay: number;
-  maxBranchesPerStep: number;
   fieldConfig: FieldConfig;
   connectionThreshold: number;
   maxSegments: number;
-  // Post-processing branch generation
-  postBranchProb: number;
-  postBranchMinLength: number;
-  postBranchMaxLength: number;
-  postBranchAngleMin: number;
-  postBranchAngleMax: number;
-  // Visual realism parameters
   mainChannelJitter: number;
   jitterDecayRate: number;
-  branchDownwardBias: number;
-  maxPostBranchDepth: number;
-  subBranchProbDecay: number;
-  subBranchLengthDecay: number;
-  branchIntensityDecay: number;
+
+  branchProbAtStart: number;
+  branchProbAtEnd: number;
+  branchSurvivalProb: number;
+  maxActiveHeads: number;
+  maxBranchesPerStep: number;
+
+  deadEndFadeDuration: number;
+  deadEndMinBrightness: number;
 }
 
 export interface FieldConfig {
@@ -93,19 +104,9 @@ export interface SimulationStats {
   elapsedMs: number;
 }
 
-export interface GrowthHead {
-  id: number;
-  position: Vec3;
-  direction: Vec3;
-  depth: number;
-  parentSegmentId: number | null;
-  stepIndex: number;
-}
-
 export interface Candidate {
   headId: number;
   position: Vec3;
   direction: Vec3;
   fieldValue: number;
-  depth: number;
 }

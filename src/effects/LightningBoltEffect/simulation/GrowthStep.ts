@@ -1,17 +1,17 @@
 import {
   Vec3,
   SimulationConfig,
-  GrowthHead,
-  BoltSegment,
+  SimHead,
+  SimSegment,
   Candidate,
 } from './types';
 import { SeededRNG } from './prng';
 import { computeFieldAtPoint, FieldContext, addChannelPoint } from './FieldComputation';
-import { computeDBMProbabilities, selectForHead } from './BranchSelection';
+import { computeDBMProbabilities, sampleFromDistribution, selectBranches } from './BranchSelection';
 
 export interface GrowthState {
-  activeHeads: GrowthHead[];
-  segments: BoltSegment[];
+  activeHeads: SimHead[];
+  segments: SimSegment[];
   fieldCtx: FieldContext;
   nextHeadId: number;
   nextSegmentId: number;
@@ -47,18 +47,15 @@ function computePerpendicular(dir: Vec3, rng: SeededRNG): Vec3 {
   } else {
     up = { x: 1, y: 0, z: 0 };
   }
-  // Cross product: dir x up
   const perpX = dir.y * up.z - dir.z * up.y;
   const perpY = dir.z * up.x - dir.x * up.z;
   const perpZ = dir.x * up.y - dir.y * up.x;
   const perp = normalize({ x: perpX, y: perpY, z: perpZ });
 
-  // Rotate the perpendicular by a random angle around dir
   const angle = rng.next() * Math.PI * 2;
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
 
-  // bitangent = dir x perp
   const bx = dir.y * perp.z - dir.z * perp.y;
   const by = dir.z * perp.x - dir.x * perp.z;
   const bz = dir.x * perp.y - dir.y * perp.x;
@@ -79,7 +76,6 @@ function generateCandidateDirections(
   const directions: Vec3[] = [];
   const dir = normalize(currentDir);
 
-  // Build orthonormal basis around current direction
   let up: Vec3;
   if (Math.abs(dir.y) < 0.9) {
     up = { x: 0, y: 1, z: 0 };
@@ -87,14 +83,12 @@ function generateCandidateDirections(
     up = { x: 1, y: 0, z: 0 };
   }
 
-  // tangent = dir x up
   const tx = dir.y * up.z - dir.z * up.y;
   const ty = dir.z * up.x - dir.x * up.z;
   const tz = dir.x * up.y - dir.y * up.x;
   const tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
   const t = { x: tx / tLen, y: ty / tLen, z: tz / tLen };
 
-  // bitangent = dir x tangent
   const bx = dir.y * t.z - dir.z * t.y;
   const by = dir.z * t.x - dir.x * t.z;
   const bz = dir.x * t.y - dir.y * t.x;
@@ -109,7 +103,6 @@ function generateCandidateDirections(
     const sinPhi = Math.sin(phi);
     const cosPhi = Math.cos(phi);
 
-    // Rotate around cone axis
     const x = dir.x * cosTheta + t.x * sinTheta * cosPhi + b.x * sinTheta * sinPhi;
     const y = dir.y * cosTheta + t.y * sinTheta * cosPhi + b.y * sinTheta * sinPhi;
     const z = dir.z * cosTheta + t.z * sinTheta * cosPhi + b.z * sinTheta * sinPhi;
@@ -125,7 +118,11 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
     return { connected: false, terminated: true, connectionSegmentId: null };
   }
 
-  const candidatesByHead: Map<number, { candidates: Candidate[]; head: GrowthHead }> = new Map();
+  const newHeads: SimHead[] = [];
+  let connected = false;
+  let connectionSegmentId: number | null = null;
+
+  const stepProgress = state.currentStep / config.maxSteps;
 
   for (const head of state.activeHeads) {
     const directions = generateCandidateDirections(
@@ -135,7 +132,7 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
       state.rng,
     );
 
-    const headCandidates: Candidate[] = [];
+    const candidates: Candidate[] = [];
 
     for (const dir of directions) {
       const nextPos: Vec3 = {
@@ -146,139 +143,111 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
 
       const fieldValue = computeFieldAtPoint(nextPos, state.fieldCtx, dir);
 
-      const candidate: Candidate = {
+      candidates.push({
         headId: head.id,
         position: nextPos,
         direction: dir,
         fieldValue,
-        depth: head.depth,
-      };
-
-      headCandidates.push(candidate);
+      });
     }
 
-    candidatesByHead.set(head.id, { candidates: headCandidates, head });
-  }
+    if (candidates.length === 0) continue;
 
-  const newHeads: GrowthHead[] = [];
-  let connected = false;
-  let connectionSegmentId: number | null = null;
+    const probs = computeDBMProbabilities(candidates, config.eta);
+    const primaryIndex = sampleFromDistribution(probs, state.rng);
+    const primary = candidates[primaryIndex];
 
-  for (const [, { candidates: headCandidates, head }] of candidatesByHead) {
-    if (headCandidates.length === 0) continue;
+    let primaryPosition = primary.position;
 
-    const probs = computeDBMProbabilities(headCandidates, config.eta);
-    const stepProgress = state.currentStep / config.maxSteps;
-
-    // Use selectForHead to get primary + potential branches
-    const selection = selectForHead(
-      headCandidates,
-      probs,
-      head.depth,
-      stepProgress,
-      config.maxBranchDepth,
-      config.baseBranchProb,
-      config.branchProgressDecay,
-      config.maxBranchesPerStep,
-      state.rng,
-    );
-
-    // Apply stochastic sampling: weighted random from DBM probs instead of max
-    const r = state.rng.next();
-    let cumulative = 0;
-    let primaryIndex = selection.primaryIndex;
-    for (let i = 0; i < probs.length; i++) {
-      cumulative += probs[i];
-      if (r < cumulative) {
-        primaryIndex = i;
-        break;
-      }
-    }
-
-    const primary = headCandidates[primaryIndex];
-
-    // Apply jitter to main channel for more natural "kinks"
-    let jitteredPosition = primary.position;
-    if (head.depth === 0 && config.mainChannelJitter > 0) {
+    if (config.mainChannelJitter > 0) {
       const jitterAmount = config.mainChannelJitter * Math.pow(config.jitterDecayRate, state.currentStep);
       const perpendicular = computePerpendicular(primary.direction, state.rng);
       const offset = scale(perpendicular, (state.rng.next() - 0.5) * 2 * jitterAmount * config.stepLength);
-      jitteredPosition = add(primary.position, offset);
+      primaryPosition = add(primary.position, offset);
     }
-    // Clamp Y so bolt never goes below ground
-    if (jitteredPosition.y < state.groundY) {
-      jitteredPosition = { ...jitteredPosition, y: state.groundY };
+
+    if (primaryPosition.y < state.groundY) {
+      primaryPosition = { ...primaryPosition, y: state.groundY };
     }
 
     const primarySegId = state.nextSegmentId++;
     state.segments.push({
       id: primarySegId,
       start: head.position,
-      end: jitteredPosition,
-      depth: head.depth,
+      end: primaryPosition,
       parentSegmentId: head.parentSegmentId,
       stepIndex: state.currentStep,
       intensity: primary.fieldValue,
-      isMainChannel: false,
     });
 
-    addChannelPoint(state.fieldCtx, jitteredPosition);
+    addChannelPoint(state.fieldCtx, primaryPosition);
 
-    const dy = jitteredPosition.y - state.groundY;
+    const dy = primaryPosition.y - state.groundY;
     const isConnected = Math.abs(dy) < config.connectionThreshold;
 
-    if (isConnected) {
+    if (isConnected && !connected) {
       connected = true;
       connectionSegmentId = primarySegId;
-    } else {
-      // All branches continue until maxBranchDepth (no survival decay)
-      if (head.depth < config.maxBranchDepth) {
-        newHeads.push({
-          id: state.nextHeadId++,
-          position: jitteredPosition,
-          direction: primary.direction,
-          depth: head.depth,
-          parentSegmentId: primarySegId,
-          stepIndex: state.currentStep,
-        });
-      }
     }
 
-    // Spawn branch heads from selectForHead results
-    for (const branchIdx of selection.branchIndices) {
-      const branchCandidate = headCandidates[branchIdx];
+    if (!isConnected) {
+      newHeads.push({
+        id: state.nextHeadId++,
+        position: primaryPosition,
+        direction: primary.direction,
+        parentSegmentId: primarySegId,
+        stepIndex: state.currentStep,
+      });
+    }
+
+    const branchIndices = selectBranches(
+      candidates,
+      probs,
+      primaryIndex,
+      stepProgress,
+      config.branchProbAtStart,
+      config.branchProbAtEnd,
+      config.maxBranchesPerStep,
+      state.rng,
+    );
+
+    for (const branchIdx of branchIndices) {
+      const branchCandidate = candidates[branchIdx];
       let branchPos = branchCandidate.position;
+
       if (branchPos.y < state.groundY) {
         branchPos = { ...branchPos, y: state.groundY };
       }
 
       const branchSegId = state.nextSegmentId++;
-      const branchDepth = head.depth + 1;
       state.segments.push({
         id: branchSegId,
         start: head.position,
         end: branchPos,
-        depth: branchDepth,
         parentSegmentId: primarySegId,
         stepIndex: state.currentStep,
-        intensity: branchCandidate.fieldValue * 0.7,
-        isMainChannel: false,
+        intensity: branchCandidate.fieldValue * 0.8,
       });
 
       addChannelPoint(state.fieldCtx, branchPos);
 
-      // Always let branches start - survival check applies on SUBSEQUENT steps only
-      newHeads.push({
-        id: state.nextHeadId++,
-        position: branchPos,
-        direction: branchCandidate.direction,
-        depth: branchDepth,
-        parentSegmentId: branchSegId,
-        stepIndex: state.currentStep,
-      });
+      if (state.rng.next() < config.branchSurvivalProb) {
+        newHeads.push({
+          id: state.nextHeadId++,
+          position: branchPos,
+          direction: branchCandidate.direction,
+          parentSegmentId: branchSegId,
+          stepIndex: state.currentStep,
+        });
+      }
     }
 
     if (state.segments.length >= config.maxSegments) break;
+  }
+
+  if (newHeads.length > config.maxActiveHeads) {
+    newHeads.sort(() => state.rng.next() - 0.5);
+    newHeads.length = config.maxActiveHeads;
   }
 
   state.activeHeads = newHeads;

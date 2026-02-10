@@ -1,36 +1,22 @@
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import * as THREE from 'three';
 
-interface MaterialTier {
-  material: LineMaterial;
-  linewidth: number;
-}
-
 export class LightningMaterials {
-  private tiers: MaterialTier[] = [];
+  private baseMaterial: LineMaterial;
   private glowMaterial: LineMaterial;
+  private depthMaterials: Map<string, LineMaterial> = new Map();
 
   constructor() {
-    const tierConfigs = [
-      { linewidth: 4, color: 0xffffff },
-      { linewidth: 2.5, color: 0xeeeeff },
-      { linewidth: 1.8, color: 0xddddff },
-      { linewidth: 1.2, color: 0xccccff },
-    ];
-
-    for (const cfg of tierConfigs) {
-      const mat = new LineMaterial({
-        color: cfg.color,
-        linewidth: cfg.linewidth,
-        transparent: true,
-        opacity: 1.0,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        vertexColors: true,
-      });
-      mat.resolution.set(window.innerWidth, window.innerHeight);
-      this.tiers.push({ material: mat, linewidth: cfg.linewidth });
-    }
+    this.baseMaterial = new LineMaterial({
+      color: 0xffffff,
+      linewidth: 4,
+      transparent: true,
+      opacity: 1.0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexColors: true,
+    });
+    this.baseMaterial.resolution.set(window.innerWidth, window.innerHeight);
 
     this.glowMaterial = new LineMaterial({
       color: 0xaaccff,
@@ -45,8 +31,44 @@ export class LightningMaterials {
   }
 
   getMaterialForDepth(depth: number): LineMaterial {
-    const idx = Math.min(depth, this.tiers.length - 1);
-    return this.tiers[idx].material;
+    const linewidth = this.getLineWidth(depth, 4);
+    const color = this.getColor(depth);
+
+    const key = `${depth.toFixed(2)}`;
+    if (this.depthMaterials.has(key)) {
+      return this.depthMaterials.get(key)!;
+    }
+
+    const mat = new LineMaterial({
+      color,
+      linewidth,
+      transparent: true,
+      opacity: 1.0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexColors: true,
+    });
+    mat.resolution.set(window.innerWidth, window.innerHeight);
+    this.depthMaterials.set(key, mat);
+    return mat;
+  }
+
+  private getLineWidth(depth: number, baseWidth: number): number {
+    const minWidth = baseWidth * 0.25;
+    const decay = Math.exp(-depth * 0.7);
+    return minWidth + (baseWidth - minWidth) * decay;
+  }
+
+  private getColor(depth: number): number {
+    const baseBrightness = 1.0;
+    const minBrightness = 0.75;
+    const decay = Math.exp(-depth * 0.5);
+    const brightness = minBrightness + (baseBrightness - minBrightness) * decay;
+
+    const r = Math.floor(255 * brightness);
+    const g = Math.floor(255 * brightness);
+    const b = 255;
+    return (r << 16) | (g << 8) | b;
   }
 
   getGlowMaterial(): LineMaterial {
@@ -54,23 +76,27 @@ export class LightningMaterials {
   }
 
   updateResolution(width: number, height: number): void {
-    for (const tier of this.tiers) {
-      tier.material.resolution.set(width, height);
-    }
+    this.baseMaterial.resolution.set(width, height);
     this.glowMaterial.resolution.set(width, height);
+    for (const mat of this.depthMaterials.values()) {
+      mat.resolution.set(width, height);
+    }
   }
 
   updateOpacity(multiplier: number): void {
-    for (const tier of this.tiers) {
-      tier.material.opacity = multiplier;
-    }
+    this.baseMaterial.opacity = multiplier;
     this.glowMaterial.opacity = 0.3 * multiplier;
+    for (const mat of this.depthMaterials.values()) {
+      mat.opacity = multiplier;
+    }
   }
 
   dispose(): void {
-    for (const tier of this.tiers) {
-      tier.material.dispose();
-    }
+    this.baseMaterial.dispose();
     this.glowMaterial.dispose();
+    for (const mat of this.depthMaterials.values()) {
+      mat.dispose();
+    }
+    this.depthMaterials.clear();
   }
 }
