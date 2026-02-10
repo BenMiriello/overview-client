@@ -103,6 +103,7 @@ export interface SimulationOutput {
 export interface AtmosphericModelData {
   ceilingCharge: VoronoiFieldData;
   groundCharge: VoronoiFieldData;
+  atmosphericCharge: VoronoiFieldData;
   ceilingY: number;
   groundY: number;
 }
