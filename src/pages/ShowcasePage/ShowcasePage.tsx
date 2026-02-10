@@ -7,6 +7,7 @@ import Scene from './Scene';
 const ShowcasePage = () => {
   const [detail, setDetail] = useState<number>(1.0);
   const [speed, setSpeed] = useState<number>(1.0);
+  const [showCharge, setShowCharge] = useState<boolean>(true);
 
   return (
     <div className="showcase-page">
@@ -14,7 +15,7 @@ const ShowcasePage = () => {
         camera={{ position: [0, 0, 6], fov: 50 }}
         style={{ background: '#000' }}
       >
-        <Scene detail={detail} speed={speed} />
+        <Scene detail={detail} speed={speed} showCharge={showCharge} />
       </Canvas>
 
       <NavigationIcons currentPage="lightning" />
@@ -46,6 +47,16 @@ const ShowcasePage = () => {
             onChange={(e) => setSpeed(parseFloat(e.target.value))}
           />
           <span>{speed.toFixed(1)}x</span>
+        </div>
+
+        <div className="slider-container">
+          <label htmlFor="charge-toggle">Show Charge:</label>
+          <input
+            id="charge-toggle"
+            type="checkbox"
+            checked={showCharge}
+            onChange={(e) => setShowCharge(e.target.checked)}
+          />
         </div>
       </div>
     </div>

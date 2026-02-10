@@ -6,12 +6,13 @@ import { LightningBoltEffect, LightningBoltEffectConfig, DetailLevel } from '../
 interface LightningControllerProps {
   detail?: number;
   speed?: number;
+  showCharge?: boolean;
 }
 
 const SHOWCASE_START = { x: 0, y: 1.5, z: 0 };
 const SHOWCASE_END = { x: 0, y: -1.8, z: 0 };
 
-const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerProps) => {
+const LightningController = ({ detail = 1.0, speed = 1.0, showCharge = true }: LightningControllerProps) => {
   const { scene, size } = useThree();
   const strikeRef = useRef<LightningBoltEffect | null>(null);
   const nextStrikeTime = useRef<number>(0);
@@ -20,6 +21,12 @@ const LightningController = ({ detail = 1.0, speed = 1.0 }: LightningControllerP
   useEffect(() => {
     speedRef.current = speed;
   }, [speed]);
+
+  useEffect(() => {
+    if (strikeRef.current) {
+      strikeRef.current.setChargeVisualization(showCharge);
+    }
+  }, [showCharge]);
 
   const createNewStrike = useCallback(() => {
     if (strikeRef.current) {
