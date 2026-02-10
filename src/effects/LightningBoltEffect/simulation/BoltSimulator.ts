@@ -169,6 +169,9 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
     direction: normDir,
     parentSegmentId: null,
     stepIndex: 0,
+    age: 0,
+    isFromBranch: false,
+    generation: 0,
   };
 
   const state: GrowthState = {
@@ -297,13 +300,16 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
     elapsedMs: performance.now() - t0,
   };
 
-  const depthBuckets: Record<string, number> = {};
-  for (const seg of finalSegments) {
-    const bucket = seg.depth.toFixed(1);
-    depthBuckets[bucket] = (depthBuckets[bucket] || 0) + 1;
+  // Analyze when branches were created (by stepIndex)
+  const branchSegments = finalSegments.filter(s => !s.isMainChannel);
+  const stepBuckets: Record<string, number> = {};
+  for (const seg of branchSegments) {
+    const bucket = Math.floor(seg.stepIndex / 10) * 10; // Group by 10s
+    const key = `${bucket}-${bucket + 9}`;
+    stepBuckets[key] = (stepBuckets[key] || 0) + 1;
   }
-  console.log('[Simulation] Segment counts by depth bucket:', depthBuckets);
-  console.log('[Simulation] Dead-end segments:', finalSegments.filter(s => s.isDeadEnd).length);
+  console.log('[Simulation] Branch segments by step range:', stepBuckets);
+  console.log(`[Simulation] Total: ${finalSegments.length} segs, ${branchSegments.length} branch segs, ${state.currentStep} steps`);
 
   return { geometry, stats };
 }

@@ -10,6 +10,9 @@ export interface SimHead {
   direction: Vec3;
   parentSegmentId: number | null;
   stepIndex: number;
+  age: number;
+  isFromBranch: boolean;
+  generation: number;
 }
 
 export interface SimSegment {
@@ -60,7 +63,8 @@ export interface SimulationConfig {
 
   branchProbAtStart: number;
   branchProbAtEnd: number;
-  branchSurvivalProb: number;
+  branchDeathRate: number;
+  minBranchAge: number;
   maxActiveHeads: number;
   maxBranchesPerStep: number;
 
