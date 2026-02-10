@@ -188,7 +188,7 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
 
   const baseBranchRate = config.branchProbAtStart +
     (config.branchProbAtEnd - config.branchProbAtStart) * stepProgress;
-  const targetBranches = baseBranchRate * 5 * burstFactor; // ~0.3 branches per step average
+  const targetBranches = baseBranchRate * 3 * burstFactor; // ~0.2 branches per step average
 
   // Poisson-like: for each potential branch, roll dice
   let numBranches = 0;
@@ -198,9 +198,9 @@ export function growthStep(state: GrowthState, config: SimulationConfig): StepRe
     }
   }
 
-  // Select which heads will branch (generation < 3)
+  // Select which heads will branch (generation < 4)
   const eligibleForBranching = state.activeHeads
-    .filter(h => h.generation < 3)
+    .filter(h => h.generation < 4)
     .map(h => h.id);
 
   // Shuffle and take numBranches

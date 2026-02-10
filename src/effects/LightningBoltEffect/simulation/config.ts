@@ -56,8 +56,8 @@ const DETAIL_PRESETS: Record<DetailLevel, Omit<SimulationConfig, 'fieldConfig'>>
     mainChannelJitter: 1.5,
     jitterDecayRate: 0.97,
 
-    branchProbAtStart: 0.06,
-    branchProbAtEnd: 0.04,
+    branchProbAtStart: 0.03,
+    branchProbAtEnd: 0.06,
     branchDeathRate: 0.025,
     minBranchAge: 0,
     maxActiveHeads: 25,
