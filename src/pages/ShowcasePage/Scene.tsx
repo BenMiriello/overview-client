@@ -8,9 +8,10 @@ interface SceneProps {
   detail?: number;
   speed?: number;
   showCharge?: boolean;
+  showAtmospheric?: boolean;
 }
 
-const Scene = ({ detail = 1.0, speed = 1.0, showCharge = true }: SceneProps) => {
+const Scene = ({ detail = 1.0, speed = 1.0, showCharge = true, showAtmospheric = true }: SceneProps) => {
   // Use object type instead of null
   const controlsRef = useRef<any>(null);
 
@@ -33,7 +34,7 @@ const Scene = ({ detail = 1.0, speed = 1.0, showCharge = true }: SceneProps) => 
       {/* Rotated by 20 degrees around Y axis */}
       <group rotation={[0, Math.PI * 20 / 180, 0]}>
         <GroundPlane speed={speed} />
-        <LightningController detail={detail} speed={speed} showCharge={showCharge} />
+        <LightningController detail={detail} speed={speed} showCharge={showCharge} showAtmospheric={showAtmospheric} />
       </group>
 
       <OrbitControls 

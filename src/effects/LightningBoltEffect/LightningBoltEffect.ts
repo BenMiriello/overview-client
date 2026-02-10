@@ -135,4 +135,14 @@ export class LightningBoltEffect {
   isChargeVisualizationVisible(): boolean {
     return this.chargeRenderer?.isVisible() ?? false;
   }
+
+  setAtmosphericChargeVisualization(visible: boolean): void {
+    if (this.chargeRenderer) {
+      this.chargeRenderer.setAtmosphericVisible(visible);
+    }
+  }
+
+  isAtmosphericChargeVisualizationVisible(): boolean {
+    return this.chargeRenderer?.isAtmosphericVisible() ?? false;
+  }
 }

@@ -8,6 +8,7 @@ const ShowcasePage = () => {
   const [detail, setDetail] = useState<number>(1.0);
   const [speed, setSpeed] = useState<number>(1.0);
   const [showCharge, setShowCharge] = useState<boolean>(true);
+  const [showAtmospheric, setShowAtmospheric] = useState<boolean>(true);
 
   return (
     <div className="showcase-page">
@@ -15,7 +16,7 @@ const ShowcasePage = () => {
         camera={{ position: [0, 0, 6], fov: 50 }}
         style={{ background: '#000' }}
       >
-        <Scene detail={detail} speed={speed} showCharge={showCharge} />
+        <Scene detail={detail} speed={speed} showCharge={showCharge} showAtmospheric={showAtmospheric} />
       </Canvas>
 
       <NavigationIcons currentPage="lightning" />
@@ -56,6 +57,16 @@ const ShowcasePage = () => {
             type="checkbox"
             checked={showCharge}
             onChange={(e) => setShowCharge(e.target.checked)}
+          />
+        </div>
+
+        <div className="slider-container">
+          <label htmlFor="atmospheric-toggle">3D Charge:</label>
+          <input
+            id="atmospheric-toggle"
+            type="checkbox"
+            checked={showAtmospheric}
+            onChange={(e) => setShowAtmospheric(e.target.checked)}
           />
         </div>
       </div>
