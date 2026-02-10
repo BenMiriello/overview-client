@@ -11,6 +11,11 @@ interface DepthGroup {
   colors: Float32Array;
   geometry: LineSegmentsGeometry;
   line: LineSegments2;
+  depth: number;
+}
+
+function getDepthBucket(depth: number): number {
+  return Math.round(depth * 10) / 10;
 }
 
 export class BoltRenderer {
@@ -19,7 +24,7 @@ export class BoltRenderer {
   private depthGroups: Map<number, DepthGroup> = new Map();
   private glowGroup: DepthGroup | null = null;
 
-  private segmentIndexMap: Map<number, { depth: number; indexInGroup: number }> = new Map();
+  private segmentIndexMap: Map<number, { depthBucket: number; indexInGroup: number }> = new Map();
 
   private worldOrigin: Vec3 = { x: 0, y: 0, z: 0 };
   private worldScale: number = 1;
@@ -44,8 +49,6 @@ export class BoltRenderer {
       z: (worldStart.z + worldEnd.z) / 2,
     };
 
-    // Compute rotation from simulation axis to world direction
-    // Simulation runs from Y=+0.5 to Y=-0.5, so axis is (0, -1, 0)
     const worldDir = new THREE.Vector3(dx, dy, dz).normalize();
     const simAxis = new THREE.Vector3(0, -1, 0);
 
@@ -53,38 +56,36 @@ export class BoltRenderer {
     const dot = simAxis.dot(worldDir);
 
     if (dot > 0.9999) {
-      // Already aligned, keep identity
+      // Already aligned
     } else if (dot < -0.9999) {
-      // Opposite direction, rotate 180 degrees around X
       this.rotationMatrix.makeRotationAxis(new THREE.Vector3(1, 0, 0), Math.PI);
     } else {
-      // General case: axis-angle rotation
       const axis = new THREE.Vector3().crossVectors(simAxis, worldDir).normalize();
       const angle = Math.acos(dot);
       this.rotationMatrix.makeRotationAxis(axis, angle);
     }
 
-    // Group segments by depth
-    const byDepth = new Map<number, typeof geometry.segments>();
+    const byDepthBucket = new Map<number, typeof geometry.segments>();
     for (const seg of geometry.segments) {
-      const depth = Math.min(seg.depth, 3);
-      let arr = byDepth.get(depth);
+      const bucket = getDepthBucket(seg.depth);
+      let arr = byDepthBucket.get(bucket);
       if (!arr) {
         arr = [];
-        byDepth.set(depth, arr);
+        byDepthBucket.set(bucket, arr);
       }
       arr.push(seg);
     }
 
-    // Create a LineSegments2 for each depth tier
-    for (const [depth, segs] of byDepth) {
-      const group = this.createDepthGroup(segs, depth);
-      this.depthGroups.set(depth, group);
-      group.line.renderOrder = 1000 - depth;
-      this.group.add(group.line);
+    const sortedBuckets = [...byDepthBucket.keys()].sort((a, b) => a - b);
+
+    for (const bucket of sortedBuckets) {
+      const segs = byDepthBucket.get(bucket)!;
+      const depthGroup = this.createDepthGroup(segs, bucket);
+      this.depthGroups.set(bucket, depthGroup);
+      depthGroup.line.renderOrder = 1000 - Math.floor(bucket * 10);
+      this.group.add(depthGroup.line);
     }
 
-    // Create glow line from main channel segments
     const mainSegs = geometry.segments.filter(s => s.isMainChannel);
     if (mainSegs.length > 0) {
       this.glowGroup = this.createGlowGroup(mainSegs);
@@ -96,24 +97,21 @@ export class BoltRenderer {
   render(state: AnimationState): void {
     const BRIGHTNESS_THRESHOLD = 0.05;
 
-    // Update each depth group's colors based on brightness
-    for (const [depth, group] of this.depthGroups) {
+    for (const [bucket, group] of this.depthGroups) {
       const { colors, segmentIds, geometry: geom } = group;
-      const mat = this.materials.getMaterialForDepth(depth);
+      const mat = this.materials.getMaterialForDepth(bucket);
       const baseColor = new THREE.Color(mat.color);
 
       for (let i = 0; i < segmentIds.length; i++) {
         const segId = segmentIds[i];
         const rawBrightness = state.segmentBrightness.get(segId) ?? 0;
         const visible = state.visibleSegments.has(segId);
-        // Below threshold = completely invisible
         const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD) ? rawBrightness : 0;
 
         const r = baseColor.r * alpha;
         const g = baseColor.g * alpha;
         const b = baseColor.b * alpha;
 
-        // Each segment has 2 points, each with RGB = 6 color values
         const ci = i * 6;
         colors[ci] = r;
         colors[ci + 1] = g;
@@ -128,7 +126,6 @@ export class BoltRenderer {
       geom.getAttribute('instanceColorEnd').needsUpdate = true;
     }
 
-    // Update glow
     if (this.glowGroup) {
       const { colors, segmentIds, geometry: geom } = this.glowGroup;
 
@@ -136,7 +133,6 @@ export class BoltRenderer {
         const segId = segmentIds[i];
         const rawBrightness = state.segmentBrightness.get(segId) ?? 0;
         const visible = state.visibleSegments.has(segId);
-        // Below threshold = completely invisible
         const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD) ? rawBrightness * 0.4 : 0;
 
         const ci = i * 6;
@@ -187,11 +183,9 @@ export class BoltRenderer {
   }
 
   private toWorld(normalized: Vec3): Vec3 {
-    // Apply rotation first to align simulation space with world direction
     const v = new THREE.Vector3(normalized.x, normalized.y, normalized.z);
     v.applyMatrix4(this.rotationMatrix);
 
-    // Then scale and translate to world position
     return {
       x: v.x * this.worldScale + this.worldOrigin.x,
       y: v.y * this.worldScale + this.worldOrigin.y,
@@ -199,7 +193,7 @@ export class BoltRenderer {
     };
   }
 
-  private createDepthGroup(segments: BoltGeometry['segments'], depth: number): DepthGroup {
+  private createDepthGroup(segments: BoltGeometry['segments'], depthBucket: number): DepthGroup {
     const n = segments.length;
     const positions = new Float32Array(n * 6);
     const colors = new Float32Array(n * 6);
@@ -219,18 +213,18 @@ export class BoltRenderer {
       positions[i * 6 + 4] = we.y;
       positions[i * 6 + 5] = we.z;
 
-      this.segmentIndexMap.set(seg.id, { depth, indexInGroup: i });
+      this.segmentIndexMap.set(seg.id, { depthBucket, indexInGroup: i });
     }
 
     const geom = new LineSegmentsGeometry();
     geom.setPositions(positions);
     geom.setColors(colors);
 
-    const mat = this.materials.getMaterialForDepth(depth);
+    const mat = this.materials.getMaterialForDepth(depthBucket);
     const line = new LineSegments2(geom, mat);
     line.computeLineDistances();
 
-    return { segmentIds, positions, colors, geometry: geom, line };
+    return { segmentIds, positions, colors, geometry: geom, line, depth: depthBucket };
   }
 
   private createGlowGroup(segments: BoltGeometry['segments']): DepthGroup {
@@ -262,6 +256,6 @@ export class BoltRenderer {
     const line = new LineSegments2(geom, mat);
     line.computeLineDistances();
 
-    return { segmentIds, positions, colors, geometry: geom, line };
+    return { segmentIds, positions, colors, geometry: geom, line, depth: 0 };
   }
 }

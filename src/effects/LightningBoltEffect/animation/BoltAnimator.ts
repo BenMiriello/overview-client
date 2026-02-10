@@ -1,22 +1,41 @@
-import { BoltGeometry } from '../simulation';
+import { BoltGeometry, BoltSegment, SimulationConfig } from '../simulation';
 import { BoltTimeline } from './BoltTimeline';
 import { AnimationPhase, AnimationState } from './types';
+
+interface SegmentInfo {
+  depth: number;
+  parentSegmentId: number | null;
+  stepIndex: number;
+  intensity: number;
+  isMainChannel: boolean;
+  isDeadEnd: boolean;
+  distanceFromMain: number;
+}
+
+interface BranchInfo {
+  lastStepIndex: number;
+  segmentCount: number;
+}
 
 export class BoltAnimator {
   private geometry: BoltGeometry;
   private timeline: BoltTimeline;
+  private config: SimulationConfig;
   private speed: number;
   private startTime: number = 0;
   private started: boolean = false;
 
-  private segmentById: Map<number, { depth: number; parentSegmentId: number | null; stepIndex: number; intensity: number; isMainChannel: boolean }>;
+  private segmentById: Map<number, SegmentInfo>;
   private mainChannelReversed: number[];
   private connectedSegments: Set<number>;
+  private branchInfo: Map<number, BranchInfo>;
+  private peakBrightness: Map<number, number>;
 
-  constructor(geometry: BoltGeometry, timeline: BoltTimeline, speed: number = 1.0) {
+  constructor(geometry: BoltGeometry, timeline: BoltTimeline, config: SimulationConfig, speed: number = 1.0) {
     this.geometry = geometry;
     this.timeline = timeline;
-    this.speed = Math.max(0.01, speed); // Prevent 0 or negative speeds
+    this.config = config;
+    this.speed = Math.max(0.01, speed);
 
     this.segmentById = new Map();
     for (const seg of geometry.segments) {
@@ -26,16 +45,14 @@ export class BoltAnimator {
         stepIndex: seg.stepIndex,
         intensity: seg.intensity,
         isMainChannel: seg.isMainChannel,
+        isDeadEnd: seg.isDeadEnd,
+        distanceFromMain: seg.distanceFromMain,
       });
     }
 
-    // Main channel from ground upward (reversed for return stroke)
     this.mainChannelReversed = [...geometry.mainChannelIds].reverse();
 
-    // Build set of segments connected to main channel with iterative expansion
     this.connectedSegments = new Set(geometry.mainChannelIds);
-
-    // Keep expanding until no new segments added (handles multi-depth branches)
     let changed = true;
     while (changed) {
       changed = false;
@@ -50,20 +67,60 @@ export class BoltAnimator {
       }
     }
 
-    // Debug: log connectivity stats
-    const connectedByDepth: Record<number, number> = {};
-    for (const seg of geometry.segments) {
-      if (this.connectedSegments.has(seg.id)) {
-        connectedByDepth[seg.depth] = (connectedByDepth[seg.depth] || 0) + 1;
+    this.branchInfo = this.computeBranchInfo(geometry.segments);
+    this.peakBrightness = new Map();
+  }
+
+  private computeBranchInfo(segments: BoltSegment[]): Map<number, BranchInfo> {
+    const children = new Map<number, number[]>();
+    for (const seg of segments) {
+      if (seg.parentSegmentId !== null) {
+        const kids = children.get(seg.parentSegmentId) || [];
+        kids.push(seg.id);
+        children.set(seg.parentSegmentId, kids);
       }
     }
-    console.log('[Animator] Connected segments by depth:', connectedByDepth);
-    console.log('[Animator] Total segments:', geometry.segments.length, 'Connected:', this.connectedSegments.size);
+
+    const result = new Map<number, BranchInfo>();
+
+    const computeForBranch = (segId: number): BranchInfo => {
+      if (result.has(segId)) return result.get(segId)!;
+
+      const seg = this.segmentById.get(segId)!;
+      const kids = children.get(segId) || [];
+
+      if (kids.length === 0) {
+        const info = { lastStepIndex: seg.stepIndex, segmentCount: 1 };
+        result.set(segId, info);
+        return info;
+      }
+
+      let maxLastStep = seg.stepIndex;
+      let totalCount = 1;
+      for (const kid of kids) {
+        const kidInfo = computeForBranch(kid);
+        if (kidInfo.lastStepIndex > maxLastStep) {
+          maxLastStep = kidInfo.lastStepIndex;
+        }
+        totalCount += kidInfo.segmentCount;
+      }
+
+      const info = { lastStepIndex: maxLastStep, segmentCount: totalCount };
+      result.set(segId, info);
+      return info;
+    };
+
+    for (const seg of segments) {
+      computeForBranch(seg.id);
+    }
+
+    return result;
   }
 
   start(currentTime: number): void {
     this.startTime = currentTime;
     this.started = true;
+    this.peakBrightness.clear();
   }
 
   isStarted(): boolean {
@@ -118,7 +175,11 @@ export class BoltAnimator {
     return this.interstrokeState(strokeIndex);
   }
 
-  private lastLoggedProgress: number = -1;
+  private getDepthFactor(depth: number): number {
+    const minFactor = 0.3;
+    const decay = Math.exp(-depth * 0.7);
+    return minFactor + (1 - minFactor) * decay;
+  }
 
   private leaderState(progress: number): AnimationState {
     const targetStep = Math.floor(progress * this.timeline.totalSteps);
@@ -128,14 +189,10 @@ export class BoltAnimator {
     const TIP_DISTANCE = 5;
     const BRIGHTNESS_CUTOFF = 0.03;
 
-    // Log once at ~50% progress
-    const shouldLog = progress >= 0.5 && this.lastLoggedProgress < 0.5;
-    if (shouldLog) {
-      this.lastLoggedProgress = progress;
-      console.log('[Leader] progress:', progress.toFixed(2), 'targetStep:', targetStep, 'totalSteps:', this.timeline.totalSteps);
-    }
+    const totalSteps = this.timeline.totalSteps;
+    const deadEndFadeDuration = this.config.deadEndFadeDuration * totalSteps;
+    const deadEndMinBrightness = this.config.deadEndMinBrightness;
 
-    // Build connected set dynamically based on what we've reached
     const reachedMainChannel = new Set<number>();
     for (const id of this.geometry.mainChannelIds) {
       const seg = this.segmentById.get(id);
@@ -144,7 +201,6 @@ export class BoltAnimator {
       }
     }
 
-    // Connected: main channel + branches with iterative expansion for multi-depth
     const currentlyConnected = new Set(reachedMainChannel);
     let changed = true;
     while (changed) {
@@ -161,64 +217,48 @@ export class BoltAnimator {
       }
     }
 
-    if (shouldLog) {
-      const connectedByDepth: Record<number, number> = {};
-      for (const seg of this.geometry.segments) {
-        if (currentlyConnected.has(seg.id)) {
-          connectedByDepth[seg.depth] = (connectedByDepth[seg.depth] || 0) + 1;
-        }
-      }
-      console.log('[Leader] currentlyConnected by depth:', connectedByDepth);
-    }
-
     for (const seg of this.geometry.segments) {
       if (!currentlyConnected.has(seg.id)) continue;
       if (seg.stepIndex > targetStep) continue;
 
+      const info = this.segmentById.get(seg.id)!;
       const age = targetStep - seg.stepIndex;
-
-      // Base brightness by depth - main channel stays bright, branches dimmer
-      const depthFactor = Math.pow(0.7, seg.depth);
+      const depthFactor = this.getDepthFactor(info.depth);
 
       let b: number;
       if (age < TIP_DISTANCE) {
-        // Active tip area - brightest
         b = depthFactor * (0.8 + 0.2 * (1 - age / TIP_DISTANCE));
       } else {
-        // Trail - main channel stays visible, branches fade based on depth
         if (seg.isMainChannel) {
-          // Main channel: slow fade, stays at ~60% minimum
           b = Math.max(0.6, 1 - age * 0.005);
         } else {
-          // Branches: fade slower and stay visible at ~35% minimum
-          b = Math.max(0.35, depthFactor * (1 - age * 0.01));
+          b = Math.max(0.35 * depthFactor, depthFactor * (1 - age * 0.01));
+        }
+      }
+
+      if (info.isDeadEnd) {
+        const branchData = this.branchInfo.get(seg.id);
+        const lastStep = branchData?.lastStepIndex ?? seg.stepIndex;
+        const stepsSinceLastGrowth = targetStep - lastStep;
+
+        if (stepsSinceLastGrowth > 0) {
+          const fadeProgress = stepsSinceLastGrowth / deadEndFadeDuration;
+          const fadeFactor = Math.max(deadEndMinBrightness, 1 - fadeProgress);
+          b *= fadeFactor;
         }
       }
 
       if (b < BRIGHTNESS_CUTOFF) continue;
 
-      visible.add(seg.id);
-      brightness.set(seg.id, b * seg.intensity);
-    }
+      const prevPeak = this.peakBrightness.get(seg.id) ?? 0;
+      if (b > prevPeak) {
+        this.peakBrightness.set(seg.id, b);
+      } else if (!seg.isMainChannel && b < prevPeak) {
+        b = Math.max(b, prevPeak * 0.95);
+      }
 
-    if (shouldLog) {
-      const visibleByDepth: Record<number, number> = {};
-      const brightnessByDepth: Record<number, number[]> = {};
-      for (const seg of this.geometry.segments) {
-        if (visible.has(seg.id)) {
-          visibleByDepth[seg.depth] = (visibleByDepth[seg.depth] || 0) + 1;
-          const b = brightness.get(seg.id) ?? 0;
-          if (!brightnessByDepth[seg.depth]) brightnessByDepth[seg.depth] = [];
-          brightnessByDepth[seg.depth].push(b);
-        }
-      }
-      console.log('[Leader] visible by depth:', visibleByDepth);
-      for (const [depth, values] of Object.entries(brightnessByDepth)) {
-        const avg = values.reduce((a, b) => a + b, 0) / values.length;
-        const min = Math.min(...values);
-        const max = Math.max(...values);
-        console.log(`[Leader] depth ${depth} brightness: avg=${avg.toFixed(3)}, min=${min.toFixed(3)}, max=${max.toFixed(3)}`);
-      }
+      visible.add(seg.id);
+      brightness.set(seg.id, b * info.intensity);
     }
 
     return {
@@ -235,7 +275,6 @@ export class BoltAnimator {
     const visible = new Set<number>();
     const brightness = new Map<number, number>();
 
-    // Only show the tip area at ground connection - everything else invisible
     const tipSegments = this.mainChannelReversed.slice(0, 5);
     for (const segId of tipSegments) {
       visible.add(segId);
@@ -261,32 +300,28 @@ export class BoltAnimator {
     const litCount = Math.floor(progress * mainChannel.length);
     const litSet = new Set<number>();
 
-    // Main channel: bright wave traveling up - segments ahead are INVISIBLE
     for (let i = 0; i < mainChannel.length; i++) {
       const segId = mainChannel[i];
 
       if (i < litCount) {
-        // Already passed by return stroke - bright
         visible.add(segId);
         const decayFromWave = (litCount - i) / mainChannel.length;
         brightness.set(segId, Math.max(0.7, 1 - decayFromWave * 0.3) * peak);
         litSet.add(segId);
       } else if (i === litCount) {
-        // Return stroke wavefront - brightest
         visible.add(segId);
         brightness.set(segId, 1.0 * peak);
         litSet.add(segId);
       }
-      // Ahead of return stroke - don't add to visible (completely invisible)
     }
 
-    // Branches: only connected ones illuminate as their parent segment is lit
     for (const seg of this.geometry.segments) {
-      if (!seg.isMainChannel) {
+      if (!seg.isMainChannel && !seg.isDeadEnd) {
         if (this.connectedSegments.has(seg.id) && litSet.has(seg.parentSegmentId!)) {
           visible.add(seg.id);
           const parentBrightness = brightness.get(seg.parentSegmentId!) ?? 0;
-          brightness.set(seg.id, parentBrightness * 0.6 * Math.exp(-seg.depth * 0.2));
+          const depthFactor = this.getDepthFactor(seg.depth);
+          brightness.set(seg.id, parentBrightness * 0.6 * depthFactor);
         }
       }
     }
@@ -312,11 +347,11 @@ export class BoltAnimator {
       if (seg.isMainChannel) {
         visible.add(seg.id);
         brightness.set(seg.id, peak * decay);
-      } else if (this.connectedSegments.has(seg.id)) {
+      } else if (this.connectedSegments.has(seg.id) && !seg.isDeadEnd) {
         visible.add(seg.id);
-        brightness.set(seg.id, 0.5 * Math.exp(-seg.depth * 0.2) * peak * decay);
+        const depthFactor = this.getDepthFactor(seg.depth);
+        brightness.set(seg.id, 0.5 * depthFactor * peak * decay);
       }
-      // Unconnected branches: not visible
     }
 
     return {
@@ -335,7 +370,6 @@ export class BoltAnimator {
     const brightness = new Map<number, number>();
     const BRIGHTNESS_CUTOFF = 0.02;
 
-    // Fade to zero, not 10% of peak
     const fadeFactor = 1 - fadeProgress;
 
     for (const seg of this.geometry.segments) {
@@ -345,8 +379,9 @@ export class BoltAnimator {
           visible.add(seg.id);
           brightness.set(seg.id, b);
         }
-      } else if (this.connectedSegments.has(seg.id)) {
-        const b = 0.5 * Math.exp(-seg.depth * 0.2) * peak * fadeFactor;
+      } else if (this.connectedSegments.has(seg.id) && !seg.isDeadEnd) {
+        const depthFactor = this.getDepthFactor(seg.depth);
+        const b = 0.5 * depthFactor * peak * fadeFactor;
         if (b >= BRIGHTNESS_CUTOFF) {
           visible.add(seg.id);
           brightness.set(seg.id, b);
@@ -365,7 +400,6 @@ export class BoltAnimator {
   }
 
   private interstrokeState(strokeIndex: number): AnimationState {
-    // Nothing visible between strokes - complete darkness
     return {
       phase: AnimationPhase.INTERSTROKE,
       phaseProgress: 1,
