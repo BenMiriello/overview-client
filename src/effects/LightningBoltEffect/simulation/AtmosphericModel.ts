@@ -32,7 +32,7 @@ export const DEFAULT_ATMOSPHERIC_CONFIG: AtmosphericConfig = {
 
 export interface AtmosphericModel {
   ceilingCharge: VoronoiField;
-  groundCharge: VoronoiField | null; // null until Stage 6
+  groundCharge: VoronoiField;
   startingPoints: Vec3[];
   ceilingY: number;
   groundY: number;
@@ -73,6 +73,59 @@ function generate2DChargeField(
 }
 
 /**
+ * Generate ground charge as a smeared mirror of ceiling charge.
+ * Ground charge is induced BY ceiling charge via electrostatic induction.
+ * Jitter creates path variety while maintaining physical causality.
+ */
+function generateGroundCharge(
+  ceilingCharge: VoronoiField,
+  rng: SeededRNG,
+  groundY: number,
+  config: AtmosphericConfig
+): VoronoiField {
+  const cells: VoronoiCell[] = [];
+
+  // Induced cells (correlated with ceiling)
+  for (const ceilingCell of ceilingCharge.cells) {
+    const jitterX = (rng.next() - 0.5) * 0.1;
+    const jitterZ = (rng.next() - 0.5) * 0.1;
+
+    cells.push({
+      center: {
+        x: ceilingCell.center.x + jitterX,
+        y: groundY,
+        z: ceilingCell.center.z + jitterZ,
+      },
+      intensity: ceilingCell.intensity * (0.7 + rng.next() * 0.3),
+      falloffRadius: ceilingCell.falloffRadius * (0.8 + rng.next() * 0.4),
+    });
+  }
+
+  // 1-2 independent local features (metal, water, etc.)
+  const extraCells = 1 + Math.floor(rng.next() * 2);
+  for (let i = 0; i < extraCells; i++) {
+    const angle = rng.next() * Math.PI * 2;
+    const dist = rng.next() * config.boundsRadius * 0.8;
+
+    cells.push({
+      center: {
+        x: Math.cos(angle) * dist,
+        y: groundY,
+        z: Math.sin(angle) * dist,
+      },
+      intensity:
+        config.groundChargeIntensityRange[0] +
+        rng.next() * (config.groundChargeIntensityRange[1] - config.groundChargeIntensityRange[0]),
+      falloffRadius:
+        config.groundChargeRadiusRange[0] +
+        rng.next() * (config.groundChargeRadiusRange[1] - config.groundChargeRadiusRange[0]),
+    });
+  }
+
+  return new VoronoiField(cells, { is2D: true, fixedY: groundY });
+}
+
+/**
  * Extract starting points from ceiling charge peaks.
  * Returns positions sorted by charge intensity (highest first).
  */
@@ -110,8 +163,11 @@ export function createAtmosphericModel(
 
   const startingPoints = deriveStartingPoints(ceilingCharge);
 
-  // Log for Stage 3 verification
+  // Generate ground charge as smeared mirror of ceiling charge
+  const groundCharge = generateGroundCharge(ceilingCharge, rng, groundY, config);
+
   console.log('[Atmospheric] Ceiling charge cells:', ceilingCharge.cells.length);
+  console.log('[Atmospheric] Ground charge cells:', groundCharge.cells.length);
   console.log(
     '[Atmospheric] Starting points:',
     startingPoints.map(
@@ -122,7 +178,7 @@ export function createAtmosphericModel(
 
   return {
     ceilingCharge,
-    groundCharge: null, // Stage 6
+    groundCharge,
     startingPoints,
     ceilingY,
     groundY,

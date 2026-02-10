@@ -97,6 +97,26 @@ export interface SimulationInput {
 export interface SimulationOutput {
   geometry: BoltGeometry;
   stats: SimulationStats;
+  atmosphere?: AtmosphericModelData;
+}
+
+export interface AtmosphericModelData {
+  ceilingCharge: VoronoiFieldData;
+  groundCharge: VoronoiFieldData;
+  ceilingY: number;
+  groundY: number;
+}
+
+export interface VoronoiFieldData {
+  cells: VoronoiCellData[];
+  is2D: boolean;
+  fixedY: number;
+}
+
+export interface VoronoiCellData {
+  center: Vec3;
+  intensity: number;
+  falloffRadius: number;
 }
 
 export interface SimulationStats {

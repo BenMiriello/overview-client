@@ -20,4 +20,7 @@ export {
   type SimulationOutput,
   type SimulationStats,
   type FieldConfig,
+  type AtmosphericModelData,
+  type VoronoiFieldData,
+  type VoronoiCellData,
 } from './types';

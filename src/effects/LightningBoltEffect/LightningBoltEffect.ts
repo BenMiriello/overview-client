@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { simulateBolt, createConfig, DetailLevel, Vec3 } from './simulation';
+import { simulateBolt, createConfig, DetailLevel, Vec3, AtmosphericModelData } from './simulation';
 import { BoltAnimator, createTimeline, AnimationPhase } from './animation';
 import { BoltRenderer } from './rendering/BoltRenderer';
 import { ScreenFlashEffect } from './rendering/FlashEffect';
+import { ChargeFieldRenderer } from './rendering/ChargeFieldRenderer';
 import { LightningConfig, LightningCoordinateTransform } from './LightningTypes';
 
 export interface LightningBoltEffectConfig extends LightningConfig {
@@ -19,6 +20,7 @@ export class LightningBoltEffect {
 
   private animator: BoltAnimator | null = null;
   private renderer: BoltRenderer;
+  private chargeRenderer: ChargeFieldRenderer | null = null;
   private screenFlash: ScreenFlashEffect | null = null;
   private screenFlashFired: boolean = false;
 
@@ -60,6 +62,12 @@ export class LightningBoltEffect {
     const timeline = createTimeline(result.geometry, detailLevel);
     this.animator = new BoltAnimator(result.geometry, timeline, simConfig, config.speed ?? 1.0);
     this.renderer.setGeometry(result.geometry, worldStart, worldEnd);
+
+    // Create charge field visualization for SHOWCASE mode
+    if (detailLevel === DetailLevel.SHOWCASE && result.atmosphere) {
+      this.chargeRenderer = new ChargeFieldRenderer(scene, { planeSize: 1.0 });
+      this.chargeRenderer.setChargeField(result.atmosphere, worldStart, worldEnd);
+    }
   }
 
   update(currentTime: number): void {
@@ -107,9 +115,24 @@ export class LightningBoltEffect {
 
     this.renderer.dispose();
 
+    if (this.chargeRenderer) {
+      this.chargeRenderer.dispose();
+      this.chargeRenderer = null;
+    }
+
     if (this.screenFlash) {
       this.screenFlash.dispose();
       this.screenFlash = null;
     }
+  }
+
+  setChargeVisualization(visible: boolean): void {
+    if (this.chargeRenderer) {
+      this.chargeRenderer.setVisible(visible);
+    }
+  }
+
+  isChargeVisualizationVisible(): boolean {
+    return this.chargeRenderer?.isVisible() ?? false;
   }
 }
