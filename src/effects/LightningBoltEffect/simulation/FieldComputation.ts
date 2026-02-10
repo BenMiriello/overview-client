@@ -74,6 +74,14 @@ export function computeFieldAtPoint(point: Vec3, ctx: FieldContext, direction?: 
     field += groundChargeValue * proximityFactor * GROUND_CHARGE_WEIGHT;
   }
 
+  // 3D atmospheric charge attraction
+  // Guides paths toward high-charge regions throughout descent
+  const ATMOSPHERIC_CHARGE_WEIGHT = 0.25;
+  if (ctx.atmosphere?.atmosphericCharge) {
+    const atmoChargeValue = ctx.atmosphere.atmosphericCharge.getValue(point);
+    field += atmoChargeValue * ATMOSPHERIC_CHARGE_WEIGHT;
+  }
+
   // Asymmetric directional bias: heavily penalize upward, mildly favor downward
   if (direction) {
     if (direction.y > 0) {

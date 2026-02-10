@@ -9,10 +9,16 @@ export interface AtmosphericConfig {
   ceilingChargeIntensityRange: [number, number];
   ceilingChargeRadiusRange: [number, number];
 
-  // Ground charge (2D, y = groundY) - for later stages
+  // Ground charge (2D, y = groundY)
   groundChargeCellCount: number;
   groundChargeIntensityRange: [number, number];
   groundChargeRadiusRange: [number, number];
+
+  // 3D atmospheric charge (volumetric)
+  atmosphericChargeCellCount: number;
+  atmosphericChargeIntensityRange: [number, number];
+  atmosphericChargeRadiusRange: [number, number];
+  columnarChargeFraction: number; // Fraction derived from ceiling (0-1)
 
   // Spatial bounds (xz plane)
   boundsRadius: number;
@@ -27,12 +33,18 @@ export const DEFAULT_ATMOSPHERIC_CONFIG: AtmosphericConfig = {
   groundChargeIntensityRange: [0.3, 0.8],
   groundChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN, SCALE.CHARGE_POCKET_RADIUS.MAX],
 
+  atmosphericChargeCellCount: 6,
+  atmosphericChargeIntensityRange: [0.3, 0.7],
+  atmosphericChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN * 1.5, SCALE.CHARGE_POCKET_RADIUS.MAX * 1.5],
+  columnarChargeFraction: 0.6,
+
   boundsRadius: 0.4,
 };
 
 export interface AtmosphericModel {
   ceilingCharge: VoronoiField;
   groundCharge: VoronoiField;
+  atmosphericCharge: VoronoiField;
   startingPoints: Vec3[];
   ceilingY: number;
   groundY: number;
@@ -126,6 +138,78 @@ function generateGroundCharge(
 }
 
 /**
+ * Generate 3D atmospheric charge field.
+ * Combines columnar charge (extending from ceiling) with independent 3D pockets.
+ * Columnar charge represents convective charge separation.
+ * Independent pockets represent cosmic ray ionization, previous strikes, turbulence.
+ */
+function generate3DAtmosphericCharge(
+  ceilingCharge: VoronoiField,
+  rng: SeededRNG,
+  ceilingY: number,
+  groundY: number,
+  config: AtmosphericConfig
+): VoronoiField {
+  const cells: VoronoiCell[] = [];
+  const totalCells = config.atmosphericChargeCellCount;
+  const columnarCells = Math.floor(totalCells * config.columnarChargeFraction);
+  const independentCells = totalCells - columnarCells;
+  const verticalSpan = ceilingY - groundY;
+
+  // Columnar cells: extend from ceiling charge downward
+  const ceilingCells = ceilingCharge.cells;
+  for (let i = 0; i < columnarCells && i < ceilingCells.length; i++) {
+    const source = ceilingCells[i % ceilingCells.length];
+
+    // Place at random height between ceiling and ground (biased toward upper half)
+    const heightFactor = 0.3 + rng.next() * 0.5; // 0.3-0.8 of vertical span
+    const y = groundY + verticalSpan * heightFactor;
+
+    // Small XZ jitter from source position
+    const jitterX = (rng.next() - 0.5) * 0.05;
+    const jitterZ = (rng.next() - 0.5) * 0.05;
+
+    cells.push({
+      center: {
+        x: source.center.x + jitterX,
+        y,
+        z: source.center.z + jitterZ,
+      },
+      intensity:
+        config.atmosphericChargeIntensityRange[0] +
+        rng.next() * (config.atmosphericChargeIntensityRange[1] - config.atmosphericChargeIntensityRange[0]),
+      falloffRadius:
+        config.atmosphericChargeRadiusRange[0] +
+        rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]),
+    });
+  }
+
+  // Independent cells: random 3D positions
+  for (let i = 0; i < independentCells; i++) {
+    const angle = rng.next() * Math.PI * 2;
+    const dist = rng.next() * config.boundsRadius * 0.8;
+    const heightFactor = 0.2 + rng.next() * 0.6; // 0.2-0.8 of vertical span
+    const y = groundY + verticalSpan * heightFactor;
+
+    cells.push({
+      center: {
+        x: Math.cos(angle) * dist,
+        y,
+        z: Math.sin(angle) * dist,
+      },
+      intensity:
+        config.atmosphericChargeIntensityRange[0] +
+        rng.next() * (config.atmosphericChargeIntensityRange[1] - config.atmosphericChargeIntensityRange[0]),
+      falloffRadius:
+        config.atmosphericChargeRadiusRange[0] +
+        rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]),
+    });
+  }
+
+  return new VoronoiField(cells, { is2D: false });
+}
+
+/**
  * Extract starting points from ceiling charge peaks.
  * Returns positions sorted by charge intensity (highest first).
  */
@@ -166,8 +250,12 @@ export function createAtmosphericModel(
   // Generate ground charge as smeared mirror of ceiling charge
   const groundCharge = generateGroundCharge(ceilingCharge, rng, groundY, config);
 
+  // Generate 3D atmospheric charge
+  const atmosphericCharge = generate3DAtmosphericCharge(ceilingCharge, rng, ceilingY, groundY, config);
+
   console.log('[Atmospheric] Ceiling charge cells:', ceilingCharge.cells.length);
   console.log('[Atmospheric] Ground charge cells:', groundCharge.cells.length);
+  console.log('[Atmospheric] 3D atmospheric charge cells:', atmosphericCharge.cells.length);
   console.log(
     '[Atmospheric] Starting points:',
     startingPoints.map(
@@ -179,6 +267,7 @@ export function createAtmosphericModel(
   return {
     ceilingCharge,
     groundCharge,
+    atmosphericCharge,
     startingPoints,
     ceilingY,
     groundY,

@@ -364,6 +364,15 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
       is2D: true,
       fixedY: atmosphere.groundY,
     },
+    atmosphericCharge: {
+      cells: atmosphere.atmosphericCharge.cells.map(c => ({
+        center: c.center,
+        intensity: c.intensity,
+        falloffRadius: c.falloffRadius,
+      })),
+      is2D: false,
+      fixedY: 0,
+    },
     ceilingY: atmosphere.ceilingY,
     groundY: atmosphere.groundY,
   };
