@@ -13,10 +13,10 @@ const FIELD_PRESETS: Record<DetailLevel, FieldConfig> = {
   [DetailLevel.SHOWCASE]: {
     backgroundField: 1.0,
     channelInfluence: 0.3,
-    groundInfluence: 0.2,
+    groundInfluence: 0.15,
     epsilon: 0.005,
-    noiseScale: 0.15,
-    noiseAmplitude: 0.4,
+    noiseScale: 0.12,
+    noiseAmplitude: 0.7,
     noiseSeed: 0,
   },
 };
@@ -56,11 +56,11 @@ const DETAIL_PRESETS: Record<DetailLevel, Omit<SimulationConfig, 'fieldConfig'>>
     mainChannelJitter: 1.5,
     jitterDecayRate: 0.97,
 
-    branchProbAtStart: 0.15,
-    branchProbAtEnd: 0.08,
-    branchDeathRate: 0.03,
+    branchProbAtStart: 0.06,
+    branchProbAtEnd: 0.04,
+    branchDeathRate: 0.025,
     minBranchAge: 0,
-    maxActiveHeads: 15,
+    maxActiveHeads: 25,
     maxBranchesPerStep: 2,
 
     deadEndFadeDuration: 0.20,
