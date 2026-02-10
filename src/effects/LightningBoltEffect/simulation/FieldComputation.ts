@@ -1,6 +1,7 @@
 import { Vec3, FieldConfig } from './types';
 import { createNoise3D } from './noise';
 import { SpatialGrid } from './spatial';
+import { AtmosphericModel } from './AtmosphericModel';
 
 export interface FieldContext {
   channelGrid: SpatialGrid;
@@ -9,12 +10,14 @@ export interface FieldContext {
   noise3D: (x: number, y: number, z: number) => number;
   config: FieldConfig;
   useSpatialGrid: boolean;
+  atmosphere?: AtmosphericModel;
 }
 
 export function createFieldContext(
   groundY: number,
   config: FieldConfig,
   useSpatialGrid: boolean,
+  atmosphere?: AtmosphericModel,
 ): FieldContext {
   return {
     channelGrid: new SpatialGrid(0.05),
@@ -23,6 +26,7 @@ export function createFieldContext(
     noise3D: createNoise3D(config.noiseSeed),
     config,
     useSpatialGrid,
+    atmosphere,
   };
 }
 
@@ -57,6 +61,17 @@ export function computeFieldAtPoint(point: Vec3, ctx: FieldContext, direction?: 
   const groundDist = point.y - groundY;
   if (groundDist > 0) {
     field += config.groundInfluence / (groundDist + config.epsilon);
+  }
+
+  // Ground charge attraction (distance-modulated)
+  // Only affects paths when close to ground (~500m range = 0.08 units)
+  const GROUND_CHARGE_RANGE = 0.08;
+  const GROUND_CHARGE_WEIGHT = 0.5;
+  if (ctx.atmosphere?.groundCharge && groundDist > 0 && groundDist < GROUND_CHARGE_RANGE) {
+    const proximityFactor = 1 - groundDist / GROUND_CHARGE_RANGE;
+    const groundChargePos = { x: point.x, y: groundY, z: point.z };
+    const groundChargeValue = ctx.atmosphere.groundCharge.getValue(groundChargePos);
+    field += groundChargeValue * proximityFactor * GROUND_CHARGE_WEIGHT;
   }
 
   // Asymmetric directional bias: heavily penalize upward, mildly favor downward

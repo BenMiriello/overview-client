@@ -188,11 +188,13 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
   };
 
   const useSpatialGrid = config.detailLevel === DetailLevel.SHOWCASE;
-  const fieldCtx = createFieldContext(end.y, fieldConfig, useSpatialGrid);
 
-  // Create atmospheric model with ceiling charge distribution
+  // Create atmospheric model with ceiling and ground charge distribution
   const atmoRng = rng.fork();
   const atmosphere = createAtmosphericModel(atmoRng, start.y, end.y);
+
+  // Pass atmosphere to field context for ground charge influence
+  const fieldCtx = createFieldContext(end.y, fieldConfig, useSpatialGrid, atmosphere);
 
   // Spawn initial heads from ceiling charge peaks (multi-leader)
   const initialHeads = createInitialHeads(atmosphere, end, rng);
@@ -342,5 +344,29 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
   console.log('[Simulation] Branch segments by step range:', stepBuckets);
   console.log(`[Simulation] Total: ${finalSegments.length} segs, ${branchSegments.length} branch segs, ${state.currentStep} steps`);
 
-  return { geometry, stats };
+  // Serialize atmosphere data for visualization
+  const atmosphereData = {
+    ceilingCharge: {
+      cells: atmosphere.ceilingCharge.cells.map(c => ({
+        center: c.center,
+        intensity: c.intensity,
+        falloffRadius: c.falloffRadius,
+      })),
+      is2D: true,
+      fixedY: atmosphere.ceilingY,
+    },
+    groundCharge: {
+      cells: atmosphere.groundCharge.cells.map(c => ({
+        center: c.center,
+        intensity: c.intensity,
+        falloffRadius: c.falloffRadius,
+      })),
+      is2D: true,
+      fixedY: atmosphere.groundY,
+    },
+    ceilingY: atmosphere.ceilingY,
+    groundY: atmosphere.groundY,
+  };
+
+  return { geometry, stats, atmosphere: atmosphereData };
 }
