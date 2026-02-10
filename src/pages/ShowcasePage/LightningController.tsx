@@ -17,12 +17,14 @@ const LightningController = ({ detail = 1.0, speed = 1.0, showCharge = true }: L
   const strikeRef = useRef<LightningBoltEffect | null>(null);
   const nextStrikeTime = useRef<number>(0);
   const speedRef = useRef(speed);
+  const showChargeRef = useRef(showCharge);
 
   useEffect(() => {
     speedRef.current = speed;
   }, [speed]);
 
   useEffect(() => {
+    showChargeRef.current = showCharge;
     if (strikeRef.current) {
       strikeRef.current.setChargeVisualization(showCharge);
     }
@@ -56,6 +58,7 @@ const LightningController = ({ detail = 1.0, speed = 1.0, showCharge = true }: L
 
     const strike = new LightningBoltEffect(scene, null, config);
     strike.updateResolution(size.width, size.height);
+    strike.setChargeVisualization(showChargeRef.current);
     strikeRef.current = strike;
 
     window.dispatchEvent(new CustomEvent('lightning-strike', {
