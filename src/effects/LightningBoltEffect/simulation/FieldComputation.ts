@@ -90,6 +90,14 @@ export function computeFieldAtPoint(point: Vec3, ctx: FieldContext, direction?: 
     field *= 1 + moistureValue * MOISTURE_WEIGHT;
   }
 
+  // Ionization seeds: strong local attraction at pre-ionized points
+  // High weight because these are small but highly attractive
+  const IONIZATION_WEIGHT = 0.8;
+  if (ctx.atmosphere?.ionizationSeeds) {
+    const ionizationValue = ctx.atmosphere.ionizationSeeds.getValue(point);
+    field += ionizationValue * IONIZATION_WEIGHT;
+  }
+
   // Asymmetric directional bias: heavily penalize upward, mildly favor downward
   if (direction) {
     if (direction.y > 0) {

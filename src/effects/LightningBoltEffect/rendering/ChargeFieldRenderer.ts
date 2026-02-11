@@ -84,6 +84,7 @@ export interface ChargeFieldRenderOptions {
   groundColor?: THREE.Color;
   atmosphericColor?: THREE.Color;
   moistureColor?: THREE.Color;
+  ionizationColor?: THREE.Color;
   opacity?: number;
 }
 
@@ -97,9 +98,12 @@ export class ChargeFieldRenderer {
   private atmosphericMaterials: THREE.ShaderMaterial[] = [];
   private moistureSprites: THREE.Mesh[] = [];
   private moistureMaterials: THREE.ShaderMaterial[] = [];
+  private ionizationSprites: THREE.Mesh[] = [];
+  private ionizationMaterials: THREE.ShaderMaterial[] = [];
   private visible: boolean = true;
   private atmosphericVisible: boolean = true;
   private moistureVisible: boolean = true;
+  private ionizationVisible: boolean = true;
   private options: Required<ChargeFieldRenderOptions>;
 
   constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
@@ -110,6 +114,7 @@ export class ChargeFieldRenderer {
       groundColor: options.groundColor ?? new THREE.Color(0.9, 0.7, 0.5),
       atmosphericColor: options.atmosphericColor ?? new THREE.Color(0.85, 0.95, 1.0),
       moistureColor: options.moistureColor ?? new THREE.Color(0.6, 0.8, 0.95),
+      ionizationColor: options.ionizationColor ?? new THREE.Color(1.0, 1.0, 0.9),
       opacity: options.opacity ?? 0.2,
     };
   }
@@ -158,6 +163,11 @@ export class ChargeFieldRenderer {
     // Create moisture sprites (3D)
     if (atmosphere.moisture) {
       this.createMoistureSprites(atmosphere.moisture);
+    }
+
+    // Create ionization seed sprites (3D)
+    if (atmosphere.ionizationSeeds) {
+      this.createIonizationSprites(atmosphere.ionizationSeeds);
     }
   }
 
@@ -288,6 +298,42 @@ export class ChargeFieldRenderer {
     }
   }
 
+  private createIonizationSprites(field: VoronoiFieldData): void {
+    const cells = field.cells.slice(0, MAX_CELLS);
+
+    for (const cell of cells) {
+      // Ionization seeds are small but we scale up for visibility
+      const size = Math.max(cell.falloffRadius * 8, 0.02);
+      const geometry = new THREE.PlaneGeometry(size, size);
+
+      const material = new THREE.ShaderMaterial({
+        vertexShader: atmosphericVertexShader,
+        fragmentShader: atmosphericFragmentShader,
+        uniforms: {
+          baseColor: { value: this.options.ionizationColor },
+          intensity: { value: cell.intensity },
+          opacity: { value: this.options.opacity * 3.0 },
+        },
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+
+      const sprite = new THREE.Mesh(geometry, material);
+      sprite.position.set(cell.center.x, cell.center.y, cell.center.z);
+      sprite.visible = this.visible && this.ionizationVisible;
+
+      sprite.onBeforeRender = (renderer, scene, camera) => {
+        sprite.quaternion.copy(camera.quaternion);
+      };
+
+      this.ionizationSprites.push(sprite);
+      this.ionizationMaterials.push(material);
+      this.scene.add(sprite);
+    }
+  }
+
   setVisible(visible: boolean): void {
     this.visible = visible;
     if (this.ceilingPlane) this.ceilingPlane.visible = visible;
@@ -297,6 +343,9 @@ export class ChargeFieldRenderer {
     }
     for (const sprite of this.moistureSprites) {
       sprite.visible = visible && this.moistureVisible;
+    }
+    for (const sprite of this.ionizationSprites) {
+      sprite.visible = visible && this.ionizationVisible;
     }
   }
 
@@ -324,6 +373,17 @@ export class ChargeFieldRenderer {
 
   isMoistureVisible(): boolean {
     return this.moistureVisible;
+  }
+
+  setIonizationVisible(visible: boolean): void {
+    this.ionizationVisible = visible;
+    for (const sprite of this.ionizationSprites) {
+      sprite.visible = this.visible && visible;
+    }
+  }
+
+  isIonizationVisible(): boolean {
+    return this.ionizationVisible;
   }
 
   dispose(): void {
@@ -364,5 +424,15 @@ export class ChargeFieldRenderer {
     }
     this.moistureSprites = [];
     this.moistureMaterials = [];
+
+    for (const sprite of this.ionizationSprites) {
+      this.scene.remove(sprite);
+      sprite.geometry.dispose();
+    }
+    for (const material of this.ionizationMaterials) {
+      material.dispose();
+    }
+    this.ionizationSprites = [];
+    this.ionizationMaterials = [];
   }
 }

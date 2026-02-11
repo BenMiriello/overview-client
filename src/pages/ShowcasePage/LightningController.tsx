@@ -9,12 +9,13 @@ interface LightningControllerProps {
   showCharge?: boolean;
   showAtmospheric?: boolean;
   showMoisture?: boolean;
+  showIonization?: boolean;
 }
 
 const SHOWCASE_START = { x: 0, y: 1.5, z: 0 };
 const SHOWCASE_END = { x: 0, y: -1.8, z: 0 };
 
-const LightningController = ({ detail = 1.0, speed = 1.0, showCharge = true, showAtmospheric = true, showMoisture = true }: LightningControllerProps) => {
+const LightningController = ({ detail = 1.0, speed = 1.0, showCharge = true, showAtmospheric = true, showMoisture = true, showIonization = true }: LightningControllerProps) => {
   const { scene, size } = useThree();
   const strikeRef = useRef<LightningBoltEffect | null>(null);
   const nextStrikeTime = useRef<number>(0);
@@ -22,6 +23,7 @@ const LightningController = ({ detail = 1.0, speed = 1.0, showCharge = true, sho
   const showChargeRef = useRef(showCharge);
   const showAtmosphericRef = useRef(showAtmospheric);
   const showMoistureRef = useRef(showMoisture);
+  const showIonizationRef = useRef(showIonization);
 
   useEffect(() => {
     speedRef.current = speed;
@@ -47,6 +49,13 @@ const LightningController = ({ detail = 1.0, speed = 1.0, showCharge = true, sho
       strikeRef.current.setMoistureVisualization(showMoisture);
     }
   }, [showMoisture]);
+
+  useEffect(() => {
+    showIonizationRef.current = showIonization;
+    if (strikeRef.current) {
+      strikeRef.current.setIonizationVisualization(showIonization);
+    }
+  }, [showIonization]);
 
   const createNewStrike = useCallback(() => {
     if (strikeRef.current) {
@@ -79,6 +88,7 @@ const LightningController = ({ detail = 1.0, speed = 1.0, showCharge = true, sho
     strike.setChargeVisualization(showChargeRef.current);
     strike.setAtmosphericChargeVisualization(showAtmosphericRef.current);
     strike.setMoistureVisualization(showMoistureRef.current);
+    strike.setIonizationVisualization(showIonizationRef.current);
     strikeRef.current = strike;
 
     window.dispatchEvent(new CustomEvent('lightning-strike', {
