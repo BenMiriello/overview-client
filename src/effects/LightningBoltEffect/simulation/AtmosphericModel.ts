@@ -20,6 +20,11 @@ export interface AtmosphericConfig {
   atmosphericChargeRadiusRange: [number, number];
   columnarChargeFraction: number; // Fraction derived from ceiling (0-1)
 
+  // 3D moisture field (volumetric)
+  moistureCellCount: number;
+  moistureIntensityRange: [number, number];
+  moistureRadiusRange: [number, number];
+
   // Spatial bounds (xz plane)
   boundsRadius: number;
 }
@@ -38,6 +43,10 @@ export const DEFAULT_ATMOSPHERIC_CONFIG: AtmosphericConfig = {
   atmosphericChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN * 1.5, SCALE.CHARGE_POCKET_RADIUS.MAX * 1.5],
   columnarChargeFraction: 0.6,
 
+  moistureCellCount: 5,
+  moistureIntensityRange: [0.4, 0.9],
+  moistureRadiusRange: [SCALE.MOISTURE_REGION_RADIUS.MIN, SCALE.MOISTURE_REGION_RADIUS.MAX],
+
   boundsRadius: 0.4,
 };
 
@@ -45,6 +54,7 @@ export interface AtmosphericModel {
   ceilingCharge: VoronoiField;
   groundCharge: VoronoiField;
   atmosphericCharge: VoronoiField;
+  moisture: VoronoiField;
   startingPoints: Vec3[];
   ceilingY: number;
   groundY: number;
@@ -210,6 +220,46 @@ function generate3DAtmosphericCharge(
 }
 
 /**
+ * Generate 3D moisture field.
+ * Moisture lowers the breakdown threshold, making paths prefer moist regions.
+ * Moisture distribution correlates loosely with convection (similar to charge)
+ * but has its own independent variation.
+ */
+function generateMoistureField(
+  rng: SeededRNG,
+  ceilingY: number,
+  groundY: number,
+  config: AtmosphericConfig
+): VoronoiField {
+  const cells: VoronoiCell[] = [];
+  const verticalSpan = ceilingY - groundY;
+
+  for (let i = 0; i < config.moistureCellCount; i++) {
+    const angle = rng.next() * Math.PI * 2;
+    const dist = rng.next() * config.boundsRadius * 0.9;
+    // Moisture tends to be higher in middle altitudes (cloud interior)
+    const heightFactor = 0.3 + rng.next() * 0.5;
+    const y = groundY + verticalSpan * heightFactor;
+
+    cells.push({
+      center: {
+        x: Math.cos(angle) * dist,
+        y,
+        z: Math.sin(angle) * dist,
+      },
+      intensity:
+        config.moistureIntensityRange[0] +
+        rng.next() * (config.moistureIntensityRange[1] - config.moistureIntensityRange[0]),
+      falloffRadius:
+        config.moistureRadiusRange[0] +
+        rng.next() * (config.moistureRadiusRange[1] - config.moistureRadiusRange[0]),
+    });
+  }
+
+  return new VoronoiField(cells, { is2D: false });
+}
+
+/**
  * Extract starting points from ceiling charge peaks.
  * Returns positions sorted by charge intensity (highest first).
  */
@@ -253,9 +303,13 @@ export function createAtmosphericModel(
   // Generate 3D atmospheric charge
   const atmosphericCharge = generate3DAtmosphericCharge(ceilingCharge, rng, ceilingY, groundY, config);
 
+  // Generate 3D moisture field
+  const moisture = generateMoistureField(rng, ceilingY, groundY, config);
+
   console.log('[Atmospheric] Ceiling charge cells:', ceilingCharge.cells.length);
   console.log('[Atmospheric] Ground charge cells:', groundCharge.cells.length);
   console.log('[Atmospheric] 3D atmospheric charge cells:', atmosphericCharge.cells.length);
+  console.log('[Atmospheric] Moisture cells:', moisture.cells.length);
   console.log(
     '[Atmospheric] Starting points:',
     startingPoints.map(
@@ -268,6 +322,7 @@ export function createAtmosphericModel(
     ceilingCharge,
     groundCharge,
     atmosphericCharge,
+    moisture,
     startingPoints,
     ceilingY,
     groundY,
