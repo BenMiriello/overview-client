@@ -85,7 +85,7 @@ function generate2DChargeField(
 
   for (let i = 0; i < cellCount; i++) {
     const angle = rng.next() * Math.PI * 2;
-    const dist = rng.next() * boundsRadius * 0.8; // Keep within 80% of bounds
+    const dist = Math.sqrt(rng.next()) * boundsRadius * 1.6; // 2x spread, uniform area
 
     const center: Vec3 = {
       x: Math.cos(angle) * dist,
@@ -95,8 +95,9 @@ function generate2DChargeField(
 
     const intensity =
       intensityRange[0] + rng.next() * (intensityRange[1] - intensityRange[0]);
-    const falloffRadius =
+    const baseFalloffRadius =
       radiusRange[0] + rng.next() * (radiusRange[1] - radiusRange[0]);
+    const falloffRadius = baseFalloffRadius * 1.5; // 1.5x bigger zones
 
     cells.push({ center, intensity, falloffRadius });
   }
@@ -185,9 +186,13 @@ function generate3DAtmosphericCharge(
     const heightFactor = rng.next() * 4 - 1.5;
     const y = groundY + verticalSpan * heightFactor;
 
-    // Large XZ jitter (2x)
-    const jitterX = (rng.next() - 0.5) * 2.0;
-    const jitterZ = (rng.next() - 0.5) * 2.0;
+    // XZ jitter (0.8x of previous 2.0 = 1.6)
+    const jitterX = (rng.next() - 0.5) * 1.6;
+    const jitterZ = (rng.next() - 0.5) * 1.6;
+
+    const baseRadius =
+      config.atmosphericChargeRadiusRange[0] +
+      rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]);
 
     cells.push({
       center: {
@@ -198,18 +203,20 @@ function generate3DAtmosphericCharge(
       intensity:
         config.atmosphericChargeIntensityRange[0] +
         rng.next() * (config.atmosphericChargeIntensityRange[1] - config.atmosphericChargeIntensityRange[0]),
-      falloffRadius:
-        config.atmosphericChargeRadiusRange[0] +
-        rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]),
+      falloffRadius: baseRadius * 1.5,
     });
   }
 
   // Independent cells: random 3D positions (sqrt for uniform area distribution)
   for (let i = 0; i < independentCells; i++) {
     const angle = rng.next() * Math.PI * 2;
-    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 6.0;
+    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 4.8;
     const heightFactor = rng.next() * 4 - 1.5;
     const y = groundY + verticalSpan * heightFactor;
+
+    const baseRadius =
+      config.atmosphericChargeRadiusRange[0] +
+      rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]);
 
     cells.push({
       center: {
@@ -220,9 +227,7 @@ function generate3DAtmosphericCharge(
       intensity:
         config.atmosphericChargeIntensityRange[0] +
         rng.next() * (config.atmosphericChargeIntensityRange[1] - config.atmosphericChargeIntensityRange[0]),
-      falloffRadius:
-        config.atmosphericChargeRadiusRange[0] +
-        rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]),
+      falloffRadius: baseRadius * 1.5,
     });
   }
 
@@ -246,9 +251,13 @@ function generateMoistureField(
 
   for (let i = 0; i < config.moistureCellCount; i++) {
     const angle = rng.next() * Math.PI * 2;
-    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 6.0;
+    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 4.8;
     const heightFactor = rng.next() * 4 - 1.5;
     const y = groundY + verticalSpan * heightFactor;
+
+    const baseRadius =
+      config.moistureRadiusRange[0] +
+      rng.next() * (config.moistureRadiusRange[1] - config.moistureRadiusRange[0]);
 
     cells.push({
       center: {
@@ -259,9 +268,7 @@ function generateMoistureField(
       intensity:
         config.moistureIntensityRange[0] +
         rng.next() * (config.moistureIntensityRange[1] - config.moistureIntensityRange[0]),
-      falloffRadius:
-        config.moistureRadiusRange[0] +
-        rng.next() * (config.moistureRadiusRange[1] - config.moistureRadiusRange[0]),
+      falloffRadius: baseRadius * 1.5,
     });
   }
 
@@ -284,9 +291,13 @@ function generateIonizationSeeds(
 
   for (let i = 0; i < config.ionizationSeedCount; i++) {
     const angle = rng.next() * Math.PI * 2;
-    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 6.0;
+    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 4.8;
     const heightFactor = rng.next() * 4 - 1.5;
     const y = groundY + verticalSpan * heightFactor;
+
+    const baseRadius =
+      config.ionizationRadiusRange[0] +
+      rng.next() * (config.ionizationRadiusRange[1] - config.ionizationRadiusRange[0]);
 
     cells.push({
       center: {
@@ -297,9 +308,7 @@ function generateIonizationSeeds(
       intensity:
         config.ionizationIntensityRange[0] +
         rng.next() * (config.ionizationIntensityRange[1] - config.ionizationIntensityRange[0]),
-      falloffRadius:
-        config.ionizationRadiusRange[0] +
-        rng.next() * (config.ionizationRadiusRange[1] - config.ionizationRadiusRange[0]),
+      falloffRadius: baseRadius * 1.5,
     });
   }
 
