@@ -9,6 +9,7 @@ const ShowcasePage = () => {
   const [speed, setSpeed] = useState<number>(1.0);
   const [showCharge, setShowCharge] = useState<boolean>(true);
   const [showAtmospheric, setShowAtmospheric] = useState<boolean>(true);
+  const [showMoisture, setShowMoisture] = useState<boolean>(true);
 
   return (
     <div className="showcase-page">
@@ -16,7 +17,7 @@ const ShowcasePage = () => {
         camera={{ position: [0, 0, 6], fov: 50 }}
         style={{ background: '#000' }}
       >
-        <Scene detail={detail} speed={speed} showCharge={showCharge} showAtmospheric={showAtmospheric} />
+        <Scene detail={detail} speed={speed} showCharge={showCharge} showAtmospheric={showAtmospheric} showMoisture={showMoisture} />
       </Canvas>
 
       <NavigationIcons currentPage="lightning" />
@@ -67,6 +68,16 @@ const ShowcasePage = () => {
             type="checkbox"
             checked={showAtmospheric}
             onChange={(e) => setShowAtmospheric(e.target.checked)}
+          />
+        </div>
+
+        <div className="slider-container">
+          <label htmlFor="moisture-toggle">Moisture:</label>
+          <input
+            id="moisture-toggle"
+            type="checkbox"
+            checked={showMoisture}
+            onChange={(e) => setShowMoisture(e.target.checked)}
           />
         </div>
       </div>

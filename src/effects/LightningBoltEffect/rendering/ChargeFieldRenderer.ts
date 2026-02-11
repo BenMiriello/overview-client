@@ -83,6 +83,7 @@ export interface ChargeFieldRenderOptions {
   ceilingColor?: THREE.Color;
   groundColor?: THREE.Color;
   atmosphericColor?: THREE.Color;
+  moistureColor?: THREE.Color;
   opacity?: number;
 }
 
@@ -94,8 +95,11 @@ export class ChargeFieldRenderer {
   private groundMaterial: THREE.ShaderMaterial | null = null;
   private atmosphericSprites: THREE.Mesh[] = [];
   private atmosphericMaterials: THREE.ShaderMaterial[] = [];
+  private moistureSprites: THREE.Mesh[] = [];
+  private moistureMaterials: THREE.ShaderMaterial[] = [];
   private visible: boolean = true;
   private atmosphericVisible: boolean = true;
+  private moistureVisible: boolean = true;
   private options: Required<ChargeFieldRenderOptions>;
 
   constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
@@ -105,6 +109,7 @@ export class ChargeFieldRenderer {
       ceilingColor: options.ceilingColor ?? new THREE.Color(0.7, 0.85, 1.0),
       groundColor: options.groundColor ?? new THREE.Color(0.9, 0.7, 0.5),
       atmosphericColor: options.atmosphericColor ?? new THREE.Color(0.85, 0.95, 1.0),
+      moistureColor: options.moistureColor ?? new THREE.Color(0.6, 0.8, 0.95),
       opacity: options.opacity ?? 0.2,
     };
   }
@@ -148,6 +153,11 @@ export class ChargeFieldRenderer {
     // Create atmospheric charge sprites (3D)
     if (atmosphere.atmosphericCharge) {
       this.createAtmosphericSprites(atmosphere.atmosphericCharge);
+    }
+
+    // Create moisture sprites (3D)
+    if (atmosphere.moisture) {
+      this.createMoistureSprites(atmosphere.moisture);
     }
   }
 
@@ -243,12 +253,50 @@ export class ChargeFieldRenderer {
     }
   }
 
+  private createMoistureSprites(field: VoronoiFieldData): void {
+    const cells = field.cells.slice(0, MAX_CELLS);
+
+    for (const cell of cells) {
+      const size = cell.falloffRadius * 2;
+      const geometry = new THREE.PlaneGeometry(size, size);
+
+      const material = new THREE.ShaderMaterial({
+        vertexShader: atmosphericVertexShader,
+        fragmentShader: atmosphericFragmentShader,
+        uniforms: {
+          baseColor: { value: this.options.moistureColor },
+          intensity: { value: cell.intensity },
+          opacity: { value: this.options.opacity * 1.2 },
+        },
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+
+      const sprite = new THREE.Mesh(geometry, material);
+      sprite.position.set(cell.center.x, cell.center.y, cell.center.z);
+      sprite.visible = this.visible && this.moistureVisible;
+
+      sprite.onBeforeRender = (renderer, scene, camera) => {
+        sprite.quaternion.copy(camera.quaternion);
+      };
+
+      this.moistureSprites.push(sprite);
+      this.moistureMaterials.push(material);
+      this.scene.add(sprite);
+    }
+  }
+
   setVisible(visible: boolean): void {
     this.visible = visible;
     if (this.ceilingPlane) this.ceilingPlane.visible = visible;
     if (this.groundPlane) this.groundPlane.visible = visible;
     for (const sprite of this.atmosphericSprites) {
       sprite.visible = visible && this.atmosphericVisible;
+    }
+    for (const sprite of this.moistureSprites) {
+      sprite.visible = visible && this.moistureVisible;
     }
   }
 
@@ -265,6 +313,17 @@ export class ChargeFieldRenderer {
 
   isAtmosphericVisible(): boolean {
     return this.atmosphericVisible;
+  }
+
+  setMoistureVisible(visible: boolean): void {
+    this.moistureVisible = visible;
+    for (const sprite of this.moistureSprites) {
+      sprite.visible = this.visible && visible;
+    }
+  }
+
+  isMoistureVisible(): boolean {
+    return this.moistureVisible;
   }
 
   dispose(): void {
@@ -295,5 +354,15 @@ export class ChargeFieldRenderer {
     }
     this.atmosphericSprites = [];
     this.atmosphericMaterials = [];
+
+    for (const sprite of this.moistureSprites) {
+      this.scene.remove(sprite);
+      sprite.geometry.dispose();
+    }
+    for (const material of this.moistureMaterials) {
+      material.dispose();
+    }
+    this.moistureSprites = [];
+    this.moistureMaterials = [];
   }
 }
