@@ -181,13 +181,13 @@ function generate3DAtmosphericCharge(
   for (let i = 0; i < columnarCells && i < ceilingCells.length; i++) {
     const source = ceilingCells[i % ceilingCells.length];
 
-    // Place at random height across full vertical span
-    const heightFactor = 0.1 + rng.next() * 0.8; // 0.1-0.9 of vertical span
+    // Extended vertical span (4x, centered)
+    const heightFactor = rng.next() * 4 - 1.5;
     const y = groundY + verticalSpan * heightFactor;
 
-    // Larger XZ jitter from source position
-    const jitterX = (rng.next() - 0.5) * 0.3;
-    const jitterZ = (rng.next() - 0.5) * 0.3;
+    // Large XZ jitter (2x)
+    const jitterX = (rng.next() - 0.5) * 2.0;
+    const jitterZ = (rng.next() - 0.5) * 2.0;
 
     cells.push({
       center: {
@@ -204,11 +204,11 @@ function generate3DAtmosphericCharge(
     });
   }
 
-  // Independent cells: random 3D positions
+  // Independent cells: random 3D positions (sqrt for uniform area distribution)
   for (let i = 0; i < independentCells; i++) {
     const angle = rng.next() * Math.PI * 2;
-    const dist = rng.next() * config.boundsRadius * 1.2;
-    const heightFactor = 0.1 + rng.next() * 0.8; // 0.1-0.9 of vertical span
+    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 6.0;
+    const heightFactor = rng.next() * 4 - 1.5;
     const y = groundY + verticalSpan * heightFactor;
 
     cells.push({
@@ -246,9 +246,8 @@ function generateMoistureField(
 
   for (let i = 0; i < config.moistureCellCount; i++) {
     const angle = rng.next() * Math.PI * 2;
-    const dist = rng.next() * config.boundsRadius * 1.2;
-    // Spread across full vertical range
-    const heightFactor = 0.1 + rng.next() * 0.8;
+    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 6.0;
+    const heightFactor = rng.next() * 4 - 1.5;
     const y = groundY + verticalSpan * heightFactor;
 
     cells.push({
@@ -285,9 +284,8 @@ function generateIonizationSeeds(
 
   for (let i = 0; i < config.ionizationSeedCount; i++) {
     const angle = rng.next() * Math.PI * 2;
-    const dist = rng.next() * config.boundsRadius * 1.3;
-    // Ionization can occur anywhere in vertical span
-    const heightFactor = 0.05 + rng.next() * 0.9;
+    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 6.0;
+    const heightFactor = rng.next() * 4 - 1.5;
     const y = groundY + verticalSpan * heightFactor;
 
     cells.push({
