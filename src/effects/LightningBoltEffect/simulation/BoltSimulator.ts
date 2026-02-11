@@ -382,6 +382,15 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
       is2D: false,
       fixedY: 0,
     },
+    ionizationSeeds: {
+      cells: atmosphere.ionizationSeeds.cells.map(c => ({
+        center: c.center,
+        intensity: c.intensity,
+        falloffRadius: c.falloffRadius,
+      })),
+      is2D: false,
+      fixedY: 0,
+    },
     ceilingY: atmosphere.ceilingY,
     groundY: atmosphere.groundY,
   };

@@ -10,6 +10,7 @@ const ShowcasePage = () => {
   const [showCharge, setShowCharge] = useState<boolean>(true);
   const [showAtmospheric, setShowAtmospheric] = useState<boolean>(true);
   const [showMoisture, setShowMoisture] = useState<boolean>(true);
+  const [showIonization, setShowIonization] = useState<boolean>(true);
 
   return (
     <div className="showcase-page">
@@ -17,7 +18,7 @@ const ShowcasePage = () => {
         camera={{ position: [0, 0, 6], fov: 50 }}
         style={{ background: '#000' }}
       >
-        <Scene detail={detail} speed={speed} showCharge={showCharge} showAtmospheric={showAtmospheric} showMoisture={showMoisture} />
+        <Scene detail={detail} speed={speed} showCharge={showCharge} showAtmospheric={showAtmospheric} showMoisture={showMoisture} showIonization={showIonization} />
       </Canvas>
 
       <NavigationIcons currentPage="lightning" />
@@ -78,6 +79,16 @@ const ShowcasePage = () => {
             type="checkbox"
             checked={showMoisture}
             onChange={(e) => setShowMoisture(e.target.checked)}
+          />
+        </div>
+
+        <div className="slider-container">
+          <label htmlFor="ionization-toggle">Ionization:</label>
+          <input
+            id="ionization-toggle"
+            type="checkbox"
+            checked={showIonization}
+            onChange={(e) => setShowIonization(e.target.checked)}
           />
         </div>
       </div>

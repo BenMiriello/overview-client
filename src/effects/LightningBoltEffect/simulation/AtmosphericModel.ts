@@ -25,6 +25,11 @@ export interface AtmosphericConfig {
   moistureIntensityRange: [number, number];
   moistureRadiusRange: [number, number];
 
+  // Ionization seeds (sparse 3D points)
+  ionizationSeedCount: number;
+  ionizationIntensityRange: [number, number];
+  ionizationRadiusRange: [number, number];
+
   // Spatial bounds (xz plane)
   boundsRadius: number;
 }
@@ -47,6 +52,10 @@ export const DEFAULT_ATMOSPHERIC_CONFIG: AtmosphericConfig = {
   moistureIntensityRange: [0.4, 0.9],
   moistureRadiusRange: [SCALE.MOISTURE_REGION_RADIUS.MIN, SCALE.MOISTURE_REGION_RADIUS.MAX],
 
+  ionizationSeedCount: 12,
+  ionizationIntensityRange: [0.6, 1.0],
+  ionizationRadiusRange: [SCALE.IONIZATION_SEED_RADIUS.MIN, SCALE.IONIZATION_SEED_RADIUS.MAX],
+
   boundsRadius: 0.4,
 };
 
@@ -55,6 +64,7 @@ export interface AtmosphericModel {
   groundCharge: VoronoiField;
   atmosphericCharge: VoronoiField;
   moisture: VoronoiField;
+  ionizationSeeds: VoronoiField;
   startingPoints: Vec3[];
   ceilingY: number;
   groundY: number;
@@ -260,6 +270,45 @@ function generateMoistureField(
 }
 
 /**
+ * Generate ionization seeds (small pre-ionized points).
+ * Represents cosmic ray tracks, previous discharge remnants, local breakdown.
+ * Many small points with high local attraction.
+ */
+function generateIonizationSeeds(
+  rng: SeededRNG,
+  ceilingY: number,
+  groundY: number,
+  config: AtmosphericConfig
+): VoronoiField {
+  const cells: VoronoiCell[] = [];
+  const verticalSpan = ceilingY - groundY;
+
+  for (let i = 0; i < config.ionizationSeedCount; i++) {
+    const angle = rng.next() * Math.PI * 2;
+    const dist = rng.next() * config.boundsRadius * 0.9;
+    // Ionization can occur anywhere in vertical span
+    const heightFactor = 0.1 + rng.next() * 0.8;
+    const y = groundY + verticalSpan * heightFactor;
+
+    cells.push({
+      center: {
+        x: Math.cos(angle) * dist,
+        y,
+        z: Math.sin(angle) * dist,
+      },
+      intensity:
+        config.ionizationIntensityRange[0] +
+        rng.next() * (config.ionizationIntensityRange[1] - config.ionizationIntensityRange[0]),
+      falloffRadius:
+        config.ionizationRadiusRange[0] +
+        rng.next() * (config.ionizationRadiusRange[1] - config.ionizationRadiusRange[0]),
+    });
+  }
+
+  return new VoronoiField(cells, { is2D: false });
+}
+
+/**
  * Extract starting points from ceiling charge peaks.
  * Returns positions sorted by charge intensity (highest first).
  */
@@ -306,10 +355,14 @@ export function createAtmosphericModel(
   // Generate 3D moisture field
   const moisture = generateMoistureField(rng, ceilingY, groundY, config);
 
+  // Generate ionization seeds
+  const ionizationSeeds = generateIonizationSeeds(rng, ceilingY, groundY, config);
+
   console.log('[Atmospheric] Ceiling charge cells:', ceilingCharge.cells.length);
   console.log('[Atmospheric] Ground charge cells:', groundCharge.cells.length);
   console.log('[Atmospheric] 3D atmospheric charge cells:', atmosphericCharge.cells.length);
   console.log('[Atmospheric] Moisture cells:', moisture.cells.length);
+  console.log('[Atmospheric] Ionization seeds:', ionizationSeeds.cells.length);
   console.log(
     '[Atmospheric] Starting points:',
     startingPoints.map(
@@ -323,6 +376,7 @@ export function createAtmosphericModel(
     groundCharge,
     atmosphericCharge,
     moisture,
+    ionizationSeeds,
     startingPoints,
     ceilingY,
     groundY,

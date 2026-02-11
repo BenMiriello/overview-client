@@ -105,6 +105,7 @@ export interface AtmosphericModelData {
   groundCharge: VoronoiFieldData;
   atmosphericCharge: VoronoiFieldData;
   moisture: VoronoiFieldData;
+  ionizationSeeds: VoronoiFieldData;
   ceilingY: number;
   groundY: number;
 }
