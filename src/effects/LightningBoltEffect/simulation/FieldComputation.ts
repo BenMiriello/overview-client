@@ -82,6 +82,14 @@ export function computeFieldAtPoint(point: Vec3, ctx: FieldContext, direction?: 
     field += atmoChargeValue * ATMOSPHERIC_CHARGE_WEIGHT;
   }
 
+  // Moisture effect: higher moisture lowers breakdown threshold
+  // Implemented as a multiplicative boost to field value
+  const MOISTURE_WEIGHT = 0.3;
+  if (ctx.atmosphere?.moisture) {
+    const moistureValue = ctx.atmosphere.moisture.getValue(point);
+    field *= 1 + moistureValue * MOISTURE_WEIGHT;
+  }
+
   // Asymmetric directional bias: heavily penalize upward, mildly favor downward
   if (direction) {
     if (direction.y > 0) {
