@@ -25,7 +25,7 @@ const ShowcasePage = () => {
 
       <div className="controls">
         <div className="slider-container">
-          <label htmlFor="detail-slider">Detail:</label>
+          <label htmlFor="detail-slider">Detail</label>
           <input
             id="detail-slider"
             type="range"
@@ -39,7 +39,7 @@ const ShowcasePage = () => {
         </div>
 
         <div className="slider-container">
-          <label htmlFor="speed-slider">Speed:</label>
+          <label htmlFor="speed-slider">Speed</label>
           <input
             id="speed-slider"
             type="range"
@@ -53,7 +53,7 @@ const ShowcasePage = () => {
         </div>
 
         <div className="slider-container">
-          <label htmlFor="charge-toggle">Show Charge:</label>
+          <label htmlFor="charge-toggle">Ground and Cloud Charge</label>
           <input
             id="charge-toggle"
             type="checkbox"
@@ -63,7 +63,7 @@ const ShowcasePage = () => {
         </div>
 
         <div className="slider-container">
-          <label htmlFor="atmospheric-toggle">3D Charge:</label>
+          <label htmlFor="atmospheric-toggle">Atmospheric Charge</label>
           <input
             id="atmospheric-toggle"
             type="checkbox"
@@ -73,7 +73,7 @@ const ShowcasePage = () => {
         </div>
 
         <div className="slider-container">
-          <label htmlFor="moisture-toggle">Moisture:</label>
+          <label htmlFor="moisture-toggle">Moisture</label>
           <input
             id="moisture-toggle"
             type="checkbox"
@@ -83,7 +83,7 @@ const ShowcasePage = () => {
         </div>
 
         <div className="slider-container">
-          <label htmlFor="ionization-toggle">Ionization:</label>
+          <label htmlFor="ionization-toggle">Ionization</label>
           <input
             id="ionization-toggle"
             type="checkbox"
