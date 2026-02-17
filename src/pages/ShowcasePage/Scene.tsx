@@ -35,7 +35,7 @@ const Scene = ({ detail = 1.0, speed = 1.0, showCharge = true, showAtmospheric =
 
       {/* Rotated by 20 degrees around Y axis */}
       <group rotation={[0, Math.PI * 20 / 180, 0]}>
-        <GroundPlane speed={speed} />
+        <GroundPlane />
         <LightningController detail={detail} speed={speed} showCharge={showCharge} showAtmospheric={showAtmospheric} showMoisture={showMoisture} showIonization={showIonization} />
       </group>
 
