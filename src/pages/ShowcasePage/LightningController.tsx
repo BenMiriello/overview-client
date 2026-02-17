@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { LightningBoltEffect, LightningBoltEffectConfig, DetailLevel } from '../../effects/LightningBoltEffect';
 import { AtmosphereSimulator, BreakdownEvent } from '../../effects/LightningBoltEffect/simulation/AtmosphereSimulator';
-import { AtmosphereRenderer } from '../../effects/LightningBoltEffect/rendering/AtmosphereRenderer';
+import { ChargeFieldRenderer } from '../../effects/LightningBoltEffect/rendering/ChargeFieldRenderer';
 
 function getMaxMainChannelBrightness(
   segmentBrightness: Map<number, number>,
@@ -42,7 +42,7 @@ const LightningController = ({
 
   // Persistent atmosphere simulation
   const simulatorRef = useRef<AtmosphereSimulator | null>(null);
-  const atmosphereRendererRef = useRef<AtmosphereRenderer | null>(null);
+  const atmosphereRendererRef = useRef<ChargeFieldRenderer | null>(null);
 
   // Active strike
   const strikeRef = useRef<LightningBoltEffect | null>(null);
@@ -125,7 +125,7 @@ const LightningController = ({
     });
 
     // Create persistent atmosphere renderer
-    atmosphereRendererRef.current = new AtmosphereRenderer(scene, {
+    atmosphereRendererRef.current = new ChargeFieldRenderer(scene, {
       planeSize: 1.0,
       opacity: 0.2,
     });

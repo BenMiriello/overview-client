@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { AtmosphericModelData, VoronoiFieldData, Vec3 } from '../simulation/types';
 import { CoordinateTransform } from '../CoordinateTransform';
+import { AtmosphereSimulator } from '../simulation/AtmosphereSimulator';
+import { VoronoiField } from '../simulation/VoronoiField';
+
+type FieldType = VoronoiField | VoronoiFieldData;
 
 const MAX_CELLS = 16;
 
@@ -152,8 +156,67 @@ export class ChargeFieldRenderer {
     this.updateVisibility();
   }
 
+  /**
+   * Initialize from a live AtmosphereSimulator (for real-time updates).
+   */
+  initialize(simulator: AtmosphereSimulator, worldStart: Vec3, worldEnd: Vec3): void {
+    this.dispose();
+
+    this.transform = new CoordinateTransform(worldStart, worldEnd);
+    this.worldCeilingY = worldStart.y;
+    this.worldGroundY = worldEnd.y;
+
+    this.ceilingSprites = this.createSprites(
+      simulator.ceilingCharge,
+      this.options.ceilingColor,
+      this.options.opacity,
+      1,
+      true
+    );
+
+    this.groundSprites = this.createSprites(
+      simulator.groundCharge,
+      this.options.groundColor,
+      this.options.opacity,
+      1,
+      true
+    );
+
+    this.atmosphericSprites = this.createSprites(
+      simulator.atmosphericCharge,
+      this.options.atmosphericColor,
+      this.options.opacity * 0.9
+    );
+
+    this.moistureSprites = this.createSprites(
+      simulator.moisture,
+      this.options.moistureColor,
+      this.options.opacity * 1.2
+    );
+
+    this.ionizationSprites = this.createSprites(
+      simulator.ionizationSeeds,
+      this.options.ionizationColor,
+      this.options.opacity * 3.0,
+      8
+    );
+
+    this.updateVisibility();
+  }
+
+  /**
+   * Update rendering from simulator state. Call each frame for live mode.
+   */
+  updateFromSimulator(simulator: AtmosphereSimulator): void {
+    this.updateSprites(this.ceilingSprites, simulator.ceilingCharge, 1, true);
+    this.updateSprites(this.groundSprites, simulator.groundCharge, 1, true);
+    this.updateSprites(this.atmosphericSprites, simulator.atmosphericCharge, 1, false);
+    this.updateSprites(this.moistureSprites, simulator.moisture, 1, false);
+    this.updateSprites(this.ionizationSprites, simulator.ionizationSeeds, 8, false);
+  }
+
   private createSprites(
-    field: VoronoiFieldData,
+    field: FieldType,
     color: THREE.Color,
     opacity: number,
     sizeMultiplier: number = 1,
@@ -291,6 +354,37 @@ export class ChargeFieldRenderer {
 
   isIonizationVisible(): boolean {
     return this.ionizationVisible;
+  }
+
+  private updateSprites(
+    sprites: SpriteData[],
+    field: FieldType,
+    sizeMultiplier: number = 1,
+    flat: boolean = false
+  ): void {
+    const cells = field.cells.slice(0, MAX_CELLS);
+    const worldScale = this.transform?.worldScale ?? 1;
+
+    for (let i = 0; i < sprites.length && i < cells.length; i++) {
+      const sprite = sprites[i];
+      const cell = cells[i];
+
+      const worldPos = this.transform
+        ? this.transform.toWorld(cell.center)
+        : cell.center;
+
+      let posY = worldPos.y;
+      if (!flat) {
+        const size = cell.falloffRadius * 2 * sizeMultiplier * worldScale;
+        const spriteRadius = size / 2;
+        const minY = this.worldGroundY + spriteRadius;
+        const maxY = this.worldCeilingY - spriteRadius;
+        posY = Math.max(minY, Math.min(maxY, posY));
+      }
+
+      sprite.mesh.position.set(worldPos.x, posY, worldPos.z);
+      sprite.material.uniforms.intensity.value = cell.intensity;
+    }
   }
 
   private disposeSprites(sprites: SpriteData[]): void {
