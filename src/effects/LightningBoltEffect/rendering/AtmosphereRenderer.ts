@@ -76,6 +76,10 @@ export class AtmosphereRenderer {
   // Coordinate transform
   private transform: CoordinateTransform | null = null;
 
+  // World Y bounds for clamping 3D sprites
+  private worldCeilingY: number = 0;
+  private worldGroundY: number = 0;
+
   constructor(scene: THREE.Scene, options: AtmosphereRendererOptions = {}) {
     this.scene = scene;
     this.options = {
@@ -98,6 +102,10 @@ export class AtmosphereRenderer {
 
     // Create coordinate transform
     this.transform = new CoordinateTransform(worldStart, worldEnd);
+
+    // Store world Y bounds for clamping 3D sprites
+    this.worldCeilingY = worldStart.y;
+    this.worldGroundY = worldEnd.y;
 
     // Create ceiling sprites (flat, lying horizontal)
     this.ceilingSprites = this.createSprites(
@@ -145,11 +153,11 @@ export class AtmosphereRenderer {
    */
   updateFromSimulator(simulator: AtmosphereSimulator): void {
     // Update all sprite positions and intensities
-    this.updateSprites(this.ceilingSprites, simulator.ceilingCharge);
-    this.updateSprites(this.groundSprites, simulator.groundCharge);
-    this.updateSprites(this.atmosphericSprites, simulator.atmosphericCharge);
-    this.updateSprites(this.moistureSprites, simulator.moisture);
-    this.updateSprites(this.ionizationSprites, simulator.ionizationSeeds, 8);
+    this.updateSprites(this.ceilingSprites, simulator.ceilingCharge, 1, true);
+    this.updateSprites(this.groundSprites, simulator.groundCharge, 1, true);
+    this.updateSprites(this.atmosphericSprites, simulator.atmosphericCharge, 1, false);
+    this.updateSprites(this.moistureSprites, simulator.moisture, 1, false);
+    this.updateSprites(this.ionizationSprites, simulator.ionizationSeeds, 8, false);
   }
 
   // ============ Visibility Controls ============
@@ -271,7 +279,17 @@ export class AtmosphereRenderer {
       const worldPos = this.transform
         ? this.transform.toWorld(cell.center)
         : cell.center;
-      mesh.position.set(worldPos.x, worldPos.y, worldPos.z);
+
+      // For 3D sprites, clamp Y so the sprite stays within ceiling/ground bounds
+      let posY = worldPos.y;
+      if (!flat) {
+        const spriteRadius = size / 2;
+        const minY = this.worldGroundY + spriteRadius;
+        const maxY = this.worldCeilingY - spriteRadius;
+        posY = Math.max(minY, Math.min(maxY, posY));
+      }
+
+      mesh.position.set(worldPos.x, posY, worldPos.z);
 
       // Billboard only for non-flat sprites (3D atmospheric fields)
       if (!flat) {
@@ -287,8 +305,14 @@ export class AtmosphereRenderer {
     return sprites;
   }
 
-  private updateSprites(sprites: SpriteData[], field: VoronoiField, _sizeMultiplier: number = 1): void {
+  private updateSprites(
+    sprites: SpriteData[],
+    field: VoronoiField,
+    sizeMultiplier: number = 1,
+    flat: boolean = false
+  ): void {
     const cells = field.cells.slice(0, MAX_CELLS);
+    const worldScale = this.transform?.worldScale ?? 1;
 
     for (let i = 0; i < sprites.length && i < cells.length; i++) {
       const sprite = sprites[i];
@@ -298,7 +322,18 @@ export class AtmosphereRenderer {
       const worldPos = this.transform
         ? this.transform.toWorld(cell.center)
         : cell.center;
-      sprite.mesh.position.set(worldPos.x, worldPos.y, worldPos.z);
+
+      // For 3D sprites, clamp Y so the sprite stays within ceiling/ground bounds
+      let posY = worldPos.y;
+      if (!flat) {
+        const size = cell.falloffRadius * 2 * sizeMultiplier * worldScale;
+        const spriteRadius = size / 2;
+        const minY = this.worldGroundY + spriteRadius;
+        const maxY = this.worldCeilingY - spriteRadius;
+        posY = Math.max(minY, Math.min(maxY, posY));
+      }
+
+      sprite.mesh.position.set(worldPos.x, posY, worldPos.z);
 
       // Update intensity uniform
       sprite.material.uniforms.intensity.value = cell.intensity;

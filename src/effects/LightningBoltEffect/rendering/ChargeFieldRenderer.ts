@@ -72,6 +72,10 @@ export class ChargeFieldRenderer {
   private moistureVisible: boolean = true;
   private ionizationVisible: boolean = true;
 
+  // World Y bounds for clamping 3D sprites
+  private worldCeilingY: number = 0;
+  private worldGroundY: number = 0;
+
   constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
     this.scene = scene;
     this.options = {
@@ -94,6 +98,10 @@ export class ChargeFieldRenderer {
     this.dispose();
 
     this.transform = transform ?? new CoordinateTransform(worldStart, worldEnd);
+
+    // Store world Y bounds for clamping 3D sprites
+    this.worldCeilingY = worldStart.y;
+    this.worldGroundY = worldEnd.y;
 
     // Create ceiling sprites (flat, lying horizontal)
     this.ceilingSprites = this.createSprites(
@@ -185,7 +193,17 @@ export class ChargeFieldRenderer {
       const worldPos = this.transform
         ? this.transform.toWorld(cell.center)
         : cell.center;
-      mesh.position.set(worldPos.x, worldPos.y, worldPos.z);
+
+      // For 3D sprites, clamp Y so the sprite stays within ceiling/ground bounds
+      let posY = worldPos.y;
+      if (!flat) {
+        const spriteRadius = size / 2;
+        const minY = this.worldGroundY + spriteRadius;
+        const maxY = this.worldCeilingY - spriteRadius;
+        posY = Math.max(minY, Math.min(maxY, posY));
+      }
+
+      mesh.position.set(worldPos.x, posY, worldPos.z);
 
       // Billboard only for non-flat sprites (3D atmospheric fields)
       if (!flat) {
