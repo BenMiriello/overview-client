@@ -148,7 +148,7 @@ export class ChargeFieldRenderer {
       this.ionizationSprites = this.createSprites(
         atmosphere.ionizationSeeds,
         this.options.ionizationColor,
-        this.options.opacity * 3.0,
+        this.options.opacity * 1.0,
         8
       );
     }
@@ -197,7 +197,7 @@ export class ChargeFieldRenderer {
     this.ionizationSprites = this.createSprites(
       simulator.ionizationSeeds,
       this.options.ionizationColor,
-      this.options.opacity * 3.0,
+      this.options.opacity * 1.0,
       8
     );
 
