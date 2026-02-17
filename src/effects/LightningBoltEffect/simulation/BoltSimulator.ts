@@ -177,7 +177,7 @@ function createInitialHeads(
   return heads;
 }
 
-export function simulateBolt(input: SimulationInput): SimulationOutput {
+export function simulateBolt(input: SimulationInput, existingAtmosphere?: AtmosphericModel): SimulationOutput {
   const t0 = performance.now();
   const { start, end, seed, config } = input;
 
@@ -189,9 +189,8 @@ export function simulateBolt(input: SimulationInput): SimulationOutput {
 
   const useSpatialGrid = config.detailLevel === DetailLevel.SHOWCASE;
 
-  // Create atmospheric model with ceiling and ground charge distribution
-  const atmoRng = rng.fork();
-  const atmosphere = createAtmosphericModel(atmoRng, start.y, end.y);
+  // Use provided atmosphere or create new one
+  const atmosphere = existingAtmosphere ?? createAtmosphericModel(rng.fork(), start.y, end.y);
 
   // Pass atmosphere to field context for ground charge influence
   const fieldCtx = createFieldContext(end.y, fieldConfig, useSpatialGrid, atmosphere);

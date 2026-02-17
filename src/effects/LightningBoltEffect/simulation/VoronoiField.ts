@@ -12,9 +12,11 @@ export interface VoronoiCell {
  *
  * Each cell contributes: intensity × (cos(distance/radius × π) + 1) / 2
  * Multiple overlapping cells blend additively.
+ *
+ * Supports mutation for dynamic atmospheric simulation.
  */
 export class VoronoiField {
-  readonly cells: VoronoiCell[];
+  cells: VoronoiCell[];
   private readonly is2D: boolean;
   private readonly fixedY: number;
 
@@ -96,8 +98,6 @@ export class VoronoiField {
     const stepY = this.is2D ? 1 : (bounds.max.y - bounds.min.y) / resolution;
     const stepZ = (bounds.max.z - bounds.min.z) / resolution;
 
-    const yStart = this.is2D ? this.fixedY : bounds.min.y;
-    const yEnd = this.is2D ? this.fixedY : bounds.max.y;
     const yIterations = this.is2D ? 1 : resolution;
 
     for (let i = 0; i <= resolution; i++) {
@@ -114,6 +114,61 @@ export class VoronoiField {
     }
 
     return samples;
+  }
+
+  // ============ Mutation Methods ============
+
+  /**
+   * Update a cell's position. For 2D fields, y is ignored.
+   */
+  setCellPosition(index: number, position: Vec3): void {
+    if (index < 0 || index >= this.cells.length) return;
+    const cell = this.cells[index];
+    cell.center = this.is2D
+      ? { x: position.x, y: this.fixedY, z: position.z }
+      : { ...position };
+  }
+
+  /**
+   * Update a cell's intensity.
+   */
+  setCellIntensity(index: number, intensity: number): void {
+    if (index < 0 || index >= this.cells.length) return;
+    this.cells[index].intensity = intensity;
+  }
+
+  /**
+   * Update a cell's falloff radius.
+   */
+  setCellRadius(index: number, radius: number): void {
+    if (index < 0 || index >= this.cells.length) return;
+    this.cells[index].falloffRadius = radius;
+  }
+
+  /**
+   * Add a new cell to the field.
+   */
+  addCell(cell: VoronoiCell): number {
+    const newCell = this.is2D
+      ? { ...cell, center: { x: cell.center.x, y: this.fixedY, z: cell.center.z } }
+      : { ...cell };
+    this.cells.push(newCell);
+    return this.cells.length - 1;
+  }
+
+  /**
+   * Remove a cell by index.
+   */
+  removeCell(index: number): void {
+    if (index < 0 || index >= this.cells.length) return;
+    this.cells.splice(index, 1);
+  }
+
+  /**
+   * Get field configuration for cloning/snapshots.
+   */
+  getConfig(): { is2D: boolean; fixedY: number } {
+    return { is2D: this.is2D, fixedY: this.fixedY };
   }
 
   private distance2D(a: Vec3, b: Vec3): number {
