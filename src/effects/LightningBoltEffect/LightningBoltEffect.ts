@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { simulateBolt, createConfig, DetailLevel, Vec3, AtmosphericModelData } from './simulation';
+import { simulateBolt, createConfig, DetailLevel, Vec3, AtmosphericModel } from './simulation';
 import { BoltAnimator, createTimeline, AnimationPhase } from './animation';
 import { BoltRenderer } from './rendering/BoltRenderer';
 import { ScreenFlashEffect } from './rendering/FlashEffect';
 import { ChargeFieldRenderer } from './rendering/ChargeFieldRenderer';
 import { LightningConfig, LightningCoordinateTransform } from './LightningTypes';
+import { CoordinateTransform } from './CoordinateTransform';
 
 export interface LightningBoltEffectConfig extends LightningConfig {
   duration: number;
@@ -13,6 +14,8 @@ export interface LightningBoltEffectConfig extends LightningConfig {
   worldStart?: Vec3;
   worldEnd?: Vec3;
   speed?: number;
+  atmosphere?: AtmosphericModel;
+  skipChargeRendering?: boolean;
 }
 
 export class LightningBoltEffect {
@@ -26,6 +29,14 @@ export class LightningBoltEffect {
 
   private isCompleted: boolean = false;
   private isTerminated: boolean = false;
+
+  // Strike position for post-dissipation
+  private strikeStartPosition: Vec3 | null = null;
+  private mainChannelPath: Vec3[] = [];
+  private mainChannelIds: Set<number> = new Set();
+
+  // Shared coordinate transform
+  private transform: CoordinateTransform | null = null;
 
   constructor(scene: THREE.Scene, globeEl: any, config: LightningBoltEffectConfig) {
     this.config = config;
@@ -52,21 +63,42 @@ export class LightningBoltEffect {
     const normalizedStart: Vec3 = { x: 0, y: 0.5, z: 0 };
     const normalizedEnd: Vec3 = { x: 0, y: -0.5, z: 0 };
 
+    // Use provided atmosphere if available
     const result = simulateBolt({
       start: normalizedStart,
       end: normalizedEnd,
       seed: config.seed ?? Date.now(),
       config: simConfig,
-    });
+    }, config.atmosphere);
 
     const timeline = createTimeline(result.geometry, detailLevel);
     this.animator = new BoltAnimator(result.geometry, timeline, simConfig, config.speed ?? 1.0);
     this.renderer.setGeometry(result.geometry, worldStart, worldEnd);
 
-    // Create charge field visualization for SHOWCASE mode
-    if (detailLevel === DetailLevel.SHOWCASE && result.atmosphere) {
+    // Create shared coordinate transform
+    this.transform = new CoordinateTransform(worldStart, worldEnd);
+
+    // Store main channel IDs
+    this.mainChannelIds = new Set(result.geometry.mainChannelIds);
+
+    // Store strike position from first main channel segment
+    const mainSegments = result.geometry.segments.filter(s => s.isMainChannel);
+    if (mainSegments.length > 0) {
+      // Sort by stepIndex to find the starting segment
+      mainSegments.sort((a, b) => a.stepIndex - b.stepIndex);
+      this.strikeStartPosition = { ...mainSegments[0].start };
+
+      // Store main channel path for dissipation calculation
+      this.mainChannelPath = mainSegments.map(s => ({ ...s.start }));
+      if (mainSegments.length > 0) {
+        this.mainChannelPath.push({ ...mainSegments[mainSegments.length - 1].end });
+      }
+    }
+
+    // Create charge field visualization for SHOWCASE mode (unless skipped)
+    if (detailLevel === DetailLevel.SHOWCASE && result.atmosphere && !config.skipChargeRendering) {
       this.chargeRenderer = new ChargeFieldRenderer(scene, { planeSize: 1.0 });
-      this.chargeRenderer.setChargeField(result.atmosphere, worldStart, worldEnd);
+      this.chargeRenderer.setChargeField(result.atmosphere, worldStart, worldEnd, this.transform);
     }
   }
 
@@ -164,5 +196,61 @@ export class LightningBoltEffect {
 
   isIonizationVisualizationVisible(): boolean {
     return this.chargeRenderer?.isIonizationVisible() ?? false;
+  }
+
+  /**
+   * Get the starting position of the strike (for post-strike dissipation).
+   */
+  getStrikeStartPosition(): Vec3 | null {
+    return this.strikeStartPosition;
+  }
+
+  /**
+   * Get the main channel path (for calculating dissipation radius).
+   */
+  getMainChannelPath(): Vec3[] {
+    return this.mainChannelPath;
+  }
+
+  /**
+   * Transform a point from normalized simulation space to world space.
+   */
+  private normalizedToWorld(point: Vec3): Vec3 {
+    if (!this.transform) {
+      return point;
+    }
+    return this.transform.toWorld(point);
+  }
+
+  /**
+   * Get the world-space position where the strike lands (end of main channel).
+   */
+  getStrikeLandingPosition(): Vec3 | null {
+    if (this.mainChannelPath.length === 0) return null;
+    const normalizedEnd = this.mainChannelPath[this.mainChannelPath.length - 1];
+    return this.normalizedToWorld(normalizedEnd);
+  }
+
+  /**
+   * Get current animation state (for synchronizing external effects like ground glow).
+   */
+  getAnimationState(currentTime: number): {
+    phase: AnimationPhase;
+    phaseProgress: number;
+    strokeCount: number;
+    segmentBrightness: Map<number, number>;
+    mainChannelIds: Set<number>;
+  } | null {
+    if (!this.animator || !this.animator.isStarted() || this.isCompleted || this.isTerminated) {
+      return null;
+    }
+    const state = this.animator.update(currentTime);
+    return {
+      phase: state.phase,
+      phaseProgress: state.phaseProgress,
+      strokeCount: state.strokeCount,
+      segmentBrightness: state.segmentBrightness,
+      mainChannelIds: this.mainChannelIds,
+    };
   }
 }

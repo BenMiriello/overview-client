@@ -9,6 +9,12 @@ export {
   type AtmosphericModel,
   type AtmosphericConfig,
 } from './AtmosphericModel';
+export {
+  AtmosphereSimulator,
+  DEFAULT_SIMULATOR_CONFIG,
+  type AtmosphereSimulatorConfig,
+  type BreakdownEvent,
+} from './AtmosphereSimulator';
 export type { SeededRNG } from './prng';
 export {
   DetailLevel,

@@ -64,9 +64,9 @@ export function computeFieldAtPoint(point: Vec3, ctx: FieldContext, direction?: 
   }
 
   // Ground charge attraction (distance-modulated)
-  // Only affects paths when close to ground (~500m range = 0.08 units)
-  const GROUND_CHARGE_RANGE = 0.08;
-  const GROUND_CHARGE_WEIGHT = 0.5;
+  // Activates when approaching ground (~1km range = 0.18 units)
+  const GROUND_CHARGE_RANGE = 0.18;
+  const GROUND_CHARGE_WEIGHT = 0.6;
   if (ctx.atmosphere?.groundCharge && groundDist > 0 && groundDist < GROUND_CHARGE_RANGE) {
     const proximityFactor = 1 - groundDist / GROUND_CHARGE_RANGE;
     const groundChargePos = { x: point.x, y: groundY, z: point.z };
@@ -76,7 +76,7 @@ export function computeFieldAtPoint(point: Vec3, ctx: FieldContext, direction?: 
 
   // 3D atmospheric charge attraction
   // Guides paths toward high-charge regions throughout descent
-  const ATMOSPHERIC_CHARGE_WEIGHT = 0.25;
+  const ATMOSPHERIC_CHARGE_WEIGHT = 0.5;
   if (ctx.atmosphere?.atmosphericCharge) {
     const atmoChargeValue = ctx.atmosphere.atmosphericCharge.getValue(point);
     field += atmoChargeValue * ATMOSPHERIC_CHARGE_WEIGHT;
@@ -90,9 +90,9 @@ export function computeFieldAtPoint(point: Vec3, ctx: FieldContext, direction?: 
     field *= 1 + moistureValue * MOISTURE_WEIGHT;
   }
 
-  // Ionization seeds: strong local attraction at pre-ionized points
-  // High weight because these are small but highly attractive
-  const IONIZATION_WEIGHT = 0.8;
+  // Ionization seeds: local attraction at pre-ionized points
+  // Reduced weight so it doesn't dominate other factors
+  const IONIZATION_WEIGHT = 0.6;
   if (ctx.atmosphere?.ionizationSeeds) {
     const ionizationValue = ctx.atmosphere.ionizationSeeds.getValue(point);
     field += ionizationValue * IONIZATION_WEIGHT;

@@ -4,6 +4,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { BoltGeometry, Vec3 } from '../simulation';
 import { AnimationState } from '../animation';
 import { LightningMaterials } from './LightningMaterials';
+import { CoordinateTransform } from '../CoordinateTransform';
 
 interface DepthGroup {
   segmentIds: number[];
@@ -26,9 +27,7 @@ export class BoltRenderer {
 
   private segmentIndexMap: Map<number, { depthBucket: number; indexInGroup: number }> = new Map();
 
-  private worldOrigin: Vec3 = { x: 0, y: 0, z: 0 };
-  private worldScale: number = 1;
-  private rotationMatrix: THREE.Matrix4 = new THREE.Matrix4();
+  private transform: CoordinateTransform | null = null;
 
   constructor(scene: THREE.Scene) {
     this.group = new THREE.Group();
@@ -39,31 +38,7 @@ export class BoltRenderer {
   setGeometry(geometry: BoltGeometry, worldStart: Vec3, worldEnd: Vec3): void {
     this.clear();
 
-    const dx = worldEnd.x - worldStart.x;
-    const dy = worldEnd.y - worldStart.y;
-    const dz = worldEnd.z - worldStart.z;
-    this.worldScale = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    this.worldOrigin = {
-      x: (worldStart.x + worldEnd.x) / 2,
-      y: (worldStart.y + worldEnd.y) / 2,
-      z: (worldStart.z + worldEnd.z) / 2,
-    };
-
-    const worldDir = new THREE.Vector3(dx, dy, dz).normalize();
-    const simAxis = new THREE.Vector3(0, -1, 0);
-
-    this.rotationMatrix.identity();
-    const dot = simAxis.dot(worldDir);
-
-    if (dot > 0.9999) {
-      // Already aligned
-    } else if (dot < -0.9999) {
-      this.rotationMatrix.makeRotationAxis(new THREE.Vector3(1, 0, 0), Math.PI);
-    } else {
-      const axis = new THREE.Vector3().crossVectors(simAxis, worldDir).normalize();
-      const angle = Math.acos(dot);
-      this.rotationMatrix.makeRotationAxis(axis, angle);
-    }
+    this.transform = new CoordinateTransform(worldStart, worldEnd);
 
     const byDepthBucket = new Map<number, typeof geometry.segments>();
     for (const seg of geometry.segments) {
@@ -183,14 +158,10 @@ export class BoltRenderer {
   }
 
   private toWorld(normalized: Vec3): Vec3 {
-    const v = new THREE.Vector3(normalized.x, normalized.y, normalized.z);
-    v.applyMatrix4(this.rotationMatrix);
-
-    return {
-      x: v.x * this.worldScale + this.worldOrigin.x,
-      y: v.y * this.worldScale + this.worldOrigin.y,
-      z: v.z * this.worldScale + this.worldOrigin.z,
-    };
+    if (!this.transform) {
+      return normalized;
+    }
+    return this.transform.toWorld(normalized);
   }
 
   private createDepthGroup(segments: BoltGeometry['segments'], depthBucket: number): DepthGroup {
