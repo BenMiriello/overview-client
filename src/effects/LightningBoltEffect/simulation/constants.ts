@@ -18,18 +18,18 @@ export const SCALE = {
 
   // Atmospheric feature scales (in simulation units)
   CHARGE_POCKET_RADIUS: {
-    MIN: 0.08, // ~500m in reality
-    MAX: 0.24, // ~1.5km in reality
+    MIN: 0.15, // ~940m in reality
+    MAX: 0.40, // ~2.5km in reality
   },
 
   MOISTURE_REGION_RADIUS: {
-    MIN: 0.08, // Similar to charge (both driven by convection)
-    MAX: 0.32, // Slightly larger features
+    MIN: 0.12, // Similar to charge (both driven by convection)
+    MAX: 0.45, // Slightly larger features
   },
 
   IONIZATION_SEED_RADIUS: {
-    MIN: 0.002, // ~12m - cosmic ray track scale
-    MAX: 0.008, // ~50m
+    MIN: 0.01, // ~60m - cosmic ray track scale
+    MAX: 0.03, // ~190m
   },
 } as const;
 
