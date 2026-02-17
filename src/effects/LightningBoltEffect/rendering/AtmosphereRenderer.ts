@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { AtmosphericModelData, VoronoiFieldData, Vec3 } from '../simulation/types';
+import { AtmosphereSimulator } from '../simulation/AtmosphereSimulator';
+import { VoronoiField } from '../simulation/VoronoiField';
+import { Vec3 } from '../simulation/types';
 import { CoordinateTransform } from '../CoordinateTransform';
 
 const MAX_CELLS = 16;
@@ -37,7 +39,7 @@ void main() {
 }
 `;
 
-export interface ChargeFieldRenderOptions {
+export interface AtmosphereRendererOptions {
   planeSize?: number;
   ceilingColor?: THREE.Color;
   groundColor?: THREE.Color;
@@ -52,10 +54,9 @@ interface SpriteData {
   material: THREE.ShaderMaterial;
 }
 
-export class ChargeFieldRenderer {
+export class AtmosphereRenderer {
   private scene: THREE.Scene;
-  private options: Required<ChargeFieldRenderOptions>;
-  private transform: CoordinateTransform | null = null;
+  private options: Required<AtmosphereRendererOptions>;
 
   // All fields rendered as sprites
   private ceilingSprites: SpriteData[] = [];
@@ -72,7 +73,10 @@ export class ChargeFieldRenderer {
   private moistureVisible: boolean = true;
   private ionizationVisible: boolean = true;
 
-  constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
+  // Coordinate transform
+  private transform: CoordinateTransform | null = null;
+
+  constructor(scene: THREE.Scene, options: AtmosphereRendererOptions = {}) {
     this.scene = scene;
     this.options = {
       planeSize: options.planeSize ?? 1.0,
@@ -85,19 +89,19 @@ export class ChargeFieldRenderer {
     };
   }
 
-  setChargeField(
-    atmosphere: AtmosphericModelData,
-    worldStart: Vec3,
-    worldEnd: Vec3,
-    transform?: CoordinateTransform
-  ): void {
+  /**
+   * Initialize rendering objects from a simulator.
+   */
+  initialize(simulator: AtmosphereSimulator, worldStart: Vec3, worldEnd: Vec3): void {
+    // Dispose existing
     this.dispose();
 
-    this.transform = transform ?? new CoordinateTransform(worldStart, worldEnd);
+    // Create coordinate transform
+    this.transform = new CoordinateTransform(worldStart, worldEnd);
 
     // Create ceiling sprites (flat, lying horizontal)
     this.ceilingSprites = this.createSprites(
-      atmosphere.ceilingCharge,
+      simulator.ceilingCharge,
       this.options.ceilingColor,
       this.options.opacity,
       1,
@@ -106,118 +110,49 @@ export class ChargeFieldRenderer {
 
     // Create ground sprites (flat, lying horizontal)
     this.groundSprites = this.createSprites(
-      atmosphere.groundCharge,
+      simulator.groundCharge,
       this.options.groundColor,
       this.options.opacity,
       1,
       true
     );
 
-    // Create atmospheric charge sprites (3D)
-    if (atmosphere.atmosphericCharge) {
-      this.atmosphericSprites = this.createSprites(
-        atmosphere.atmosphericCharge,
-        this.options.atmosphericColor,
-        this.options.opacity * 0.9
-      );
-    }
+    // Create 3D sprites
+    this.atmosphericSprites = this.createSprites(
+      simulator.atmosphericCharge,
+      this.options.atmosphericColor,
+      this.options.opacity * 0.9
+    );
 
-    // Create moisture sprites (3D)
-    if (atmosphere.moisture) {
-      this.moistureSprites = this.createSprites(
-        atmosphere.moisture,
-        this.options.moistureColor,
-        this.options.opacity * 1.2
-      );
-    }
+    this.moistureSprites = this.createSprites(
+      simulator.moisture,
+      this.options.moistureColor,
+      this.options.opacity * 1.2
+    );
 
-    // Create ionization seed sprites (3D)
-    if (atmosphere.ionizationSeeds) {
-      this.ionizationSprites = this.createSprites(
-        atmosphere.ionizationSeeds,
-        this.options.ionizationColor,
-        this.options.opacity * 3.0,
-        8
-      );
-    }
+    this.ionizationSprites = this.createSprites(
+      simulator.ionizationSeeds,
+      this.options.ionizationColor,
+      this.options.opacity * 3.0,
+      8
+    );
 
     this.updateVisibility();
   }
 
-  private createSprites(
-    field: VoronoiFieldData,
-    color: THREE.Color,
-    opacity: number,
-    sizeMultiplier: number = 1,
-    flat: boolean = false
-  ): SpriteData[] {
-    const sprites: SpriteData[] = [];
-    const cells = field.cells.slice(0, MAX_CELLS);
-
-    for (const cell of cells) {
-      // Scale size by world scale
-      const worldScale = this.transform?.worldScale ?? 1;
-      const size = cell.falloffRadius * 2 * sizeMultiplier * worldScale;
-      const geometry = new THREE.PlaneGeometry(size, size);
-
-      // For flat sprites (ceiling/ground), rotate geometry to lie horizontal
-      if (flat) {
-        geometry.rotateX(-Math.PI / 2);
-      }
-
-      const material = new THREE.ShaderMaterial({
-        vertexShader: spriteVertexShader,
-        fragmentShader: spriteFragmentShader,
-        uniforms: {
-          baseColor: { value: color },
-          intensity: { value: cell.intensity },
-          opacity: { value: opacity },
-        },
-        transparent: true,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      });
-
-      const mesh = new THREE.Mesh(geometry, material);
-
-      // Transform from normalized to world space
-      const worldPos = this.transform
-        ? this.transform.toWorld(cell.center)
-        : cell.center;
-      mesh.position.set(worldPos.x, worldPos.y, worldPos.z);
-
-      // Billboard only for non-flat sprites (3D atmospheric fields)
-      if (!flat) {
-        mesh.onBeforeRender = (_renderer, _scene, camera) => {
-          mesh.quaternion.copy(camera.quaternion);
-        };
-      }
-
-      this.scene.add(mesh);
-      sprites.push({ mesh, material });
-    }
-
-    return sprites;
+  /**
+   * Update rendering from simulator state. Call each frame.
+   */
+  updateFromSimulator(simulator: AtmosphereSimulator): void {
+    // Update all sprite positions and intensities
+    this.updateSprites(this.ceilingSprites, simulator.ceilingCharge);
+    this.updateSprites(this.groundSprites, simulator.groundCharge);
+    this.updateSprites(this.atmosphericSprites, simulator.atmosphericCharge);
+    this.updateSprites(this.moistureSprites, simulator.moisture);
+    this.updateSprites(this.ionizationSprites, simulator.ionizationSeeds, 8);
   }
 
-  private updateVisibility(): void {
-    for (const sprite of this.ceilingSprites) {
-      sprite.mesh.visible = this.visible && this.ceilingVisible;
-    }
-    for (const sprite of this.groundSprites) {
-      sprite.mesh.visible = this.visible && this.groundVisible;
-    }
-    for (const sprite of this.atmosphericSprites) {
-      sprite.mesh.visible = this.visible && this.atmosphericVisible;
-    }
-    for (const sprite of this.moistureSprites) {
-      sprite.mesh.visible = this.visible && this.moistureVisible;
-    }
-    for (const sprite of this.ionizationSprites) {
-      sprite.mesh.visible = this.visible && this.ionizationVisible;
-    }
-  }
+  // ============ Visibility Controls ============
 
   setVisible(visible: boolean): void {
     this.visible = visible;
@@ -273,6 +208,101 @@ export class ChargeFieldRenderer {
 
   isIonizationVisible(): boolean {
     return this.ionizationVisible;
+  }
+
+  // ============ Private Methods ============
+
+  private updateVisibility(): void {
+    for (const sprite of this.ceilingSprites) {
+      sprite.mesh.visible = this.visible && this.ceilingVisible;
+    }
+    for (const sprite of this.groundSprites) {
+      sprite.mesh.visible = this.visible && this.groundVisible;
+    }
+    for (const sprite of this.atmosphericSprites) {
+      sprite.mesh.visible = this.visible && this.atmosphericVisible;
+    }
+    for (const sprite of this.moistureSprites) {
+      sprite.mesh.visible = this.visible && this.moistureVisible;
+    }
+    for (const sprite of this.ionizationSprites) {
+      sprite.mesh.visible = this.visible && this.ionizationVisible;
+    }
+  }
+
+  private createSprites(
+    field: VoronoiField,
+    color: THREE.Color,
+    opacity: number,
+    sizeMultiplier: number = 1,
+    flat: boolean = false
+  ): SpriteData[] {
+    const sprites: SpriteData[] = [];
+    const cells = field.cells.slice(0, MAX_CELLS);
+
+    for (const cell of cells) {
+      // Scale size by world scale
+      const worldScale = this.transform?.worldScale ?? 1;
+      const size = cell.falloffRadius * 2 * sizeMultiplier * worldScale;
+      const geometry = new THREE.PlaneGeometry(size, size);
+
+      // For flat sprites (ceiling/ground), rotate geometry to lie horizontal
+      if (flat) {
+        geometry.rotateX(-Math.PI / 2);
+      }
+
+      const material = new THREE.ShaderMaterial({
+        vertexShader: spriteVertexShader,
+        fragmentShader: spriteFragmentShader,
+        uniforms: {
+          baseColor: { value: color },
+          intensity: { value: cell.intensity },
+          opacity: { value: opacity },
+        },
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+
+      const mesh = new THREE.Mesh(geometry, material);
+
+      // Transform from normalized to world space
+      const worldPos = this.transform
+        ? this.transform.toWorld(cell.center)
+        : cell.center;
+      mesh.position.set(worldPos.x, worldPos.y, worldPos.z);
+
+      // Billboard only for non-flat sprites (3D atmospheric fields)
+      if (!flat) {
+        mesh.onBeforeRender = (_renderer, _scene, camera) => {
+          mesh.quaternion.copy(camera.quaternion);
+        };
+      }
+
+      this.scene.add(mesh);
+      sprites.push({ mesh, material });
+    }
+
+    return sprites;
+  }
+
+  private updateSprites(sprites: SpriteData[], field: VoronoiField, _sizeMultiplier: number = 1): void {
+    const cells = field.cells.slice(0, MAX_CELLS);
+
+    for (let i = 0; i < sprites.length && i < cells.length; i++) {
+      const sprite = sprites[i];
+      const cell = cells[i];
+
+      // Transform from normalized to world space
+      const worldPos = this.transform
+        ? this.transform.toWorld(cell.center)
+        : cell.center;
+      sprite.mesh.position.set(worldPos.x, worldPos.y, worldPos.z);
+
+      // Update intensity uniform
+      sprite.material.uniforms.intensity.value = cell.intensity;
+    }
   }
 
   private disposeSprites(sprites: SpriteData[]): void {
