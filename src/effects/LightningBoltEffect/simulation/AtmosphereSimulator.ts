@@ -1,0 +1,506 @@
+import { Vec3, AtmosphericModelData, VoronoiFieldData } from './types';
+import { VoronoiField, VoronoiCell } from './VoronoiField';
+import { SeededRNG, createSeededRNG } from './prng';
+import { AtmosphericModel, AtmosphericConfig, DEFAULT_ATMOSPHERIC_CONFIG } from './AtmosphericModel';
+
+export interface AtmosphereSimulatorConfig {
+  // Charge dynamics
+  chargeAccumulationRate: number; // Rate at which charge builds (per second)
+  breakdownThreshold: number; // Intensity at which breakdown occurs
+  postStrikeChargeFactor: number; // Multiplier for struck region (0.15 = retain 15%)
+  postStrikeNearbyFactor: number; // Multiplier for nearby regions
+
+  // Wind
+  baseWindSpeed: number; // Units per second
+  windDirection: { x: number; z: number }; // Normalized direction
+
+  // Bounds for cell management
+  boundsRadius: number; // Cells beyond this are regenerated
+  ceilingY: number;
+  groundY: number;
+
+  // Initial charge
+  initialChargeRange: [number, number]; // Starting intensity range
+
+  // Atmospheric layer config
+  atmosphericConfig: AtmosphericConfig;
+}
+
+export const DEFAULT_SIMULATOR_CONFIG: AtmosphereSimulatorConfig = {
+  chargeAccumulationRate: 0.15,
+  breakdownThreshold: 0.85,
+  postStrikeChargeFactor: 0.15,
+  postStrikeNearbyFactor: 0.4,
+
+  baseWindSpeed: 0.003, // ~19 m/s in real units
+  windDirection: { x: 1, z: 0 }, // Drift in +X direction
+
+  boundsRadius: 0.65,
+  ceilingY: 0.5,
+  groundY: -0.5,
+
+  initialChargeRange: [0.2, 0.5],
+
+  atmosphericConfig: DEFAULT_ATMOSPHERIC_CONFIG,
+};
+
+export interface BreakdownEvent {
+  position: Vec3;
+  intensity: number;
+  cellIndex: number;
+  timestamp: number;
+}
+
+export class AtmosphereSimulator {
+  private config: AtmosphereSimulatorConfig;
+  private rng: SeededRNG;
+
+  // Mutable fields
+  ceilingCharge: VoronoiField;
+  groundCharge: VoronoiField;
+  atmosphericCharge: VoronoiField;
+  moisture: VoronoiField;
+  ionizationSeeds: VoronoiField;
+
+  // Track which ceiling cells correspond to which ground cells
+  private ceilingToGroundMap: Map<number, number> = new Map();
+
+  constructor(seed: number, config: Partial<AtmosphereSimulatorConfig> = {}) {
+    this.config = { ...DEFAULT_SIMULATOR_CONFIG, ...config };
+    this.rng = createSeededRNG(seed);
+
+    // Initialize all fields with reduced initial charge
+    const { atmosphericConfig } = this.config;
+
+    // Create ceiling charge with lower initial intensity
+    this.ceilingCharge = this.createInitialCeilingCharge();
+
+    // Create ground charge correlated with ceiling
+    this.groundCharge = this.createCorrelatedGroundCharge();
+
+    // Create 3D fields
+    this.atmosphericCharge = this.createInitial3DField(
+      atmosphericConfig.atmosphericChargeCellCount,
+      atmosphericConfig.atmosphericChargeIntensityRange,
+      atmosphericConfig.atmosphericChargeRadiusRange
+    );
+
+    this.moisture = this.createInitial3DField(
+      atmosphericConfig.moistureCellCount,
+      atmosphericConfig.moistureIntensityRange,
+      atmosphericConfig.moistureRadiusRange
+    );
+
+    this.ionizationSeeds = this.createInitial3DField(
+      atmosphericConfig.ionizationSeedCount,
+      atmosphericConfig.ionizationIntensityRange,
+      atmosphericConfig.ionizationRadiusRange
+    );
+  }
+
+  /**
+   * Update the atmosphere simulation. Called each frame.
+   * Returns a BreakdownEvent if charge exceeds threshold, null otherwise.
+   */
+  update(dt: number): BreakdownEvent | null {
+    // 1. Drift all cells with wind
+    this.driftCells(dt);
+
+    // 2. Accumulate ceiling charge
+    this.accumulateCharge(dt);
+
+    // 3. Update ground charge to follow ceiling
+    this.updateGroundCharge();
+
+    // 4. Check for breakdown
+    return this.checkBreakdown();
+  }
+
+  /**
+   * Called when a strike completes. Dissipates charge in the struck region.
+   */
+  onStrikeComplete(strikePosition: Vec3, dissipationRadius: number = 0.15): void {
+    const { postStrikeChargeFactor, postStrikeNearbyFactor } = this.config;
+
+    // Find cells near the strike and reduce their intensity
+    for (let i = 0; i < this.ceilingCharge.cells.length; i++) {
+      const cell = this.ceilingCharge.cells[i];
+      const dist = this.distance2D(cell.center, strikePosition);
+
+      if (dist < dissipationRadius * 0.5) {
+        // Struck cell - heavy dissipation
+        this.ceilingCharge.setCellIntensity(i, cell.intensity * postStrikeChargeFactor);
+      } else if (dist < dissipationRadius) {
+        // Nearby cell - partial dissipation
+        const t = (dist - dissipationRadius * 0.5) / (dissipationRadius * 0.5);
+        const factor = postStrikeChargeFactor + t * (postStrikeNearbyFactor - postStrikeChargeFactor);
+        this.ceilingCharge.setCellIntensity(i, cell.intensity * factor);
+      }
+    }
+
+    // Also reduce 3D atmospheric charge near the strike path
+    for (let i = 0; i < this.atmosphericCharge.cells.length; i++) {
+      const cell = this.atmosphericCharge.cells[i];
+      const dist = this.distance3D(cell.center, strikePosition);
+      if (dist < dissipationRadius) {
+        const factor = 0.3 + 0.5 * (dist / dissipationRadius);
+        this.atmosphericCharge.setCellIntensity(i, cell.intensity * factor);
+      }
+    }
+  }
+
+  /**
+   * Get a snapshot of the current atmospheric state for simulation/rendering.
+   */
+  getAtmosphericModel(): AtmosphericModel {
+    return {
+      ceilingCharge: this.ceilingCharge,
+      groundCharge: this.groundCharge,
+      atmosphericCharge: this.atmosphericCharge,
+      moisture: this.moisture,
+      ionizationSeeds: this.ionizationSeeds,
+      startingPoints: this.deriveStartingPoints(),
+      ceilingY: this.config.ceilingY,
+      groundY: this.config.groundY,
+    };
+  }
+
+  /**
+   * Get serializable data for rendering.
+   */
+  getAtmosphericModelData(): AtmosphericModelData {
+    return {
+      ceilingCharge: this.fieldToData(this.ceilingCharge),
+      groundCharge: this.fieldToData(this.groundCharge),
+      atmosphericCharge: this.fieldToData(this.atmosphericCharge),
+      moisture: this.fieldToData(this.moisture),
+      ionizationSeeds: this.fieldToData(this.ionizationSeeds),
+      ceilingY: this.config.ceilingY,
+      groundY: this.config.groundY,
+    };
+  }
+
+  // ============ Private Methods ============
+
+  private driftCells(dt: number): void {
+    const { windDirection, boundsRadius } = this.config;
+
+    // Drift 2D ceiling cells
+    for (let i = 0; i < this.ceilingCharge.cells.length; i++) {
+      const cell = this.ceilingCharge.cells[i];
+      const speed = this.windSpeedAtHeight(cell.center.y);
+      const newPos = {
+        x: cell.center.x + speed * windDirection.x * dt,
+        y: cell.center.y,
+        z: cell.center.z + speed * windDirection.z * dt,
+      };
+
+      // Check if out of bounds - regenerate if so
+      if (this.isOutOfBounds(newPos, boundsRadius)) {
+        this.regenerateCeilingCell(i);
+      } else {
+        this.ceilingCharge.setCellPosition(i, newPos);
+      }
+    }
+
+    // Drift 3D atmospheric charge
+    this.driftField(this.atmosphericCharge, dt);
+
+    // Drift 3D moisture
+    this.driftField(this.moisture, dt);
+
+    // Drift 3D ionization seeds
+    this.driftField(this.ionizationSeeds, dt);
+  }
+
+  private driftField(field: VoronoiField, dt: number): void {
+    const { windDirection, boundsRadius } = this.config;
+
+    for (let i = 0; i < field.cells.length; i++) {
+      const cell = field.cells[i];
+      const speed = this.windSpeedAtHeight(cell.center.y);
+      const newPos = {
+        x: cell.center.x + speed * windDirection.x * dt,
+        y: cell.center.y,
+        z: cell.center.z + speed * windDirection.z * dt,
+      };
+
+      if (this.isOutOfBounds(newPos, boundsRadius * 1.5)) {
+        this.regenerate3DCell(field, i);
+      } else {
+        field.setCellPosition(i, newPos);
+      }
+    }
+  }
+
+  private windSpeedAtHeight(y: number): number {
+    // Wind is fastest at mid-altitude (y=0), slower at ceiling/ground
+    // y ranges from groundY to ceilingY (typically -0.5 to 0.5)
+    const normalizedY = (y - this.config.groundY) / (this.config.ceilingY - this.config.groundY);
+    // Peak at center (normalizedY = 0.5)
+    const heightFactor = 1 - 0.6 * Math.abs(normalizedY - 0.5) * 2;
+    return this.config.baseWindSpeed * Math.max(0.4, heightFactor);
+  }
+
+  private isOutOfBounds(pos: Vec3, radius: number): boolean {
+    return Math.abs(pos.x) > radius || Math.abs(pos.z) > radius;
+  }
+
+  private regenerateCeilingCell(index: number): void {
+    const { boundsRadius, windDirection, ceilingY, atmosphericConfig } = this.config;
+
+    // New cell enters from upwind edge
+    const entryX = -boundsRadius * Math.sign(windDirection.x || 1);
+    const entryZ = (this.rng.next() - 0.5) * boundsRadius * 2;
+
+    const newIntensity =
+      this.config.initialChargeRange[0] +
+      this.rng.next() * (this.config.initialChargeRange[1] - this.config.initialChargeRange[0]);
+
+    const newRadius =
+      atmosphericConfig.ceilingChargeRadiusRange[0] +
+      this.rng.next() *
+        (atmosphericConfig.ceilingChargeRadiusRange[1] - atmosphericConfig.ceilingChargeRadiusRange[0]);
+
+    this.ceilingCharge.setCellPosition(index, { x: entryX, y: ceilingY, z: entryZ });
+    this.ceilingCharge.setCellIntensity(index, newIntensity);
+    this.ceilingCharge.setCellRadius(index, newRadius);
+
+    // Also update the correlated ground cell
+    const groundIndex = this.ceilingToGroundMap.get(index);
+    if (groundIndex !== undefined) {
+      const jitterX = (this.rng.next() - 0.5) * 0.1;
+      const jitterZ = (this.rng.next() - 0.5) * 0.1;
+      this.groundCharge.setCellPosition(groundIndex, {
+        x: entryX + jitterX,
+        y: this.config.groundY,
+        z: entryZ + jitterZ,
+      });
+      this.groundCharge.setCellIntensity(groundIndex, newIntensity * (0.7 + this.rng.next() * 0.3));
+    }
+  }
+
+  private regenerate3DCell(field: VoronoiField, index: number): void {
+    const { boundsRadius, windDirection, ceilingY, groundY } = this.config;
+
+    // Entry from upwind edge
+    const entryX = -boundsRadius * 1.2 * Math.sign(windDirection.x || 1);
+    const entryZ = (this.rng.next() - 0.5) * boundsRadius * 2;
+    const entryY = groundY + this.rng.next() * (ceilingY - groundY);
+
+    field.setCellPosition(index, { x: entryX, y: entryY, z: entryZ });
+    field.setCellIntensity(index, 0.3 + this.rng.next() * 0.5);
+  }
+
+  private accumulateCharge(dt: number): void {
+    const { chargeAccumulationRate } = this.config;
+
+    for (let i = 0; i < this.ceilingCharge.cells.length; i++) {
+      const cell = this.ceilingCharge.cells[i];
+      // Asymptotic growth: dI/dt = rate * (1 - I)
+      const newIntensity = cell.intensity + chargeAccumulationRate * (1 - cell.intensity) * dt;
+      this.ceilingCharge.setCellIntensity(i, Math.min(1.0, newIntensity));
+    }
+  }
+
+  private updateGroundCharge(): void {
+    // Ground charge follows ceiling with slight lag
+    for (let i = 0; i < this.ceilingCharge.cells.length; i++) {
+      const ceilingCell = this.ceilingCharge.cells[i];
+      const groundIndex = this.ceilingToGroundMap.get(i);
+
+      if (groundIndex !== undefined && groundIndex < this.groundCharge.cells.length) {
+        const groundCell = this.groundCharge.cells[groundIndex];
+
+        // Ground position follows ceiling with offset
+        const jitterX = (groundCell.center.x - ceilingCell.center.x) * 0.95;
+        const jitterZ = (groundCell.center.z - ceilingCell.center.z) * 0.95;
+        this.groundCharge.setCellPosition(groundIndex, {
+          x: ceilingCell.center.x + jitterX,
+          y: this.config.groundY,
+          z: ceilingCell.center.z + jitterZ,
+        });
+
+        // Ground intensity tracks ceiling
+        const targetIntensity = ceilingCell.intensity * 0.8;
+        const currentIntensity = groundCell.intensity;
+        this.groundCharge.setCellIntensity(groundIndex, currentIntensity + (targetIntensity - currentIntensity) * 0.1);
+      }
+    }
+  }
+
+  private checkBreakdown(): BreakdownEvent | null {
+    const { breakdownThreshold } = this.config;
+
+    let maxIntensity = 0;
+    let maxIndex = -1;
+    let maxPosition: Vec3 | null = null;
+
+    for (let i = 0; i < this.ceilingCharge.cells.length; i++) {
+      const cell = this.ceilingCharge.cells[i];
+      if (cell.intensity > maxIntensity) {
+        maxIntensity = cell.intensity;
+        maxIndex = i;
+        maxPosition = { ...cell.center };
+      }
+    }
+
+    if (maxIntensity >= breakdownThreshold && maxPosition) {
+      return {
+        position: maxPosition,
+        intensity: maxIntensity,
+        cellIndex: maxIndex,
+        timestamp: performance.now(),
+      };
+    }
+
+    return null;
+  }
+
+  private deriveStartingPoints(): Vec3[] {
+    // Return positions sorted by intensity
+    return this.ceilingCharge.cells
+      .map((cell) => ({ pos: { ...cell.center }, intensity: cell.intensity }))
+      .sort((a, b) => b.intensity - a.intensity)
+      .filter((p) => p.intensity >= 0.3)
+      .map((p) => p.pos);
+  }
+
+  private createInitialCeilingCharge(): VoronoiField {
+    const { ceilingY, boundsRadius, initialChargeRange, atmosphericConfig } = this.config;
+    const cells: VoronoiCell[] = [];
+
+    for (let i = 0; i < atmosphericConfig.ceilingChargeCellCount; i++) {
+      const angle = this.rng.next() * Math.PI * 2;
+      const dist = Math.sqrt(this.rng.next()) * boundsRadius;
+
+      cells.push({
+        center: {
+          x: Math.cos(angle) * dist,
+          y: ceilingY,
+          z: Math.sin(angle) * dist,
+        },
+        intensity: initialChargeRange[0] + this.rng.next() * (initialChargeRange[1] - initialChargeRange[0]),
+        falloffRadius:
+          atmosphericConfig.ceilingChargeRadiusRange[0] +
+          this.rng.next() *
+            (atmosphericConfig.ceilingChargeRadiusRange[1] - atmosphericConfig.ceilingChargeRadiusRange[0]),
+      });
+    }
+
+    return new VoronoiField(cells, { is2D: true, fixedY: ceilingY });
+  }
+
+  private createCorrelatedGroundCharge(): VoronoiField {
+    const { groundY, atmosphericConfig } = this.config;
+    const cells: VoronoiCell[] = [];
+
+    // Create ground cells correlated with ceiling
+    this.ceilingCharge.cells.forEach((ceilingCell, i) => {
+      const jitterX = (this.rng.next() - 0.5) * 0.1;
+      const jitterZ = (this.rng.next() - 0.5) * 0.1;
+
+      cells.push({
+        center: {
+          x: ceilingCell.center.x + jitterX,
+          y: groundY,
+          z: ceilingCell.center.z + jitterZ,
+        },
+        intensity: ceilingCell.intensity * (0.7 + this.rng.next() * 0.3),
+        falloffRadius: ceilingCell.falloffRadius * (0.8 + this.rng.next() * 0.4),
+      });
+
+      // Track the mapping
+      this.ceilingToGroundMap.set(i, i);
+    });
+
+    // Add a couple independent ground features
+    const extraCells = 1 + Math.floor(this.rng.next() * 2);
+    for (let i = 0; i < extraCells; i++) {
+      const angle = this.rng.next() * Math.PI * 2;
+      const dist = this.rng.next() * this.config.boundsRadius * 0.8;
+
+      cells.push({
+        center: {
+          x: Math.cos(angle) * dist,
+          y: groundY,
+          z: Math.sin(angle) * dist,
+        },
+        intensity:
+          atmosphericConfig.groundChargeIntensityRange[0] +
+          this.rng.next() *
+            (atmosphericConfig.groundChargeIntensityRange[1] - atmosphericConfig.groundChargeIntensityRange[0]),
+        falloffRadius:
+          atmosphericConfig.groundChargeRadiusRange[0] +
+          this.rng.next() * (atmosphericConfig.groundChargeRadiusRange[1] - atmosphericConfig.groundChargeRadiusRange[0]),
+      });
+    }
+
+    return new VoronoiField(cells, { is2D: true, fixedY: groundY });
+  }
+
+  private createInitial3DField(
+    cellCount: number,
+    intensityRange: [number, number],
+    radiusRange: [number, number]
+  ): VoronoiField {
+    const { boundsRadius, ceilingY, groundY } = this.config;
+    const cells: VoronoiCell[] = [];
+    const verticalSpan = ceilingY - groundY;
+
+    // Stratified vertical distribution for better coverage
+    const verticalLayers = Math.ceil(Math.sqrt(cellCount));
+    const cellsPerLayer = Math.ceil(cellCount / verticalLayers);
+    let created = 0;
+
+    for (let layer = 0; layer < verticalLayers && created < cellCount; layer++) {
+      const layerTop = ceilingY - (layer / verticalLayers) * verticalSpan;
+      const layerBottom = ceilingY - ((layer + 1) / verticalLayers) * verticalSpan;
+
+      for (let i = 0; i < cellsPerLayer && created < cellCount; i++) {
+        const angle = this.rng.next() * Math.PI * 2;
+        const dist = Math.sqrt(this.rng.next()) * boundsRadius;
+        const y = layerBottom + this.rng.next() * (layerTop - layerBottom);
+
+        cells.push({
+          center: {
+            x: Math.cos(angle) * dist,
+            y,
+            z: Math.sin(angle) * dist,
+          },
+          intensity: intensityRange[0] + this.rng.next() * (intensityRange[1] - intensityRange[0]),
+          falloffRadius: radiusRange[0] + this.rng.next() * (radiusRange[1] - radiusRange[0]),
+        });
+        created++;
+      }
+    }
+
+    return new VoronoiField(cells, { is2D: false });
+  }
+
+  private fieldToData(field: VoronoiField): VoronoiFieldData {
+    const config = field.getConfig();
+    return {
+      cells: field.cells.map((cell) => ({
+        center: { ...cell.center },
+        intensity: cell.intensity,
+        falloffRadius: cell.falloffRadius,
+      })),
+      is2D: config.is2D,
+      fixedY: config.fixedY,
+    };
+  }
+
+  private distance2D(a: Vec3, b: Vec3): number {
+    const dx = a.x - b.x;
+    const dz = a.z - b.z;
+    return Math.sqrt(dx * dx + dz * dz);
+  }
+
+  private distance3D(a: Vec3, b: Vec3): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    const dz = a.z - b.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+}

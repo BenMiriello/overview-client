@@ -35,28 +35,28 @@ export interface AtmosphericConfig {
 }
 
 export const DEFAULT_ATMOSPHERIC_CONFIG: AtmosphericConfig = {
-  ceilingChargeCellCount: 5,
+  ceilingChargeCellCount: 16,
   ceilingChargeIntensityRange: [0.5, 1.0],
   ceilingChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN, SCALE.CHARGE_POCKET_RADIUS.MAX],
 
-  groundChargeCellCount: 4,
+  groundChargeCellCount: 14,
   groundChargeIntensityRange: [0.3, 0.8],
   groundChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN, SCALE.CHARGE_POCKET_RADIUS.MAX],
 
-  atmosphericChargeCellCount: 6,
+  atmosphericChargeCellCount: 32,
   atmosphericChargeIntensityRange: [0.3, 0.7],
-  atmosphericChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN * 1.5, SCALE.CHARGE_POCKET_RADIUS.MAX * 1.5],
+  atmosphericChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN * 1.2, SCALE.CHARGE_POCKET_RADIUS.MAX * 1.2],
   columnarChargeFraction: 0.6,
 
-  moistureCellCount: 5,
+  moistureCellCount: 16,
   moistureIntensityRange: [0.4, 0.9],
   moistureRadiusRange: [SCALE.MOISTURE_REGION_RADIUS.MIN, SCALE.MOISTURE_REGION_RADIUS.MAX],
 
-  ionizationSeedCount: 12,
+  ionizationSeedCount: 24,
   ionizationIntensityRange: [0.6, 1.0],
   ionizationRadiusRange: [SCALE.IONIZATION_SEED_RADIUS.MIN, SCALE.IONIZATION_SEED_RADIUS.MAX],
 
-  boundsRadius: 0.4,
+  boundsRadius: 0.65,
 };
 
 export interface AtmosphericModel {
@@ -72,6 +72,7 @@ export interface AtmosphericModel {
 
 /**
  * Generate a 2D Voronoi field for charge distribution on a plane.
+ * Uses stratified sampling to ensure better coverage across the area.
  */
 function generate2DChargeField(
   rng: SeededRNG,
@@ -83,23 +84,42 @@ function generate2DChargeField(
 ): VoronoiField {
   const cells: VoronoiCell[] = [];
 
-  for (let i = 0; i < cellCount; i++) {
-    const angle = rng.next() * Math.PI * 2;
-    const dist = Math.sqrt(rng.next()) * boundsRadius * 1.6; // 2x spread, uniform area
+  // Use stratified sampling for better coverage
+  // Divide the area into rings and sectors
+  const rings = Math.ceil(Math.sqrt(cellCount / 2));
+  const sectorsPerRing = Math.ceil(cellCount / rings);
+  let cellsCreated = 0;
 
-    const center: Vec3 = {
-      x: Math.cos(angle) * dist,
-      y: fixedY,
-      z: Math.sin(angle) * dist,
-    };
+  for (let ring = 0; ring < rings && cellsCreated < cellCount; ring++) {
+    const ringInnerRadius = (ring / rings) * boundsRadius;
+    const ringOuterRadius = ((ring + 1) / rings) * boundsRadius;
 
-    const intensity =
-      intensityRange[0] + rng.next() * (intensityRange[1] - intensityRange[0]);
-    const baseFalloffRadius =
-      radiusRange[0] + rng.next() * (radiusRange[1] - radiusRange[0]);
-    const falloffRadius = baseFalloffRadius * 1.5; // 1.5x bigger zones
+    for (let sector = 0; sector < sectorsPerRing && cellsCreated < cellCount; sector++) {
+      const sectorAngleStart = (sector / sectorsPerRing) * Math.PI * 2;
+      const sectorAngleEnd = ((sector + 1) / sectorsPerRing) * Math.PI * 2;
 
-    cells.push({ center, intensity, falloffRadius });
+      // Random position within this ring-sector cell
+      const angle = sectorAngleStart + rng.next() * (sectorAngleEnd - sectorAngleStart);
+      // Use sqrt for uniform area distribution within the ring
+      const t = rng.next();
+      const dist = Math.sqrt(
+        ringInnerRadius * ringInnerRadius + t * (ringOuterRadius * ringOuterRadius - ringInnerRadius * ringInnerRadius)
+      );
+
+      const center: Vec3 = {
+        x: Math.cos(angle) * dist,
+        y: fixedY,
+        z: Math.sin(angle) * dist,
+      };
+
+      const intensity =
+        intensityRange[0] + rng.next() * (intensityRange[1] - intensityRange[0]);
+      const falloffRadius =
+        radiusRange[0] + rng.next() * (radiusRange[1] - radiusRange[0]);
+
+      cells.push({ center, intensity, falloffRadius });
+      cellsCreated++;
+    }
   }
 
   return new VoronoiField(cells, { is2D: true, fixedY });
@@ -163,6 +183,7 @@ function generateGroundCharge(
  * Combines columnar charge (extending from ceiling) with independent 3D pockets.
  * Columnar charge represents convective charge separation.
  * Independent pockets represent cosmic ray ionization, previous strikes, turbulence.
+ * Uses stratified vertical distribution for better coverage.
  */
 function generate3DAtmosphericCharge(
   ceilingCharge: VoronoiField,
@@ -177,58 +198,77 @@ function generate3DAtmosphericCharge(
   const independentCells = totalCells - columnarCells;
   const verticalSpan = ceilingY - groundY;
 
-  // Columnar cells: extend from ceiling charge downward
+  // Columnar cells: extend from ceiling charge downward with stratified vertical distribution
   const ceilingCells = ceilingCharge.cells;
-  for (let i = 0; i < columnarCells && i < ceilingCells.length; i++) {
-    const source = ceilingCells[i % ceilingCells.length];
+  const verticalLayers = Math.ceil(columnarCells / ceilingCells.length);
 
-    // Extended vertical span (4x, centered)
-    const heightFactor = rng.next() * 4 - 1.5;
-    const y = groundY + verticalSpan * heightFactor;
+  let columnarCreated = 0;
+  for (let layer = 0; layer < verticalLayers && columnarCreated < columnarCells; layer++) {
+    // Stratify vertically: divide ceiling-to-ground into layers
+    const layerTop = ceilingY - (layer / verticalLayers) * verticalSpan;
+    const layerBottom = ceilingY - ((layer + 1) / verticalLayers) * verticalSpan;
 
-    // XZ jitter (0.8x of previous 2.0 = 1.6)
-    const jitterX = (rng.next() - 0.5) * 1.6;
-    const jitterZ = (rng.next() - 0.5) * 1.6;
+    for (let i = 0; i < ceilingCells.length && columnarCreated < columnarCells; i++) {
+      const source = ceilingCells[i];
 
-    const baseRadius =
-      config.atmosphericChargeRadiusRange[0] +
-      rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]);
+      // Random Y within this vertical layer
+      const y = layerBottom + rng.next() * (layerTop - layerBottom);
 
-    cells.push({
-      center: {
-        x: source.center.x + jitterX,
-        y,
-        z: source.center.z + jitterZ,
-      },
-      intensity:
-        config.atmosphericChargeIntensityRange[0] +
-        rng.next() * (config.atmosphericChargeIntensityRange[1] - config.atmosphericChargeIntensityRange[0]),
-      falloffRadius: baseRadius * 1.5,
-    });
+      // Moderate XZ jitter to stay near the column
+      const jitterX = (rng.next() - 0.5) * 0.15;
+      const jitterZ = (rng.next() - 0.5) * 0.15;
+
+      const falloffRadius =
+        config.atmosphericChargeRadiusRange[0] +
+        rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]);
+
+      cells.push({
+        center: {
+          x: source.center.x + jitterX,
+          y,
+          z: source.center.z + jitterZ,
+        },
+        intensity:
+          config.atmosphericChargeIntensityRange[0] +
+          rng.next() * (config.atmosphericChargeIntensityRange[1] - config.atmosphericChargeIntensityRange[0]),
+        falloffRadius,
+      });
+      columnarCreated++;
+    }
   }
 
-  // Independent cells: random 3D positions (sqrt for uniform area distribution)
-  for (let i = 0; i < independentCells; i++) {
-    const angle = rng.next() * Math.PI * 2;
-    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 4.8;
-    const heightFactor = rng.next() * 4 - 1.5;
-    const y = groundY + verticalSpan * heightFactor;
+  // Independent cells: stratified 3D positions for better volume coverage
+  const indVerticalLayers = Math.ceil(Math.cbrt(independentCells));
+  const indCellsPerLayer = Math.ceil(independentCells / indVerticalLayers);
+  let indCreated = 0;
 
-    const baseRadius =
-      config.atmosphericChargeRadiusRange[0] +
-      rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]);
+  for (let layer = 0; layer < indVerticalLayers && indCreated < independentCells; layer++) {
+    const layerTop = ceilingY - (layer / indVerticalLayers) * verticalSpan;
+    const layerBottom = ceilingY - ((layer + 1) / indVerticalLayers) * verticalSpan;
 
-    cells.push({
-      center: {
-        x: Math.cos(angle) * dist,
-        y,
-        z: Math.sin(angle) * dist,
-      },
-      intensity:
-        config.atmosphericChargeIntensityRange[0] +
-        rng.next() * (config.atmosphericChargeIntensityRange[1] - config.atmosphericChargeIntensityRange[0]),
-      falloffRadius: baseRadius * 1.5,
-    });
+    for (let i = 0; i < indCellsPerLayer && indCreated < independentCells; i++) {
+      const angle = rng.next() * Math.PI * 2;
+      // Uniform distribution within bounds (no large multiplier)
+      const dist = Math.sqrt(rng.next()) * config.boundsRadius;
+      const y = layerBottom + rng.next() * (layerTop - layerBottom);
+
+      const falloffRadius =
+        config.atmosphericChargeRadiusRange[0] +
+        rng.next() * (config.atmosphericChargeRadiusRange[1] - config.atmosphericChargeRadiusRange[0]);
+
+      cells.push({
+        center: {
+          x: Math.cos(angle) * dist,
+          y,
+          z: Math.sin(angle) * dist,
+        },
+        intensity:
+          config.atmosphericChargeIntensityRange[0] +
+          rng.next() * (config.atmosphericChargeIntensityRange[1] - config.atmosphericChargeIntensityRange[0]),
+        falloffRadius,
+      });
+      indCreated++;
+    }
   }
 
   return new VoronoiField(cells, { is2D: false });
@@ -239,6 +279,7 @@ function generate3DAtmosphericCharge(
  * Moisture lowers the breakdown threshold, making paths prefer moist regions.
  * Moisture distribution correlates loosely with convection (similar to charge)
  * but has its own independent variation.
+ * Uses stratified distribution for better volume coverage.
  */
 function generateMoistureField(
   rng: SeededRNG,
@@ -249,27 +290,37 @@ function generateMoistureField(
   const cells: VoronoiCell[] = [];
   const verticalSpan = ceilingY - groundY;
 
-  for (let i = 0; i < config.moistureCellCount; i++) {
-    const angle = rng.next() * Math.PI * 2;
-    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 4.8;
-    const heightFactor = rng.next() * 4 - 1.5;
-    const y = groundY + verticalSpan * heightFactor;
+  // Stratified vertical distribution
+  const verticalLayers = Math.ceil(Math.sqrt(config.moistureCellCount));
+  const cellsPerLayer = Math.ceil(config.moistureCellCount / verticalLayers);
+  let created = 0;
 
-    const baseRadius =
-      config.moistureRadiusRange[0] +
-      rng.next() * (config.moistureRadiusRange[1] - config.moistureRadiusRange[0]);
+  for (let layer = 0; layer < verticalLayers && created < config.moistureCellCount; layer++) {
+    const layerTop = ceilingY - (layer / verticalLayers) * verticalSpan;
+    const layerBottom = ceilingY - ((layer + 1) / verticalLayers) * verticalSpan;
 
-    cells.push({
-      center: {
-        x: Math.cos(angle) * dist,
-        y,
-        z: Math.sin(angle) * dist,
-      },
-      intensity:
-        config.moistureIntensityRange[0] +
-        rng.next() * (config.moistureIntensityRange[1] - config.moistureIntensityRange[0]),
-      falloffRadius: baseRadius * 1.5,
-    });
+    for (let i = 0; i < cellsPerLayer && created < config.moistureCellCount; i++) {
+      const angle = rng.next() * Math.PI * 2;
+      const dist = Math.sqrt(rng.next()) * config.boundsRadius;
+      const y = layerBottom + rng.next() * (layerTop - layerBottom);
+
+      const falloffRadius =
+        config.moistureRadiusRange[0] +
+        rng.next() * (config.moistureRadiusRange[1] - config.moistureRadiusRange[0]);
+
+      cells.push({
+        center: {
+          x: Math.cos(angle) * dist,
+          y,
+          z: Math.sin(angle) * dist,
+        },
+        intensity:
+          config.moistureIntensityRange[0] +
+          rng.next() * (config.moistureIntensityRange[1] - config.moistureIntensityRange[0]),
+        falloffRadius,
+      });
+      created++;
+    }
   }
 
   return new VoronoiField(cells, { is2D: false });
@@ -279,6 +330,7 @@ function generateMoistureField(
  * Generate ionization seeds (small pre-ionized points).
  * Represents cosmic ray tracks, previous discharge remnants, local breakdown.
  * Many small points with high local attraction.
+ * Uses stratified distribution for better volume coverage.
  */
 function generateIonizationSeeds(
   rng: SeededRNG,
@@ -289,27 +341,37 @@ function generateIonizationSeeds(
   const cells: VoronoiCell[] = [];
   const verticalSpan = ceilingY - groundY;
 
-  for (let i = 0; i < config.ionizationSeedCount; i++) {
-    const angle = rng.next() * Math.PI * 2;
-    const dist = Math.sqrt(rng.next()) * config.boundsRadius * 4.8;
-    const heightFactor = rng.next() * 4 - 1.5;
-    const y = groundY + verticalSpan * heightFactor;
+  // Stratified vertical distribution
+  const verticalLayers = Math.ceil(Math.sqrt(config.ionizationSeedCount));
+  const cellsPerLayer = Math.ceil(config.ionizationSeedCount / verticalLayers);
+  let created = 0;
 
-    const baseRadius =
-      config.ionizationRadiusRange[0] +
-      rng.next() * (config.ionizationRadiusRange[1] - config.ionizationRadiusRange[0]);
+  for (let layer = 0; layer < verticalLayers && created < config.ionizationSeedCount; layer++) {
+    const layerTop = ceilingY - (layer / verticalLayers) * verticalSpan;
+    const layerBottom = ceilingY - ((layer + 1) / verticalLayers) * verticalSpan;
 
-    cells.push({
-      center: {
-        x: Math.cos(angle) * dist,
-        y,
-        z: Math.sin(angle) * dist,
-      },
-      intensity:
-        config.ionizationIntensityRange[0] +
-        rng.next() * (config.ionizationIntensityRange[1] - config.ionizationIntensityRange[0]),
-      falloffRadius: baseRadius * 1.5,
-    });
+    for (let i = 0; i < cellsPerLayer && created < config.ionizationSeedCount; i++) {
+      const angle = rng.next() * Math.PI * 2;
+      const dist = Math.sqrt(rng.next()) * config.boundsRadius;
+      const y = layerBottom + rng.next() * (layerTop - layerBottom);
+
+      const falloffRadius =
+        config.ionizationRadiusRange[0] +
+        rng.next() * (config.ionizationRadiusRange[1] - config.ionizationRadiusRange[0]);
+
+      cells.push({
+        center: {
+          x: Math.cos(angle) * dist,
+          y,
+          z: Math.sin(angle) * dist,
+        },
+        intensity:
+          config.ionizationIntensityRange[0] +
+          rng.next() * (config.ionizationIntensityRange[1] - config.ionizationIntensityRange[0]),
+        falloffRadius,
+      });
+      created++;
+    }
   }
 
   return new VoronoiField(cells, { is2D: false });
@@ -364,19 +426,6 @@ export function createAtmosphericModel(
 
   // Generate ionization seeds
   const ionizationSeeds = generateIonizationSeeds(rng, ceilingY, groundY, config);
-
-  console.log('[Atmospheric] Ceiling charge cells:', ceilingCharge.cells.length);
-  console.log('[Atmospheric] Ground charge cells:', groundCharge.cells.length);
-  console.log('[Atmospheric] 3D atmospheric charge cells:', atmosphericCharge.cells.length);
-  console.log('[Atmospheric] Moisture cells:', moisture.cells.length);
-  console.log('[Atmospheric] Ionization seeds:', ionizationSeeds.cells.length);
-  console.log(
-    '[Atmospheric] Starting points:',
-    startingPoints.map(
-      (p) =>
-        `(${p.x.toFixed(3)}, ${p.z.toFixed(3)}) intensity=${ceilingCharge.getValue(p).toFixed(2)}`
-    )
-  );
 
   return {
     ceilingCharge,
