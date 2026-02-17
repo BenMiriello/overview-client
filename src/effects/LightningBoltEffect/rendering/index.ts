@@ -6,5 +6,3 @@ export { BoltRenderer } from './BoltRenderer';
 export { LightningMaterials } from './LightningMaterials';
 export { ChargeFieldRenderer } from './ChargeFieldRenderer';
 export type { ChargeFieldRenderOptions } from './ChargeFieldRenderer';
-export { AtmosphereRenderer } from './AtmosphereRenderer';
-export type { AtmosphereRendererOptions } from './AtmosphereRenderer';
