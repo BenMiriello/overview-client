@@ -44,7 +44,16 @@ export class LightningBoltEffect {
     this.renderer = new BoltRenderer(scene);
 
     const detailLevel = config.detailLevel ?? DetailLevel.GLOBE;
-    const simConfig = createConfig(detailLevel);
+    const resolution = config.resolution ?? 1.0;
+
+    // Scale simulation parameters based on resolution
+    const baseConfig = createConfig(detailLevel);
+    const simConfig = createConfig(detailLevel, {
+      stepLength: baseConfig.stepLength / resolution,
+      maxSteps: Math.round(baseConfig.maxSteps * resolution),
+      candidateCount: Math.round(baseConfig.candidateCount * Math.sqrt(resolution)),
+      maxSegments: Math.round(baseConfig.maxSegments * resolution),
+    });
 
     let worldStart: Vec3;
     let worldEnd: Vec3;

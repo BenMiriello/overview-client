@@ -1,0 +1,235 @@
+.settings-panel {
+  position: fixed;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 100;
+  font-family: 'Roboto', sans-serif;
+}
+
+.settings-section {
+  position: absolute;
+  left: 0;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.settings-section:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Position sections vertically - they don't affect each other */
+.speed-section {
+  top: -80px;
+}
+
+.detail-section {
+  top: -24px;
+}
+
+.layers-section {
+  top: 32px;
+}
+
+/* Icon container - always visible */
+.section-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Speed and Detail sections - horizontal expansion */
+.speed-section,
+.detail-section {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  overflow: hidden;
+}
+
+.section-expandable {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-width 0.25s ease-out, opacity 0.2s ease-out, padding 0.25s ease-out;
+  padding-right: 0;
+  white-space: nowrap;
+}
+
+.settings-section.expanded .section-expandable {
+  max-width: 280px;
+  opacity: 1;
+  padding-right: 16px;
+}
+
+.section-label {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-icon {
+  color: rgba(255, 255, 255, 0.8);
+  flex-shrink: 0;
+}
+
+.slider-row input[type="range"] {
+  width: 120px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.slider-row input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.slider-row input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+}
+
+/* Layers section - vertical expansion */
+.layers-section {
+  overflow: hidden;
+}
+
+.layers-collapsed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.collapsed-layer-icon {
+  width: 44px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.layers-expanded {
+  display: flex;
+  flex-direction: column;
+}
+
+.layers-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding-right: 16px;
+}
+
+.layers-list {
+  display: flex;
+  flex-direction: column;
+  padding-left: 12px;
+}
+
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 6px 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+
+.layer-row:first-child {
+  padding-top: 8px;
+}
+
+.layer-row:last-child {
+  padding-bottom: 10px;
+}
+
+.layer-row:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.layer-icon-wrapper {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.layer-row.enabled .layer-icon-wrapper {
+  color: rgba(255, 255, 255, 1);
+}
+
+.layer-row.disabled .layer-icon-wrapper {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.slash-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.7);
+  transform: translate(-50%, -50%) rotate(-45deg);
+  border-radius: 1px;
+}
+
+.layer-label {
+  font-size: 12px;
+}
+
+.layer-row.enabled .layer-label {
+  color: rgba(255, 255, 255, 1);
+}
+
+.layer-row.disabled .layer-label {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+@media (max-width: 768px) {
+  .settings-panel {
+    left: 12px;
+  }
+}
