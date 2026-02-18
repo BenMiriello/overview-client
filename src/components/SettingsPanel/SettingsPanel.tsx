@@ -33,7 +33,7 @@ interface SettingsPanelProps {
 const DEFAULT_SETTINGS: Settings = {
   speed: 1.0,
   detail: 2.0,
-  windSpeed: 25,
+  windSpeed: 12,
   showCharge: true,
   showAtmospheric: false,
   showMoisture: false,
@@ -143,7 +143,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
               step="0.1"
               value={speed}
               onChange={(e) => setSpeed(parseFloat(e.target.value))}
-              onClick={(e) => e.stopPropagation()}
             />
             <Rabbit size={14} className="slider-icon" />
           </div>
@@ -171,7 +170,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
               step="0.1"
               value={detail}
               onChange={(e) => setDetail(parseFloat(e.target.value))}
-              onClick={(e) => e.stopPropagation()}
             />
             <Zap size={14} className="slider-icon" />
           </div>
@@ -194,12 +192,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
             <Wind size={14} className="slider-icon" style={{ opacity: 0.25 }} />
             <input
               type="range"
-              min="5"
+              min="0"
               max="60"
               step="1"
               value={windSpeed}
-              onChange={(e) => setWindSpeed(parseInt(e.target.value, 10))}
-              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setWindSpeed(Number(e.target.value))}
             />
             <Wind size={14} className="slider-icon" />
           </div>
@@ -208,14 +205,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
 
       {/* Orbit Toggle */}
       <div
-        className={`settings-section orbit-section ${orbit ? 'active' : ''}`}
+        className={`settings-section orbit-section ${orbit ? 'active' : ''} ${expandedSection === 'orbit' ? 'expanded' : ''}`}
+        onMouseEnter={() => handleMouseEnter('orbit')}
+        onMouseLeave={handleMouseLeave}
         onClick={() => setOrbit(!orbit)}
       >
         <div className="section-icon">
           <Rotate3d size={20} />
         </div>
         <div className="section-expandable">
-          <span className="section-label">Orbit</span>
+          <span className="section-label">{`Orbit: ${orbit ? 'on' : 'off'}`}</span>
         </div>
       </div>
 
@@ -230,7 +229,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
           <div className="section-icon">
             <Eye size={20} />
           </div>
-          <span className="section-label">Layers</span>
+          <span className="section-label">Layer Visibility</span>
         </div>
         <div className="layers-items">
           {LAYERS.map((layer) => {

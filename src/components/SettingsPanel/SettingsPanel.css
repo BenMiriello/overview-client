@@ -40,17 +40,21 @@
 }
 
 .settings-section:not(.active):not(.expanded):not(:hover) .section-icon {
-  color: rgba(255, 255, 255, 0.5);
+  color: #808080;
 }
 
 /* Orbit icon: only use border to show active, not icon opacity */
 .orbit-section.active .section-icon,
 .orbit-section:not(.active) .section-icon {
-  color: rgba(255, 255, 255, 0.5);
+  color: #808080;
 }
 
 .orbit-section:hover .section-icon {
   color: #fff;
+}
+
+.orbit-section .section-label {
+  width: 65px;
 }
 
 /* Icon container - always visible */
@@ -89,6 +93,10 @@
   letter-spacing: 0.02em;
 }
 
+.wind-section .section-label {
+  min-width: 50px;
+}
+
 .slider-row {
   display: flex;
   align-items: center;
@@ -96,8 +104,9 @@
 }
 
 .slider-icon {
-  color: rgba(255, 255, 255, 0.8);
+  color: #ccc;
   flex-shrink: 0;
+  pointer-events: none;
 }
 
 .slider-row input[type="range"] {
@@ -119,12 +128,8 @@
   background: white;
   border-radius: 50%;
   cursor: pointer;
-  transition: transform 0.15s ease;
 }
 
-.slider-row input[type="range"]::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
-}
 
 .slider-row input[type="range"]::-moz-range-thumb {
   width: 14px;
@@ -150,11 +155,12 @@
   max-width: 0;
   opacity: 0;
   overflow: hidden;
+  white-space: nowrap;
   transition: max-width 0.25s ease-out, opacity 0.2s ease-out;
 }
 
 .layers-section.expanded .layers-header .section-label {
-  max-width: 80px;
+  max-width: 120px;
   opacity: 1;
 }
 
@@ -227,16 +233,16 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: rgba(255, 255, 255, 0.5);
+  color: #808080;
   transition: color 0.2s ease-out;
 }
 
 .layers-section.expanded .layer-item.enabled .layer-icon-wrapper {
-  color: rgba(255, 255, 255, 1);
+  color: #fff;
 }
 
 .layers-section.expanded .layer-item.disabled .layer-icon-wrapper {
-  color: rgba(255, 255, 255, 0.5);
+  color: #808080;
 }
 
 .slash-overlay {
