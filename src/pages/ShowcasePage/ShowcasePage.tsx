@@ -9,10 +9,12 @@ const ShowcasePage = () => {
   const [settings, setSettings] = useState<Settings>({
     speed: 1.0,
     detail: 2.0,
+    windSpeed: 25,
     showCharge: true,
     showAtmospheric: false,
     showMoisture: false,
     showIonization: false,
+    orbit: false,
   });
 
   const handleSettingsChange = useCallback((newSettings: Settings) => {
@@ -28,10 +30,12 @@ const ShowcasePage = () => {
         <Scene
           detail={settings.detail}
           speed={settings.speed}
+          windSpeed={settings.windSpeed}
           showCharge={settings.showCharge}
           showAtmospheric={settings.showAtmospheric}
           showMoisture={settings.showMoisture}
           showIonization={settings.showIonization}
+          orbit={settings.orbit}
         />
       </Canvas>
 

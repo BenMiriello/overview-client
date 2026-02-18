@@ -3,11 +3,13 @@ import {
   Rabbit,
   Turtle,
   Zap,
+  Wind,
   Eye,
   CloudLightning,
   Magnet,
   Droplet,
   Atom,
+  Rotate3d,
   LucideIcon,
 } from 'lucide-react';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
@@ -16,10 +18,12 @@ import './SettingsPanel.css';
 export interface Settings {
   speed: number;
   detail: number;
+  windSpeed: number;
   showCharge: boolean;
   showAtmospheric: boolean;
   showMoisture: boolean;
   showIonization: boolean;
+  orbit: boolean;
 }
 
 interface SettingsPanelProps {
@@ -29,10 +33,12 @@ interface SettingsPanelProps {
 const DEFAULT_SETTINGS: Settings = {
   speed: 1.0,
   detail: 2.0,
+  windSpeed: 25,
   showCharge: true,
   showAtmospheric: false,
   showMoisture: false,
   showIonization: false,
+  orbit: false,
 };
 
 interface LayerConfig {
@@ -51,10 +57,12 @@ const LAYERS: LayerConfig[] = [
 const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
   const [speed, setSpeed] = useLocalStorage('lightning-speed', DEFAULT_SETTINGS.speed);
   const [detail, setDetail] = useLocalStorage('lightning-detail', DEFAULT_SETTINGS.detail);
+  const [windSpeed, setWindSpeed] = useLocalStorage('lightning-windSpeed', DEFAULT_SETTINGS.windSpeed);
   const [showCharge, setShowCharge] = useLocalStorage('lightning-showCharge', DEFAULT_SETTINGS.showCharge);
   const [showAtmospheric, setShowAtmospheric] = useLocalStorage('lightning-showAtmospheric', DEFAULT_SETTINGS.showAtmospheric);
   const [showMoisture, setShowMoisture] = useLocalStorage('lightning-showMoisture', DEFAULT_SETTINGS.showMoisture);
   const [showIonization, setShowIonization] = useLocalStorage('lightning-showIonization', DEFAULT_SETTINGS.showIonization);
+  const [orbit, setOrbit] = useLocalStorage('lightning-orbit', DEFAULT_SETTINGS.orbit);
 
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -84,8 +92,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
   }, []);
 
   useEffect(() => {
-    onChange({ speed, detail, showCharge, showAtmospheric, showMoisture, showIonization });
-  }, [speed, detail, showCharge, showAtmospheric, showMoisture, showIonization, onChange]);
+    onChange({ speed, detail, windSpeed, showCharge, showAtmospheric, showMoisture, showIonization, orbit });
+  }, [speed, detail, windSpeed, showCharge, showAtmospheric, showMoisture, showIonization, orbit, onChange]);
 
   useEffect(() => {
     if (!isMobile) return;
@@ -172,6 +180,34 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
         </div>
       </div>
 
+      {/* Wind Section */}
+      <div
+        className={`settings-section wind-section ${expandedSection === 'wind' ? 'expanded' : ''}`}
+        onMouseEnter={() => handleMouseEnter('wind')}
+        onMouseLeave={handleMouseLeave}
+        onClick={() => handleSectionInteraction('wind')}
+      >
+        <div className="section-icon">
+          <Wind size={20} />
+        </div>
+        <div className="section-expandable">
+          <span className="section-label">{windSpeed} kts</span>
+          <div className="slider-row">
+            <Wind size={14} className="slider-icon" style={{ opacity: 0.25 }} />
+            <input
+              type="range"
+              min="5"
+              max="60"
+              step="1"
+              value={windSpeed}
+              onChange={(e) => setWindSpeed(parseInt(e.target.value, 10))}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <Wind size={14} className="slider-icon" />
+          </div>
+        </div>
+      </div>
+
       {/* Layers Section */}
       <div
         className={`settings-section layers-section ${expandedSection === 'layers' ? 'expanded' : ''}`}
@@ -224,6 +260,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Orbit Toggle */}
+      <div
+        className={`settings-section orbit-section ${orbit ? 'active' : ''}`}
+        onClick={() => setOrbit(!orbit)}
+      >
+        <div className="section-icon">
+          <Rotate3d size={20} />
+        </div>
+        <div className="section-expandable">
+          <span className="section-label">Orbit</span>
+        </div>
       </div>
     </div>
   );

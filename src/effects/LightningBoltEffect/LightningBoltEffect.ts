@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { simulateBolt, createConfig, DetailLevel, Vec3, AtmosphericModel } from './simulation';
+import { simulateBolt, createConfig, DetailLevel, Vec3, AtmosphericModel, SimulationOutput } from './simulation';
 import { BoltAnimator, createTimeline, AnimationPhase } from './animation';
 import { BoltRenderer } from './rendering/BoltRenderer';
 import { ScreenFlashEffect } from './rendering/FlashEffect';
@@ -16,6 +16,7 @@ export interface LightningBoltEffectConfig extends LightningConfig {
   speed?: number;
   atmosphere?: AtmosphericModel;
   skipChargeRendering?: boolean;
+  precomputedResult?: SimulationOutput;
 }
 
 export class LightningBoltEffect {
@@ -72,8 +73,8 @@ export class LightningBoltEffect {
     const normalizedStart: Vec3 = { x: 0, y: 0.5, z: 0 };
     const normalizedEnd: Vec3 = { x: 0, y: -0.5, z: 0 };
 
-    // Use provided atmosphere if available
-    const result = simulateBolt({
+    // Use precomputed result if provided, otherwise compute synchronously
+    const result = config.precomputedResult ?? simulateBolt({
       start: normalizedStart,
       end: normalizedEnd,
       seed: config.seed ?? Date.now(),

@@ -3,6 +3,7 @@ import { AtmosphericModelData, VoronoiFieldData, Vec3 } from '../simulation/type
 import { CoordinateTransform } from '../CoordinateTransform';
 import { AtmosphereSimulator } from '../simulation/AtmosphereSimulator';
 import { VoronoiField } from '../simulation/VoronoiField';
+import { AtmosphereSnapshot } from '../simulation/SimulationTimeline';
 
 type FieldType = VoronoiField | VoronoiFieldData;
 
@@ -213,6 +214,70 @@ export class ChargeFieldRenderer {
     this.updateSprites(this.atmosphericSprites, simulator.atmosphericCharge, 1, false);
     this.updateSprites(this.moistureSprites, simulator.moisture, 1, false);
     this.updateSprites(this.ionizationSprites, simulator.ionizationSeeds, 8, false);
+  }
+
+  /**
+   * Update rendering from a pre-computed snapshot.
+   * Used with TimelinePlayer for freeze-free playback.
+   */
+  updateFromSnapshot(snapshot: AtmosphereSnapshot): void {
+    this.updateSprites(this.ceilingSprites, snapshot.ceilingCharge, 1, true);
+    this.updateSprites(this.groundSprites, snapshot.groundCharge, 1, true);
+    this.updateSprites(this.atmosphericSprites, snapshot.atmosphericCharge, 1, false);
+    this.updateSprites(this.moistureSprites, snapshot.moisture, 1, false);
+    this.updateSprites(this.ionizationSprites, snapshot.ionizationSeeds, 8, false);
+  }
+
+  /**
+   * Initialize from snapshot data (for timeline-based rendering).
+   */
+  initializeFromSnapshot(
+    snapshot: AtmosphereSnapshot,
+    worldStart: Vec3,
+    worldEnd: Vec3
+  ): void {
+    this.dispose();
+
+    this.transform = new CoordinateTransform(worldStart, worldEnd);
+    this.worldCeilingY = worldStart.y;
+    this.worldGroundY = worldEnd.y;
+
+    this.ceilingSprites = this.createSprites(
+      snapshot.ceilingCharge,
+      this.options.ceilingColor,
+      this.options.opacity,
+      1,
+      true
+    );
+
+    this.groundSprites = this.createSprites(
+      snapshot.groundCharge,
+      this.options.groundColor,
+      this.options.opacity,
+      1,
+      true
+    );
+
+    this.atmosphericSprites = this.createSprites(
+      snapshot.atmosphericCharge,
+      this.options.atmosphericColor,
+      this.options.opacity * 0.9
+    );
+
+    this.moistureSprites = this.createSprites(
+      snapshot.moisture,
+      this.options.moistureColor,
+      this.options.opacity * 1.2
+    );
+
+    this.ionizationSprites = this.createSprites(
+      snapshot.ionizationSeeds,
+      this.options.ionizationColor,
+      this.options.opacity * 1.0,
+      8
+    );
+
+    this.updateVisibility();
   }
 
   private createSprites(

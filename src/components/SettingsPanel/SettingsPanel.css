@@ -5,11 +5,12 @@
   transform: translateY(-50%);
   z-index: 100;
   font-family: 'Roboto', sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .settings-section {
-  position: absolute;
-  left: 0;
   background: rgba(0, 0, 0, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 12px;
@@ -17,23 +18,26 @@
   cursor: pointer;
   transition: border-color 0.2s ease;
   color: rgba(255, 255, 255, 0.9);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  overflow: hidden;
 }
 
 .settings-section:hover {
   border-color: rgba(255, 255, 255, 0.3);
 }
 
-/* Position sections vertically - they don't affect each other */
-.speed-section {
-  top: -80px;
+.settings-section.active {
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
-.detail-section {
-  top: -24px;
+.settings-section.active .section-icon {
+  color: #fff;
 }
 
-.layers-section {
-  top: 32px;
+.settings-section:not(.active) .section-icon {
+  color: rgba(255, 255, 255, 0.5);
 }
 
 /* Icon container - always visible */
@@ -44,15 +48,6 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-}
-
-/* Speed and Detail sections - horizontal expansion */
-.speed-section,
-.detail-section {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  overflow: hidden;
 }
 
 .section-expandable {
@@ -128,7 +123,8 @@
 
 /* Layers section - vertical expansion */
 .layers-section {
-  overflow: hidden;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .layers-collapsed {

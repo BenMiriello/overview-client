@@ -7,24 +7,31 @@ import LightningController from './LightningController';
 interface SceneProps {
   detail?: number;
   speed?: number;
+  windSpeed?: number;
   showCharge?: boolean;
   showAtmospheric?: boolean;
   showMoisture?: boolean;
   showIonization?: boolean;
+  orbit?: boolean;
 }
 
-const Scene = ({ detail = 1.0, speed = 1.0, showCharge = true, showAtmospheric = true, showMoisture = true, showIonization = true }: SceneProps) => {
-  // Use object type instead of null
+const Scene = ({ detail = 1.0, speed = 1.0, windSpeed = 25, showCharge = true, showAtmospheric = true, showMoisture = true, showIonization = true, orbit = false }: SceneProps) => {
   const controlsRef = useRef<any>(null);
 
-  // Lock camera to horizontal rotation
+  // Lock camera to horizontal rotation + auto-orbit
   useFrame(() => {
     if (controlsRef.current) {
-      // Access controls object properties safely
       const controls = controlsRef.current;
       if (controls.minPolarAngle !== undefined) {
         controls.minPolarAngle = Math.PI / 2;
         controls.maxPolarAngle = Math.PI / 2;
+      }
+
+      // Auto-rotate counterclockwise when orbit is enabled
+      // autoRotateSpeed = 1 gives ~1 rotation per minute, negative = counterclockwise
+      if (controls.autoRotate !== undefined) {
+        controls.autoRotate = orbit;
+        controls.autoRotateSpeed = -1;
       }
     }
   });
@@ -36,7 +43,7 @@ const Scene = ({ detail = 1.0, speed = 1.0, showCharge = true, showAtmospheric =
       {/* Rotated by 20 degrees around Y axis */}
       <group rotation={[0, Math.PI * 20 / 180, 0]}>
         <GroundPlane />
-        <LightningController detail={detail} speed={speed} showCharge={showCharge} showAtmospheric={showAtmospheric} showMoisture={showMoisture} showIonization={showIonization} />
+        <LightningController detail={detail} speed={speed} windSpeed={windSpeed} showCharge={showCharge} showAtmospheric={showAtmospheric} showMoisture={showMoisture} showIonization={showIonization} />
       </group>
 
       <OrbitControls 

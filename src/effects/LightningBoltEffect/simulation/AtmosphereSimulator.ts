@@ -11,8 +11,10 @@ export interface AtmosphereSimulatorConfig {
   postStrikeNearbyFactor: number; // Multiplier for nearby regions
 
   // Wind
-  baseWindSpeed: number; // Units per second
-  windDirection: { x: number; z: number }; // Normalized direction
+  baseWindSpeed: number; // Units per second at cloud level
+  windDirection: { x: number; z: number }; // Ground-level wind direction
+  upperWindDirection: { x: number; z: number }; // Cloud-level wind direction (for shear)
+  windAlpha: number; // Power law exponent for vertical wind profile
 
   // Bounds for cell management
   boundsRadius: number; // Cells beyond this are regenerated
@@ -32,8 +34,10 @@ export const DEFAULT_SIMULATOR_CONFIG: AtmosphereSimulatorConfig = {
   postStrikeChargeFactor: 0.15,
   postStrikeNearbyFactor: 0.4,
 
-  baseWindSpeed: 0.003, // ~19 m/s in real units
-  windDirection: { x: 1, z: 0 }, // Drift in +X direction
+  baseWindSpeed: 0.003, // ~19 m/s in real units at cloud level
+  windDirection: { x: 1, z: 0 }, // Ground-level wind direction
+  upperWindDirection: { x: 0.7, z: 0.7 }, // ~45 deg rotation at cloud level (wind shear)
+  windAlpha: 0.3, // Power law exponent
 
   boundsRadius: 0.65,
   ceilingY: 0.5,
@@ -166,6 +170,28 @@ export class AtmosphereSimulator {
   }
 
   /**
+   * Set the base wind speed (in simulation units per second).
+   */
+  setWindSpeed(speed: number): void {
+    this.config.baseWindSpeed = speed;
+  }
+
+  /**
+   * Set the charge accumulation rate.
+   * Used for adaptive pacing - slow down when buffer is low.
+   */
+  setChargeAccumulationRate(rate: number): void {
+    this.config.chargeAccumulationRate = rate;
+  }
+
+  /**
+   * Get the current charge accumulation rate.
+   */
+  getChargeAccumulationRate(): number {
+    return this.config.chargeAccumulationRate;
+  }
+
+  /**
    * Get serializable data for rendering.
    */
   getAtmosphericModelData(): AtmosphericModelData {
@@ -183,19 +209,18 @@ export class AtmosphereSimulator {
   // ============ Private Methods ============
 
   private driftCells(dt: number): void {
-    const { windDirection, boundsRadius } = this.config;
+    const { boundsRadius } = this.config;
 
     // Drift 2D ceiling cells
     for (let i = 0; i < this.ceilingCharge.cells.length; i++) {
       const cell = this.ceilingCharge.cells[i];
-      const speed = this.windSpeedAtHeight(cell.center.y);
+      const wind = this.windVectorAtHeight(cell.center.y);
       const newPos = {
-        x: cell.center.x + speed * windDirection.x * dt,
+        x: cell.center.x + wind.x * dt,
         y: cell.center.y,
-        z: cell.center.z + speed * windDirection.z * dt,
+        z: cell.center.z + wind.z * dt,
       };
 
-      // Check if out of bounds - regenerate if so
       if (this.isOutOfBounds(newPos, boundsRadius)) {
         this.regenerateCeilingCell(i);
       } else {
@@ -214,15 +239,15 @@ export class AtmosphereSimulator {
   }
 
   private driftField(field: VoronoiField, dt: number): void {
-    const { windDirection, boundsRadius } = this.config;
+    const { boundsRadius } = this.config;
 
     for (let i = 0; i < field.cells.length; i++) {
       const cell = field.cells[i];
-      const speed = this.windSpeedAtHeight(cell.center.y);
+      const wind = this.windVectorAtHeight(cell.center.y);
       const newPos = {
-        x: cell.center.x + speed * windDirection.x * dt,
+        x: cell.center.x + wind.x * dt,
         y: cell.center.y,
-        z: cell.center.z + speed * windDirection.z * dt,
+        z: cell.center.z + wind.z * dt,
       };
 
       if (this.isOutOfBounds(newPos, boundsRadius * 1.5)) {
@@ -234,12 +259,26 @@ export class AtmosphereSimulator {
   }
 
   private windSpeedAtHeight(y: number): number {
-    // Wind is fastest at mid-altitude (y=0), slower at ceiling/ground
-    // y ranges from groundY to ceilingY (typically -0.5 to 0.5)
+    // Power law wind profile: wind increases with altitude
+    // normalizedY: 0 = ground, 1 = ceiling
     const normalizedY = (y - this.config.groundY) / (this.config.ceilingY - this.config.groundY);
-    // Peak at center (normalizedY = 0.5)
-    const heightFactor = 1 - 0.6 * Math.abs(normalizedY - 0.5) * 2;
-    return this.config.baseWindSpeed * Math.max(0.4, heightFactor);
+    const clampedY = Math.max(0.01, Math.min(1, normalizedY));
+    const minFraction = 0.15; // Ground wind is 15% of ceiling wind
+    const heightFactor = minFraction + (1 - minFraction) * Math.pow(clampedY, this.config.windAlpha);
+    return this.config.baseWindSpeed * heightFactor;
+  }
+
+  private windVectorAtHeight(y: number): { x: number; z: number } {
+    // Interpolate direction from ground to upper level (wind shear)
+    const normalizedY = (y - this.config.groundY) / (this.config.ceilingY - this.config.groundY);
+    const t = Math.max(0, Math.min(1, normalizedY));
+    const lo = this.config.windDirection;
+    const hi = this.config.upperWindDirection;
+    const dx = lo.x * (1 - t) + hi.x * t;
+    const dz = lo.z * (1 - t) + hi.z * t;
+    const len = Math.sqrt(dx * dx + dz * dz) || 1;
+    const speed = this.windSpeedAtHeight(y);
+    return { x: (dx / len) * speed, z: (dz / len) * speed };
   }
 
   private isOutOfBounds(pos: Vec3, radius: number): boolean {

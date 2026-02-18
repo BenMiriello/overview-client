@@ -1,7 +1,17 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { LightningBoltEffect, LightningBoltEffectConfig, DetailLevel } from '../../effects/LightningBoltEffect';
-import { AtmosphereSimulator, BreakdownEvent } from '../../effects/LightningBoltEffect/simulation/AtmosphereSimulator';
+import {
+  LightningBoltEffect,
+  LightningBoltEffectConfig,
+  DetailLevel,
+} from '../../effects/LightningBoltEffect';
+import {
+  TimelinePlayer,
+  TimelinePlayerStatus,
+  AtmosphereSnapshot,
+  StrikeEvent,
+  TimelineConfig,
+} from '../../effects/LightningBoltEffect/simulation';
 import { ChargeFieldRenderer } from '../../effects/LightningBoltEffect/rendering/ChargeFieldRenderer';
 
 function getMaxMainChannelBrightness(
@@ -21,6 +31,7 @@ function getMaxMainChannelBrightness(
 interface LightningControllerProps {
   detail?: number;
   speed?: number;
+  windSpeed?: number;
   showCharge?: boolean;
   showAtmospheric?: boolean;
   showMoisture?: boolean;
@@ -30,9 +41,15 @@ interface LightningControllerProps {
 const SHOWCASE_START = { x: 0, y: 1.5, z: 0 };
 const SHOWCASE_END = { x: 0, y: -1.8, z: 0 };
 
+// Convert knots to simulation units for VISIBLE movement
+// Physics-accurate would be ~0.00008, but that's imperceptibly slow
+// For visible drift (~15s to cross view at 60 kts), we need ~0.00145
+const KTS_TO_SIM = 0.00145;
+
 const LightningController = ({
   detail = 1.0,
   speed = 1.0,
+  windSpeed = 25,
   showCharge = true,
   showAtmospheric = true,
   showMoisture = true,
@@ -40,15 +57,18 @@ const LightningController = ({
 }: LightningControllerProps) => {
   const { scene, size } = useThree();
 
-  // Persistent atmosphere simulation
-  const simulatorRef = useRef<AtmosphereSimulator | null>(null);
+  // Timeline-based simulation (runs in worker, plays back pre-computed data)
+  const playerRef = useRef<TimelinePlayer | null>(null);
   const atmosphereRendererRef = useRef<ChargeFieldRenderer | null>(null);
+  const rendererInitializedRef = useRef(false);
 
   // Active strike
   const strikeRef = useRef<LightningBoltEffect | null>(null);
 
   // Refs for values that shouldn't trigger re-renders
   const speedRef = useRef(speed);
+  const detailRef = useRef(detail);
+  const windSpeedRef = useRef(windSpeed);
   const showChargeRef = useRef(showCharge);
   const showAtmosphericRef = useRef(showAtmospheric);
   const showMoistureRef = useRef(showMoisture);
@@ -57,24 +77,44 @@ const LightningController = ({
   // Track if we've initialized
   const initializedRef = useRef(false);
 
-  // Last frame time for delta calculation
-  const lastTimeRef = useRef<number>(0);
-
-  // Cooldown after strike to prevent immediate re-trigger
-  const strikeCooldownRef = useRef<number>(0);
-  const STRIKE_COOLDOWN_MS = 500;
-
   // Strike position for glow (world coords where strike lands)
   const strikePositionRef = useRef<{ x: number; z: number } | null>(null);
 
   // Afterglow state
-  const afterglowRef = useRef<{ startTime: number; position: { x: number; z: number } } | null>(null);
+  const afterglowRef = useRef<{
+    startTime: number;
+    position: { x: number; z: number };
+  } | null>(null);
   const AFTERGLOW_DURATION_MS = 300;
+
+  // Last frame time for delta calculation
+  const lastTimeRef = useRef<number>(0);
+
+  // Player status for debugging
+  const playerStatusRef = useRef<TimelinePlayerStatus | null>(null);
 
   // Update refs when props change
   useEffect(() => {
     speedRef.current = speed;
+    if (playerRef.current) {
+      playerRef.current.setConfig({ speed });
+    }
   }, [speed]);
+
+  useEffect(() => {
+    detailRef.current = detail;
+    if (playerRef.current) {
+      playerRef.current.setConfig({ detail });
+    }
+  }, [detail]);
+
+  useEffect(() => {
+    windSpeedRef.current = windSpeed;
+    if (playerRef.current) {
+      const baseWindSpeed = windSpeed * KTS_TO_SIM;
+      playerRef.current.setConfig({ baseWindSpeed });
+    }
+  }, [windSpeed]);
 
   useEffect(() => {
     showChargeRef.current = showCharge;
@@ -105,40 +145,126 @@ const LightningController = ({
     }
   }, [showIonization]);
 
-  // Initialize persistent atmosphere system
+  // Handle strike events from the timeline player
+  const handleStrike = useCallback(
+    (event: StrikeEvent) => {
+      if (strikeRef.current) {
+        strikeRef.current.terminate();
+        strikeRef.current = null;
+      }
+
+      const offsetX = event.breakdownPosition.x;
+      const offsetZ = event.breakdownPosition.z;
+
+      const config: LightningBoltEffectConfig = {
+        lat: 0,
+        lng: 0,
+        startAltitude: 1.0,
+        groundAltitude: 0,
+        resolution: detailRef.current,
+        seed: event.seed,
+        enableScreenFlash: true,
+        duration: 1.5,
+        fadeTime: 0.3,
+        detailLevel: DetailLevel.SHOWCASE,
+        worldStart: { x: offsetX, y: SHOWCASE_START.y, z: offsetZ },
+        worldEnd: {
+          x: offsetX * 0.3,
+          y: SHOWCASE_END.y,
+          z: offsetZ * 0.3,
+        },
+        speed: speedRef.current,
+        skipChargeRendering: true,
+        precomputedResult: { geometry: event.geometry, stats: { totalSteps: 0, segmentCount: 0, branchCount: 0, maxDepth: 0, connected: true, elapsedMs: 0 } },
+      };
+
+      const strike = new LightningBoltEffect(scene, null, config);
+      strike.updateResolution(size.width, size.height);
+      strikeRef.current = strike;
+
+      console.log('[LightningController] Strike from pre-computed timeline');
+
+      // Get ACTUAL landing position from the simulated bolt (in world space)
+      const landingPos = strike.getStrikeLandingPosition();
+      if (landingPos) {
+        strikePositionRef.current = { x: landingPos.x, z: landingPos.z };
+      } else {
+        strikePositionRef.current = {
+          x: offsetX * 0.3,
+          z: offsetZ * 0.3,
+        };
+      }
+    },
+    [scene, size.width, size.height]
+  );
+
+  // Handle snapshot updates from the timeline player
+  const handleSnapshot = useCallback((snapshot: AtmosphereSnapshot) => {
+    if (!atmosphereRendererRef.current) return;
+
+    // Initialize renderer on first snapshot if not done yet
+    if (!rendererInitializedRef.current) {
+      atmosphereRendererRef.current.initializeFromSnapshot(
+        snapshot,
+        SHOWCASE_START,
+        SHOWCASE_END
+      );
+      rendererInitializedRef.current = true;
+
+      // Apply initial visibility settings
+      atmosphereRendererRef.current.setCeilingVisible(showChargeRef.current);
+      atmosphereRendererRef.current.setGroundVisible(showChargeRef.current);
+      atmosphereRendererRef.current.setAtmosphericVisible(
+        showAtmosphericRef.current
+      );
+      atmosphereRendererRef.current.setMoistureVisible(showMoistureRef.current);
+      atmosphereRendererRef.current.setIonizationVisible(
+        showIonizationRef.current
+      );
+    } else {
+      atmosphereRendererRef.current.updateFromSnapshot(snapshot);
+    }
+  }, []);
+
+  // Handle player status changes
+  const handleStatusChange = useCallback((status: TimelinePlayerStatus) => {
+    playerStatusRef.current = status;
+
+    // Log periodically for debugging
+    if (Math.random() < 0.01) {
+      console.log(
+        `[TimelinePlayer] lead=${status.leadTimeMs.toFixed(0)}ms, speed=${status.playbackSpeed.toFixed(2)}x, visual=${status.visualTimeMs.toFixed(0)}ms`
+      );
+    }
+  }, []);
+
+  // Initialize timeline player
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
 
-    const seed = Math.random() * 0xffffffff;
-
-    // Create persistent simulator
-    simulatorRef.current = new AtmosphereSimulator(seed, {
-      chargeAccumulationRate: 0.18,
-      breakdownThreshold: 0.80,
-      postStrikeChargeFactor: 0.15,
-      baseWindSpeed: 0.002,
-      windDirection: { x: 0.8, z: 0.6 },
-      ceilingY: 0.5,
-      groundY: -0.5,
-      initialChargeRange: [0.5, 0.7],
-    });
-
-    // Create persistent atmosphere renderer
+    // Create atmosphere renderer (sprites will be created on first snapshot)
     atmosphereRendererRef.current = new ChargeFieldRenderer(scene, {
       planeSize: 1.0,
       opacity: 0.2,
     });
 
-    // Initialize renderer from simulator
-    atmosphereRendererRef.current.initialize(simulatorRef.current, SHOWCASE_START, SHOWCASE_END);
+    // Create timeline player with callbacks
+    playerRef.current = new TimelinePlayer({
+      onSnapshot: handleSnapshot,
+      onStrike: handleStrike,
+      onStatusChange: handleStatusChange,
+    });
 
-    // Apply initial visibility settings
-    atmosphereRendererRef.current.setCeilingVisible(showChargeRef.current);
-    atmosphereRendererRef.current.setGroundVisible(showChargeRef.current);
-    atmosphereRendererRef.current.setAtmosphericVisible(showAtmosphericRef.current);
-    atmosphereRendererRef.current.setMoistureVisible(showMoistureRef.current);
-    atmosphereRendererRef.current.setIonizationVisible(showIonizationRef.current);
+    // Start the player with initial config
+    const initialConfig: Partial<TimelineConfig> = {
+      speed: speedRef.current,
+      detail: detailRef.current,
+      baseWindSpeed: windSpeedRef.current * KTS_TO_SIM,
+      chargeAccumulationRate: 0.18,
+      breakdownThreshold: 0.80,
+    };
+    playerRef.current.start(initialConfig);
 
     lastTimeRef.current = performance.now();
 
@@ -151,63 +277,14 @@ const LightningController = ({
         atmosphereRendererRef.current.dispose();
         atmosphereRendererRef.current = null;
       }
-      simulatorRef.current = null;
+      if (playerRef.current) {
+        playerRef.current.stop();
+        playerRef.current = null;
+      }
       initializedRef.current = false;
+      rendererInitializedRef.current = false;
     };
-  }, [scene]);
-
-  const createStrikeAt = useCallback(
-    (breakdownEvent: BreakdownEvent) => {
-      if (strikeRef.current) {
-        strikeRef.current.terminate();
-        strikeRef.current = null;
-      }
-
-      if (!simulatorRef.current) return;
-
-      // Get current atmosphere snapshot for the simulation
-      const atmosphere = simulatorRef.current.getAtmosphericModel();
-
-      // Offset the strike position based on breakdown location
-      const offsetX = breakdownEvent.position.x;
-      const offsetZ = breakdownEvent.position.z;
-
-      const config: LightningBoltEffectConfig = {
-        lat: 0,
-        lng: 0,
-        startAltitude: 1.0,
-        groundAltitude: 0,
-        resolution: detail,
-        seed: Math.random() * 0xffffffff,
-        enableScreenFlash: true,
-        duration: 1.5,
-        fadeTime: 0.3,
-        detailLevel: DetailLevel.SHOWCASE,
-        worldStart: { x: offsetX, y: SHOWCASE_START.y, z: offsetZ },
-        worldEnd: { x: offsetX * 0.3, y: SHOWCASE_END.y, z: offsetZ * 0.3 },
-        speed: speedRef.current,
-        atmosphere: atmosphere,
-        skipChargeRendering: true, // We use our own persistent renderer
-      };
-
-      const strike = new LightningBoltEffect(scene, null, config);
-      strike.updateResolution(size.width, size.height);
-      strikeRef.current = strike;
-
-      // Get ACTUAL landing position from the simulated bolt (in world space)
-      const landingPos = strike.getStrikeLandingPosition();
-      if (landingPos) {
-        strikePositionRef.current = { x: landingPos.x, z: landingPos.z };
-      } else {
-        // Fallback to configured end position
-        strikePositionRef.current = { x: offsetX * 0.3, z: offsetZ * 0.3 };
-      }
-
-      // Set cooldown
-      strikeCooldownRef.current = performance.now() + STRIKE_COOLDOWN_MS;
-    },
-    [scene, size.width, size.height, detail]
-  );
+  }, [scene, handleSnapshot, handleStrike, handleStatusChange]);
 
   // Resolution updates
   useEffect(() => {
@@ -219,18 +296,10 @@ const LightningController = ({
   // Main update loop
   useFrame(() => {
     const now = performance.now();
-    const dt = Math.min((now - lastTimeRef.current) / 1000, 0.1) * speedRef.current; // Cap delta, apply speed
-    lastTimeRef.current = now;
 
-    // Update atmosphere simulation
-    let breakdownEvent: BreakdownEvent | null = null;
-    if (simulatorRef.current) {
-      breakdownEvent = simulatorRef.current.update(dt);
-
-      // Update atmosphere visualization
-      if (atmosphereRendererRef.current) {
-        atmosphereRendererRef.current.updateFromSimulator(simulatorRef.current);
-      }
+    // Update timeline player (fetches snapshots/events, calls callbacks)
+    if (playerRef.current) {
+      playerRef.current.update();
     }
 
     // Update active strike and dispatch glow updates
@@ -241,7 +310,10 @@ const LightningController = ({
       const animState = strikeRef.current.getAnimationState(now);
       if (animState && strikePositionRef.current) {
         // Use ACTUAL segment brightness from the animation, not arbitrary curves
-        const intensity = getMaxMainChannelBrightness(animState.segmentBrightness, animState.mainChannelIds);
+        const intensity = getMaxMainChannelBrightness(
+          animState.segmentBrightness,
+          animState.mainChannelIds
+        );
         window.dispatchEvent(
           new CustomEvent('lightning-glow-update', {
             detail: { intensity, position: strikePositionRef.current },
@@ -250,25 +322,17 @@ const LightningController = ({
       }
 
       if (strikeRef.current.isComplete()) {
-        // Notify simulator about strike completion for charge dissipation
-        if (simulatorRef.current) {
-          const strikePos = strikeRef.current.getStrikeStartPosition();
-          if (strikePos) {
-            simulatorRef.current.onStrikeComplete(strikePos, 0.2);
-          }
-        }
-
         // Start afterglow
         if (strikePositionRef.current) {
-          afterglowRef.current = { startTime: now, position: { ...strikePositionRef.current } };
+          afterglowRef.current = {
+            startTime: now,
+            position: { ...strikePositionRef.current },
+          };
         }
 
         strikeRef.current.terminate();
         strikeRef.current = null;
         strikePositionRef.current = null;
-
-        // Reset cooldown after strike ends
-        strikeCooldownRef.current = now + STRIKE_COOLDOWN_MS;
       }
     }
 
@@ -292,11 +356,6 @@ const LightningController = ({
         );
         afterglowRef.current = null;
       }
-    }
-
-    // Trigger new strike from breakdown (if not in cooldown and no active strike)
-    if (!strikeRef.current && breakdownEvent && now > strikeCooldownRef.current) {
-      createStrikeAt(breakdownEvent);
     }
   });
 
