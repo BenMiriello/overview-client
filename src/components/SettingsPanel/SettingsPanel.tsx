@@ -120,8 +120,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
     if (!isMobile) setExpandedSection(null);
   };
 
-  const enabledLayers = LAYERS.filter(l => layerStates[l.key]);
-
   return (
     <div className="settings-panel" ref={panelRef}>
       {/* Speed Section */}
@@ -208,60 +206,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
         </div>
       </div>
 
-      {/* Layers Section */}
-      <div
-        className={`settings-section layers-section ${expandedSection === 'layers' ? 'expanded' : ''}`}
-        onMouseEnter={() => handleMouseEnter('layers')}
-        onMouseLeave={handleMouseLeave}
-        onClick={() => handleSectionInteraction('layers')}
-      >
-        {/* Collapsed: Eye icon + enabled layer icons stacked below */}
-        {expandedSection !== 'layers' && (
-          <div className="layers-collapsed">
-            <div className="section-icon">
-              <Eye size={20} />
-            </div>
-            {enabledLayers.map((layer) => (
-              <div key={layer.key} className="collapsed-layer-icon">
-                <layer.icon size={16} />
-              </div>
-            ))}
-          </div>
-        )}
-        {/* Expanded: Header row + indented layer rows below */}
-        {expandedSection === 'layers' && (
-          <div className="layers-expanded">
-            <div className="layers-header">
-              <div className="section-icon">
-                <Eye size={20} />
-              </div>
-              <span className="section-label">Layers</span>
-            </div>
-            <div className="layers-list">
-              {LAYERS.map((layer) => {
-                const enabled = layerStates[layer.key];
-                return (
-                  <div
-                    key={layer.key}
-                    className={`layer-row ${enabled ? 'enabled' : 'disabled'}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleLayer(layer.key);
-                    }}
-                  >
-                    <div className="layer-icon-wrapper">
-                      <layer.icon size={14} />
-                      {!enabled && <div className="slash-overlay" />}
-                    </div>
-                    <span className="layer-label">{layer.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Orbit Toggle */}
       <div
         className={`settings-section orbit-section ${orbit ? 'active' : ''}`}
@@ -272,6 +216,42 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
         </div>
         <div className="section-expandable">
           <span className="section-label">Orbit</span>
+        </div>
+      </div>
+
+      {/* Layers Section */}
+      <div
+        className={`settings-section layers-section ${expandedSection === 'layers' ? 'expanded' : ''}`}
+        onMouseEnter={() => handleMouseEnter('layers')}
+        onMouseLeave={handleMouseLeave}
+        onClick={() => handleSectionInteraction('layers')}
+      >
+        <div className="layers-header">
+          <div className="section-icon">
+            <Eye size={20} />
+          </div>
+          <span className="section-label">Layers</span>
+        </div>
+        <div className="layers-items">
+          {LAYERS.map((layer) => {
+            const enabled = layerStates[layer.key];
+            return (
+              <div
+                key={layer.key}
+                className={`layer-item ${enabled ? 'enabled' : 'disabled'}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleLayer(layer.key);
+                }}
+              >
+                <div className="layer-icon-wrapper">
+                  <layer.icon size={16} />
+                  {!enabled && <div className="slash-overlay" />}
+                </div>
+                <span className="layer-label">{layer.label}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

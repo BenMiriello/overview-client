@@ -7,6 +7,7 @@
   font-family: 'Roboto', sans-serif;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
 }
 
@@ -32,12 +33,24 @@
   border-color: rgba(255, 255, 255, 0.5);
 }
 
-.settings-section.active .section-icon {
+.settings-section.active .section-icon,
+.settings-section.expanded .section-icon,
+.settings-section:hover .section-icon {
   color: #fff;
 }
 
-.settings-section:not(.active) .section-icon {
+.settings-section:not(.active):not(.expanded):not(:hover) .section-icon {
   color: rgba(255, 255, 255, 0.5);
+}
+
+/* Orbit icon: only use border to show active, not icon opacity */
+.orbit-section.active .section-icon,
+.orbit-section:not(.active) .section-icon {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.orbit-section:hover .section-icon {
+  color: #fff;
 }
 
 /* Icon container - always visible */
@@ -48,6 +61,7 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transition: color 0.2s ease-out;
 }
 
 .section-expandable {
@@ -121,83 +135,107 @@
   cursor: pointer;
 }
 
-/* Layers section - vertical expansion */
+/* Layers section */
 .layers-section {
   flex-direction: column;
   align-items: stretch;
 }
 
-.layers-collapsed {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.collapsed-layer-icon {
-  width: 44px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.layers-expanded {
-  display: flex;
-  flex-direction: column;
-}
-
 .layers-header {
   display: flex;
-  flex-direction: row;
   align-items: center;
-  gap: 10px;
-  padding-right: 16px;
 }
 
-.layers-list {
+.layers-header .section-label {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-width 0.25s ease-out, opacity 0.2s ease-out;
+}
+
+.layers-section.expanded .layers-header .section-label {
+  max-width: 80px;
+  opacity: 1;
+}
+
+.layers-items {
   display: flex;
   flex-direction: column;
-  padding-left: 12px;
+  padding: 4px 0 8px 13px;
 }
 
-.layer-row {
+.layers-section.expanded .layers-items {
+  padding-left: 20px;
+  padding-right: 12px;
+}
+
+.layer-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px 6px 8px;
+  gap: 0;
+  padding: 5px 0;
   cursor: pointer;
-  transition: background 0.15s ease;
   white-space: nowrap;
+  max-height: 30px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.2s ease-out, opacity 0.2s ease-out, padding 0.2s ease-out;
 }
 
-.layer-row:first-child {
-  padding-top: 8px;
+.layer-item.disabled {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
 }
 
-.layer-row:last-child {
-  padding-bottom: 10px;
+.layers-section.expanded .layer-item {
+  gap: 8px;
 }
 
-.layer-row:hover {
-  background: rgba(255, 255, 255, 0.1);
+.layers-section.expanded .layer-item.disabled {
+  max-height: 30px;
+  opacity: 1;
+  padding: 5px 0;
+}
+
+.layer-label {
+  font-size: 12px;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-width 0.25s ease-out, opacity 0.2s ease-out, color 0.2s ease-out;
+}
+
+.layers-section.expanded .layer-label {
+  max-width: 200px;
+  opacity: 1;
+}
+
+.layer-item.enabled .layer-label {
+  color: rgba(255, 255, 255, 1);
+}
+
+.layer-item.disabled .layer-label {
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .layer-icon-wrapper {
   position: relative;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.5);
+  transition: color 0.2s ease-out;
 }
 
-.layer-row.enabled .layer-icon-wrapper {
+.layers-section.expanded .layer-item.enabled .layer-icon-wrapper {
   color: rgba(255, 255, 255, 1);
 }
 
-.layer-row.disabled .layer-icon-wrapper {
+.layers-section.expanded .layer-item.disabled .layer-icon-wrapper {
   color: rgba(255, 255, 255, 0.5);
 }
 
@@ -210,18 +248,6 @@
   background: rgba(255, 255, 255, 0.7);
   transform: translate(-50%, -50%) rotate(-45deg);
   border-radius: 1px;
-}
-
-.layer-label {
-  font-size: 12px;
-}
-
-.layer-row.enabled .layer-label {
-  color: rgba(255, 255, 255, 1);
-}
-
-.layer-row.disabled .layer-label {
-  color: rgba(255, 255, 255, 0.7);
 }
 
 @media (max-width: 768px) {
