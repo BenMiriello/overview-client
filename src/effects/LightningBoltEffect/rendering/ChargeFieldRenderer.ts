@@ -4,43 +4,15 @@ import { CoordinateTransform } from '../CoordinateTransform';
 import { AtmosphereSimulator } from '../simulation/AtmosphereSimulator';
 import { VoronoiField } from '../simulation/VoronoiField';
 import { AtmosphereSnapshot } from '../simulation/SimulationTimeline';
+import {
+  chargeFieldVertexShader,
+  chargeFieldFragmentShader,
+  volumetricVertexShader,
+  volumetricFragmentShader,
+  MAX_CELLS,
+} from './shaders/chargeFieldShaders';
 
 type FieldType = VoronoiField | VoronoiFieldData;
-
-const MAX_CELLS = 16;
-
-// Vertex shader for sprites (billboarded)
-const spriteVertexShader = `
-varying vec2 vUv;
-
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-
-// Fragment shader for sprites
-const spriteFragmentShader = `
-uniform vec3 baseColor;
-uniform float intensity;
-uniform float opacity;
-
-varying vec2 vUv;
-
-void main() {
-  vec2 centered = vUv - 0.5;
-  float dist = length(centered) * 2.0;
-
-  if (dist > 1.0) {
-    discard;
-  }
-
-  float falloff = (cos(dist * 3.14159) + 1.0) * 0.5;
-  float alpha = intensity * falloff * opacity;
-
-  gl_FragColor = vec4(baseColor, alpha);
-}
-`;
 
 export interface ChargeFieldRenderOptions {
   planeSize?: number;
@@ -52,22 +24,33 @@ export interface ChargeFieldRenderOptions {
   opacity?: number;
 }
 
-interface SpriteData {
+interface FieldPlane {
   mesh: THREE.Mesh;
   material: THREE.ShaderMaterial;
 }
+
+interface VolumetricField {
+  mesh: THREE.Mesh;
+  material: THREE.ShaderMaterial;
+}
+
 
 export class ChargeFieldRenderer {
   private scene: THREE.Scene;
   private options: Required<ChargeFieldRenderOptions>;
   private transform: CoordinateTransform | null = null;
 
-  // All fields rendered as sprites
-  private ceilingSprites: SpriteData[] = [];
-  private groundSprites: SpriteData[] = [];
-  private atmosphericSprites: SpriteData[] = [];
-  private moistureSprites: SpriteData[] = [];
-  private ionizationSprites: SpriteData[] = [];
+  // Ceiling/Ground: flat horizontal metaball planes
+  private ceilingPlane: FieldPlane | null = null;
+  private groundPlane: FieldPlane | null = null;
+
+  // Atmospheric/Moisture/Ionization: volumetric ray-marched 3D fields
+  private atmosphericVolume: VolumetricField | null = null;
+  private moistureVolume: VolumetricField | null = null;
+  private ionizationVolume: VolumetricField | null = null;
+
+  // Light direction for volumetric fields
+  private lightDir: THREE.Vector3 = new THREE.Vector3(0.5, 0.8, 0.3).normalize();
 
   // Visibility states
   private visible: boolean = true;
@@ -77,9 +60,13 @@ export class ChargeFieldRenderer {
   private moistureVisible: boolean = true;
   private ionizationVisible: boolean = true;
 
-  // World Y bounds for clamping 3D sprites
+  // World Y bounds
   private worldCeilingY: number = 0;
   private worldGroundY: number = 0;
+
+  // Wind parameters
+  private windDir: THREE.Vector2 = new THREE.Vector2(1, 0);
+  private windSpeed: number = 0;
 
   constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
     this.scene = scene;
@@ -94,6 +81,29 @@ export class ChargeFieldRenderer {
     };
   }
 
+  setWindParameters(direction: THREE.Vector2, speed: number): void {
+    this.windDir.copy(direction).normalize();
+    this.windSpeed = speed / 60; // Normalize to 0-1 range from 0-60 kts
+
+    // Update flat plane materials
+    const planes = [this.ceilingPlane, this.groundPlane];
+    for (const plane of planes) {
+      if (plane) {
+        plane.material.uniforms.windDir.value.copy(this.windDir);
+        plane.material.uniforms.windSpeed.value = this.windSpeed;
+      }
+    }
+
+    // Update volumetric field materials
+    const volumes = [this.atmosphericVolume, this.moistureVolume, this.ionizationVolume];
+    for (const volume of volumes) {
+      if (volume) {
+        volume.material.uniforms.windDir.value.copy(this.windDir);
+        volume.material.uniforms.windSpeed.value = this.windSpeed;
+      }
+    }
+  }
+
   setChargeField(
     atmosphere: AtmosphericModelData,
     worldStart: Vec3,
@@ -103,63 +113,69 @@ export class ChargeFieldRenderer {
     this.dispose();
 
     this.transform = transform ?? new CoordinateTransform(worldStart, worldEnd);
-
-    // Store world Y bounds for clamping 3D sprites
     this.worldCeilingY = worldStart.y;
     this.worldGroundY = worldEnd.y;
 
-    // Create ceiling sprites (flat, lying horizontal)
-    this.ceilingSprites = this.createSprites(
+    // Create ceiling plane (flat, horizontal)
+    this.ceilingPlane = this.createFieldPlane(
       atmosphere.ceilingCharge,
       this.options.ceilingColor,
       this.options.opacity,
-      1,
+      this.worldCeilingY,
       true
     );
 
-    // Create ground sprites (flat, lying horizontal)
-    this.groundSprites = this.createSprites(
+    // Create ground plane (flat, horizontal)
+    this.groundPlane = this.createFieldPlane(
       atmosphere.groundCharge,
       this.options.groundColor,
       this.options.opacity,
-      1,
+      this.worldGroundY,
       true
     );
 
-    // Create atmospheric charge sprites (3D)
+    // Create volumetric atmospheric field (occupies upper-middle region)
     if (atmosphere.atmosphericCharge) {
-      this.atmosphericSprites = this.createSprites(
+      const upperBound = this.worldCeilingY - (this.worldCeilingY - this.worldGroundY) * 0.1;
+      const lowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
+      this.atmosphericVolume = this.createVolumetricField(
         atmosphere.atmosphericCharge,
         this.options.atmosphericColor,
-        this.options.opacity * 0.9
+        this.options.opacity * 0.9,
+        lowerBound,
+        upperBound
       );
     }
 
-    // Create moisture sprites (3D)
+    // Volumetric moisture field - mid-lower region
     if (atmosphere.moisture) {
-      this.moistureSprites = this.createSprites(
+      const upperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.5;
+      const lowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.2;
+      this.moistureVolume = this.createVolumetricField(
         atmosphere.moisture,
         this.options.moistureColor,
-        this.options.opacity * 1.2
+        this.options.opacity * 1.2,
+        lowerBound,
+        upperBound
       );
     }
 
-    // Create ionization seed sprites (3D)
+    // Volumetric ionization field - lower region
     if (atmosphere.ionizationSeeds) {
-      this.ionizationSprites = this.createSprites(
+      const upperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
+      const lowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.1;
+      this.ionizationVolume = this.createVolumetricField(
         atmosphere.ionizationSeeds,
         this.options.ionizationColor,
         this.options.opacity * 1.0,
-        8
+        lowerBound,
+        upperBound
       );
     }
 
     this.updateVisibility();
   }
 
-  /**
-   * Initialize from a live AtmosphereSimulator (for real-time updates).
-   */
   initialize(simulator: AtmosphereSimulator, worldStart: Vec3, worldEnd: Vec3): void {
     this.dispose();
 
@@ -167,70 +183,74 @@ export class ChargeFieldRenderer {
     this.worldCeilingY = worldStart.y;
     this.worldGroundY = worldEnd.y;
 
-    this.ceilingSprites = this.createSprites(
+    this.ceilingPlane = this.createFieldPlane(
       simulator.ceilingCharge,
       this.options.ceilingColor,
       this.options.opacity,
-      1,
+      this.worldCeilingY,
       true
     );
 
-    this.groundSprites = this.createSprites(
+    this.groundPlane = this.createFieldPlane(
       simulator.groundCharge,
       this.options.groundColor,
       this.options.opacity,
-      1,
+      this.worldGroundY,
       true
     );
 
-    this.atmosphericSprites = this.createSprites(
+    // Volumetric atmospheric field
+    const atmUpperBound = this.worldCeilingY - (this.worldCeilingY - this.worldGroundY) * 0.1;
+    const atmLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
+    this.atmosphericVolume = this.createVolumetricField(
       simulator.atmosphericCharge,
       this.options.atmosphericColor,
-      this.options.opacity * 0.9
+      this.options.opacity * 0.9,
+      atmLowerBound,
+      atmUpperBound
     );
 
-    this.moistureSprites = this.createSprites(
+    // Volumetric moisture field
+    const moistUpperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.5;
+    const moistLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.2;
+    this.moistureVolume = this.createVolumetricField(
       simulator.moisture,
       this.options.moistureColor,
-      this.options.opacity * 1.2
+      this.options.opacity * 1.2,
+      moistLowerBound,
+      moistUpperBound
     );
 
-    this.ionizationSprites = this.createSprites(
+    // Volumetric ionization field
+    const ionUpperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
+    const ionLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.1;
+    this.ionizationVolume = this.createVolumetricField(
       simulator.ionizationSeeds,
       this.options.ionizationColor,
       this.options.opacity * 1.0,
-      8
+      ionLowerBound,
+      ionUpperBound
     );
 
     this.updateVisibility();
   }
 
-  /**
-   * Update rendering from simulator state. Call each frame for live mode.
-   */
   updateFromSimulator(simulator: AtmosphereSimulator): void {
-    this.updateSprites(this.ceilingSprites, simulator.ceilingCharge, 1, true);
-    this.updateSprites(this.groundSprites, simulator.groundCharge, 1, true);
-    this.updateSprites(this.atmosphericSprites, simulator.atmosphericCharge, 1, false);
-    this.updateSprites(this.moistureSprites, simulator.moisture, 1, false);
-    this.updateSprites(this.ionizationSprites, simulator.ionizationSeeds, 8, false);
+    this.updateFieldPlane(this.ceilingPlane, simulator.ceilingCharge);
+    this.updateFieldPlane(this.groundPlane, simulator.groundCharge);
+    this.updateVolumetricField(this.atmosphericVolume, simulator.atmosphericCharge);
+    this.updateVolumetricField(this.moistureVolume, simulator.moisture);
+    this.updateVolumetricField(this.ionizationVolume, simulator.ionizationSeeds);
   }
 
-  /**
-   * Update rendering from a pre-computed snapshot.
-   * Used with TimelinePlayer for freeze-free playback.
-   */
   updateFromSnapshot(snapshot: AtmosphereSnapshot): void {
-    this.updateSprites(this.ceilingSprites, snapshot.ceilingCharge, 1, true);
-    this.updateSprites(this.groundSprites, snapshot.groundCharge, 1, true);
-    this.updateSprites(this.atmosphericSprites, snapshot.atmosphericCharge, 1, false);
-    this.updateSprites(this.moistureSprites, snapshot.moisture, 1, false);
-    this.updateSprites(this.ionizationSprites, snapshot.ionizationSeeds, 8, false);
+    this.updateFieldPlane(this.ceilingPlane, snapshot.ceilingCharge);
+    this.updateFieldPlane(this.groundPlane, snapshot.groundCharge);
+    this.updateVolumetricField(this.atmosphericVolume, snapshot.atmosphericCharge);
+    this.updateVolumetricField(this.moistureVolume, snapshot.moisture);
+    this.updateVolumetricField(this.ionizationVolume, snapshot.ionizationSeeds);
   }
 
-  /**
-   * Initialize from snapshot data (for timeline-based rendering).
-   */
   initializeFromSnapshot(
     snapshot: AtmosphereSnapshot,
     worldStart: Vec3,
@@ -242,126 +262,296 @@ export class ChargeFieldRenderer {
     this.worldCeilingY = worldStart.y;
     this.worldGroundY = worldEnd.y;
 
-    this.ceilingSprites = this.createSprites(
+    this.ceilingPlane = this.createFieldPlane(
       snapshot.ceilingCharge,
       this.options.ceilingColor,
       this.options.opacity,
-      1,
+      this.worldCeilingY,
       true
     );
 
-    this.groundSprites = this.createSprites(
+    this.groundPlane = this.createFieldPlane(
       snapshot.groundCharge,
       this.options.groundColor,
       this.options.opacity,
-      1,
+      this.worldGroundY,
       true
     );
 
-    this.atmosphericSprites = this.createSprites(
+    // Volumetric atmospheric field
+    const atmUpperBound = this.worldCeilingY - (this.worldCeilingY - this.worldGroundY) * 0.1;
+    const atmLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
+    this.atmosphericVolume = this.createVolumetricField(
       snapshot.atmosphericCharge,
       this.options.atmosphericColor,
-      this.options.opacity * 0.9
+      this.options.opacity * 0.9,
+      atmLowerBound,
+      atmUpperBound
     );
 
-    this.moistureSprites = this.createSprites(
+    // Volumetric moisture field
+    const moistUpperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.5;
+    const moistLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.2;
+    this.moistureVolume = this.createVolumetricField(
       snapshot.moisture,
       this.options.moistureColor,
-      this.options.opacity * 1.2
+      this.options.opacity * 1.2,
+      moistLowerBound,
+      moistUpperBound
     );
 
-    this.ionizationSprites = this.createSprites(
+    // Volumetric ionization field
+    const ionUpperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
+    const ionLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.1;
+    this.ionizationVolume = this.createVolumetricField(
       snapshot.ionizationSeeds,
       this.options.ionizationColor,
       this.options.opacity * 1.0,
-      8
+      ionLowerBound,
+      ionUpperBound
     );
 
     this.updateVisibility();
   }
 
-  private createSprites(
+  private createFieldPlane(
     field: FieldType,
     color: THREE.Color,
     opacity: number,
-    sizeMultiplier: number = 1,
-    flat: boolean = false
-  ): SpriteData[] {
-    const sprites: SpriteData[] = [];
+    yPosition: number,
+    flat: boolean
+  ): FieldPlane {
+    const worldScale = this.transform?.worldScale ?? 1;
+    const planeSize = worldScale * 2.5;
+
+    const geometry = new THREE.PlaneGeometry(planeSize, planeSize);
+    if (flat) {
+      geometry.rotateX(-Math.PI / 2);
+    }
+
+    // Prepare cell data arrays
     const cells = field.cells.slice(0, MAX_CELLS);
+    const cellCenters: THREE.Vector2[] = [];
+    const cellIntensities: number[] = [];
+    const cellRadii: number[] = [];
 
     for (const cell of cells) {
-      // Scale size by world scale
-      const worldScale = this.transform?.worldScale ?? 1;
-      const size = cell.falloffRadius * 2 * sizeMultiplier * worldScale;
-      const geometry = new THREE.PlaneGeometry(size, size);
-
-      // For flat sprites (ceiling/ground), rotate geometry to lie horizontal
-      if (flat) {
-        geometry.rotateX(-Math.PI / 2);
-      }
-
-      const material = new THREE.ShaderMaterial({
-        vertexShader: spriteVertexShader,
-        fragmentShader: spriteFragmentShader,
-        uniforms: {
-          baseColor: { value: color },
-          intensity: { value: cell.intensity },
-          opacity: { value: opacity },
-        },
-        transparent: true,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      });
-
-      const mesh = new THREE.Mesh(geometry, material);
-
-      // Transform from normalized to world space
       const worldPos = this.transform
         ? this.transform.toWorld(cell.center)
         : cell.center;
-
-      // For 3D sprites, clamp Y so the sprite stays within ceiling/ground bounds
-      let posY = worldPos.y;
-      if (!flat) {
-        const spriteRadius = size / 2;
-        const minY = this.worldGroundY + spriteRadius;
-        const maxY = this.worldCeilingY - spriteRadius;
-        posY = Math.max(minY, Math.min(maxY, posY));
-      }
-
-      mesh.position.set(worldPos.x, posY, worldPos.z);
-
-      // Billboard only for non-flat sprites (3D atmospheric fields)
-      if (!flat) {
-        mesh.onBeforeRender = (_renderer, _scene, camera) => {
-          mesh.quaternion.copy(camera.quaternion);
-        };
-      }
-
-      this.scene.add(mesh);
-      sprites.push({ mesh, material });
+      cellCenters.push(new THREE.Vector2(worldPos.x, worldPos.z));
+      cellIntensities.push(cell.intensity);
+      cellRadii.push(cell.falloffRadius * worldScale);
     }
 
-    return sprites;
+    // Pad arrays to MAX_CELLS
+    while (cellCenters.length < MAX_CELLS) {
+      cellCenters.push(new THREE.Vector2(0, 0));
+      cellIntensities.push(0);
+      cellRadii.push(0);
+    }
+
+    const material = new THREE.ShaderMaterial({
+      vertexShader: chargeFieldVertexShader,
+      fragmentShader: chargeFieldFragmentShader,
+      uniforms: {
+        cellCenters: { value: cellCenters },
+        cellIntensities: { value: cellIntensities },
+        cellRadii: { value: cellRadii },
+        cellCount: { value: cells.length },
+        baseColor: { value: color },
+        opacity: { value: opacity },
+        windDir: { value: this.windDir.clone() },
+        windSpeed: { value: this.windSpeed },
+      },
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+
+    // Position at the correct Y level
+    const worldCenter = this.transform
+      ? this.transform.toWorld({ x: 0, y: 0, z: 0 })
+      : { x: 0, y: 0, z: 0 };
+    mesh.position.set(worldCenter.x, yPosition, worldCenter.z);
+
+    this.scene.add(mesh);
+
+    return { mesh, material };
+  }
+
+  private updateFieldPlane(plane: FieldPlane | null, field: FieldType): void {
+    if (!plane) return;
+
+    const cells = field.cells.slice(0, MAX_CELLS);
+    const worldScale = this.transform?.worldScale ?? 1;
+
+    const cellCenters = plane.material.uniforms.cellCenters.value as THREE.Vector2[];
+    const cellIntensities = plane.material.uniforms.cellIntensities.value as number[];
+    const cellRadii = plane.material.uniforms.cellRadii.value as number[];
+
+    for (let i = 0; i < MAX_CELLS; i++) {
+      if (i < cells.length) {
+        const cell = cells[i];
+        const worldPos = this.transform
+          ? this.transform.toWorld(cell.center)
+          : cell.center;
+        cellCenters[i].set(worldPos.x, worldPos.z);
+        cellIntensities[i] = cell.intensity;
+        cellRadii[i] = cell.falloffRadius * worldScale;
+      } else {
+        cellCenters[i].set(0, 0);
+        cellIntensities[i] = 0;
+        cellRadii[i] = 0;
+      }
+    }
+
+    plane.material.uniforms.cellCount.value = cells.length;
+    plane.material.uniformsNeedUpdate = true;
+  }
+
+  private createVolumetricField(
+    field: FieldType,
+    color: THREE.Color,
+    opacity: number,
+    yMin: number,
+    yMax: number
+  ): VolumetricField {
+    const worldScale = this.transform?.worldScale ?? 1;
+    const planeSize = worldScale * 2.5;
+
+    // Create a box geometry that covers the volume bounds
+    const height = yMax - yMin;
+    const geometry = new THREE.BoxGeometry(planeSize, height, planeSize);
+
+    // Prepare cell data arrays (3D positions for volumetric)
+    const cells = field.cells.slice(0, MAX_CELLS);
+    const cellCenters: THREE.Vector3[] = [];
+    const cellIntensities: number[] = [];
+    const cellRadii: number[] = [];
+
+    const midY = (yMin + yMax) / 2;
+
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i];
+      const worldPos = this.transform
+        ? this.transform.toWorld(cell.center)
+        : cell.center;
+      // Deterministic Y distribution using golden ratio for even spread
+      const cellY = midY + ((i * 0.618) % 1 - 0.5) * height * 0.7;
+      cellCenters.push(new THREE.Vector3(worldPos.x, cellY, worldPos.z));
+      cellIntensities.push(cell.intensity);
+      cellRadii.push(cell.falloffRadius * worldScale);
+    }
+
+    // Pad arrays to MAX_CELLS
+    while (cellCenters.length < MAX_CELLS) {
+      cellCenters.push(new THREE.Vector3(0, 0, 0));
+      cellIntensities.push(0);
+      cellRadii.push(0);
+    }
+
+    const worldCenter = this.transform
+      ? this.transform.toWorld({ x: 0, y: 0, z: 0 })
+      : { x: 0, y: 0, z: 0 };
+
+    const boundMin = new THREE.Vector3(
+      worldCenter.x - planeSize / 2,
+      yMin,
+      worldCenter.z - planeSize / 2
+    );
+    const boundMax = new THREE.Vector3(
+      worldCenter.x + planeSize / 2,
+      yMax,
+      worldCenter.z + planeSize / 2
+    );
+
+    const material = new THREE.ShaderMaterial({
+      vertexShader: volumetricVertexShader,
+      fragmentShader: volumetricFragmentShader,
+      uniforms: {
+        cellCenters: { value: cellCenters },
+        cellIntensities: { value: cellIntensities },
+        cellRadii: { value: cellRadii },
+        cellCount: { value: cells.length },
+        baseColor: { value: color },
+        opacity: { value: opacity },
+        boundMin: { value: boundMin },
+        boundMax: { value: boundMax },
+        lightDir: { value: this.lightDir },
+        windDir: { value: this.windDir.clone() },
+        windSpeed: { value: this.windSpeed },
+        radiusScale: { value: 1.0 },
+      },
+      transparent: true,
+      side: THREE.BackSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(worldCenter.x, midY, worldCenter.z);
+
+    this.scene.add(mesh);
+
+    return { mesh, material };
+  }
+
+  private updateVolumetricField(volume: VolumetricField | null, field: FieldType): void {
+    if (!volume) return;
+
+    const cells = field.cells.slice(0, MAX_CELLS);
+    const worldScale = this.transform?.worldScale ?? 1;
+
+    const cellCenters = volume.material.uniforms.cellCenters.value as THREE.Vector3[];
+    const cellIntensities = volume.material.uniforms.cellIntensities.value as number[];
+    const cellRadii = volume.material.uniforms.cellRadii.value as number[];
+
+    const boundMin = volume.material.uniforms.boundMin.value as THREE.Vector3;
+    const boundMax = volume.material.uniforms.boundMax.value as THREE.Vector3;
+    const midY = (boundMin.y + boundMax.y) / 2;
+    const height = boundMax.y - boundMin.y;
+
+    for (let i = 0; i < MAX_CELLS; i++) {
+      if (i < cells.length) {
+        const cell = cells[i];
+        const worldPos = this.transform
+          ? this.transform.toWorld(cell.center)
+          : cell.center;
+        // Maintain consistent Y positions (using cell index for determinism)
+        const cellY = midY + ((i * 0.618) % 1 - 0.5) * height * 0.7;
+        cellCenters[i].set(worldPos.x, cellY, worldPos.z);
+        cellIntensities[i] = cell.intensity;
+        cellRadii[i] = cell.falloffRadius * worldScale;
+      } else {
+        cellCenters[i].set(0, 0, 0);
+        cellIntensities[i] = 0;
+        cellRadii[i] = 0;
+      }
+    }
+
+    volume.material.uniforms.cellCount.value = cells.length;
+    volume.material.uniformsNeedUpdate = true;
   }
 
   private updateVisibility(): void {
-    for (const sprite of this.ceilingSprites) {
-      sprite.mesh.visible = this.visible && this.ceilingVisible;
+    if (this.ceilingPlane) {
+      this.ceilingPlane.mesh.visible = this.visible && this.ceilingVisible;
     }
-    for (const sprite of this.groundSprites) {
-      sprite.mesh.visible = this.visible && this.groundVisible;
+    if (this.groundPlane) {
+      this.groundPlane.mesh.visible = this.visible && this.groundVisible;
     }
-    for (const sprite of this.atmosphericSprites) {
-      sprite.mesh.visible = this.visible && this.atmosphericVisible;
+    if (this.atmosphericVolume) {
+      this.atmosphericVolume.mesh.visible = this.visible && this.atmosphericVisible;
     }
-    for (const sprite of this.moistureSprites) {
-      sprite.mesh.visible = this.visible && this.moistureVisible;
+    if (this.moistureVolume) {
+      this.moistureVolume.mesh.visible = this.visible && this.moistureVisible;
     }
-    for (const sprite of this.ionizationSprites) {
-      sprite.mesh.visible = this.visible && this.ionizationVisible;
+    if (this.ionizationVolume) {
+      this.ionizationVolume.mesh.visible = this.visible && this.ionizationVisible;
     }
   }
 
@@ -376,22 +566,22 @@ export class ChargeFieldRenderer {
 
   setCeilingVisible(visible: boolean): void {
     this.ceilingVisible = visible;
-    for (const sprite of this.ceilingSprites) {
-      sprite.mesh.visible = this.visible && visible;
+    if (this.ceilingPlane) {
+      this.ceilingPlane.mesh.visible = this.visible && visible;
     }
   }
 
   setGroundVisible(visible: boolean): void {
     this.groundVisible = visible;
-    for (const sprite of this.groundSprites) {
-      sprite.mesh.visible = this.visible && visible;
+    if (this.groundPlane) {
+      this.groundPlane.mesh.visible = this.visible && visible;
     }
   }
 
   setAtmosphericVisible(visible: boolean): void {
     this.atmosphericVisible = visible;
-    for (const sprite of this.atmosphericSprites) {
-      sprite.mesh.visible = this.visible && visible;
+    if (this.atmosphericVolume) {
+      this.atmosphericVolume.mesh.visible = this.visible && visible;
     }
   }
 
@@ -401,8 +591,8 @@ export class ChargeFieldRenderer {
 
   setMoistureVisible(visible: boolean): void {
     this.moistureVisible = visible;
-    for (const sprite of this.moistureSprites) {
-      sprite.mesh.visible = this.visible && visible;
+    if (this.moistureVolume) {
+      this.moistureVolume.mesh.visible = this.visible && visible;
     }
   }
 
@@ -412,8 +602,8 @@ export class ChargeFieldRenderer {
 
   setIonizationVisible(visible: boolean): void {
     this.ionizationVisible = visible;
-    for (const sprite of this.ionizationSprites) {
-      sprite.mesh.visible = this.visible && visible;
+    if (this.ionizationVolume) {
+      this.ionizationVolume.mesh.visible = this.visible && visible;
     }
   }
 
@@ -421,59 +611,34 @@ export class ChargeFieldRenderer {
     return this.ionizationVisible;
   }
 
-  private updateSprites(
-    sprites: SpriteData[],
-    field: FieldType,
-    sizeMultiplier: number = 1,
-    flat: boolean = false
-  ): void {
-    const cells = field.cells.slice(0, MAX_CELLS);
-    const worldScale = this.transform?.worldScale ?? 1;
-
-    for (let i = 0; i < sprites.length && i < cells.length; i++) {
-      const sprite = sprites[i];
-      const cell = cells[i];
-
-      const worldPos = this.transform
-        ? this.transform.toWorld(cell.center)
-        : cell.center;
-
-      let posY = worldPos.y;
-      if (!flat) {
-        const size = cell.falloffRadius * 2 * sizeMultiplier * worldScale;
-        const spriteRadius = size / 2;
-        const minY = this.worldGroundY + spriteRadius;
-        const maxY = this.worldCeilingY - spriteRadius;
-        posY = Math.max(minY, Math.min(maxY, posY));
-      }
-
-      sprite.mesh.position.set(worldPos.x, posY, worldPos.z);
-      sprite.material.uniforms.intensity.value = cell.intensity;
-    }
+  private disposeFieldPlane(plane: FieldPlane | null): void {
+    if (!plane) return;
+    this.scene.remove(plane.mesh);
+    plane.mesh.geometry.dispose();
+    plane.material.dispose();
   }
 
-  private disposeSprites(sprites: SpriteData[]): void {
-    for (const sprite of sprites) {
-      this.scene.remove(sprite.mesh);
-      sprite.mesh.geometry.dispose();
-      sprite.material.dispose();
-    }
+  private disposeVolumetricField(volume: VolumetricField | null): void {
+    if (!volume) return;
+    this.scene.remove(volume.mesh);
+    volume.mesh.geometry.dispose();
+    volume.material.dispose();
   }
 
   dispose(): void {
-    this.disposeSprites(this.ceilingSprites);
-    this.ceilingSprites = [];
+    this.disposeFieldPlane(this.ceilingPlane);
+    this.ceilingPlane = null;
 
-    this.disposeSprites(this.groundSprites);
-    this.groundSprites = [];
+    this.disposeFieldPlane(this.groundPlane);
+    this.groundPlane = null;
 
-    this.disposeSprites(this.atmosphericSprites);
-    this.atmosphericSprites = [];
+    this.disposeVolumetricField(this.atmosphericVolume);
+    this.atmosphericVolume = null;
 
-    this.disposeSprites(this.moistureSprites);
-    this.moistureSprites = [];
+    this.disposeVolumetricField(this.moistureVolume);
+    this.moistureVolume = null;
 
-    this.disposeSprites(this.ionizationSprites);
-    this.ionizationSprites = [];
+    this.disposeVolumetricField(this.ionizationVolume);
+    this.ionizationVolume = null;
   }
 }
