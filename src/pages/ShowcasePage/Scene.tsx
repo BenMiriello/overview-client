@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import GroundPlane from './GroundPlane';
 import LightningController from './LightningController';
 import SkyDome from './SkyDome';
+import CloudLayer from './CloudLayer';
 
 interface SceneProps {
   detail?: number;
@@ -44,6 +45,7 @@ const Scene = ({ detail = 1.0, speed = 1.0, windSpeed = 25, showCharge = true, s
 
       {/* Rotated by 20 degrees around Y axis */}
       <group rotation={[0, Math.PI * 20 / 180, 0]}>
+        <CloudLayer />
         <GroundPlane />
         <LightningController detail={detail} speed={speed} windSpeed={windSpeed} showCharge={showCharge} showAtmospheric={showAtmospheric} showMoisture={showMoisture} showIonization={showIonization} />
       </group>

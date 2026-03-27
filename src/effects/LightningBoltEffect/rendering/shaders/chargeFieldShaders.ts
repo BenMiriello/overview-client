@@ -75,53 +75,23 @@ void main() {
   // Normalize field (max ~1.5 when cells overlap)
   float field = clamp(totalField / 1.2, 0.0, 1.0);
 
-  vec3 col = vec3(0.0);
-  float alpha = 0.0;
+  // Smooth organic glow: field strength directly drives color and alpha
+  // Outer regions dim, inner regions bright and saturated
+  float outerGlow = smoothstep(0.05, 0.3, field);
+  float innerGlow = smoothstep(0.3, 0.7, field);
+  float coreGlow = smoothstep(0.6, 1.0, field);
 
-  // Clean contour lines at 4 thresholds
-  float thresholds[4];
-  thresholds[0] = 0.2;
-  thresholds[1] = 0.4;
-  thresholds[2] = 0.6;
-  thresholds[3] = 0.8;
+  // Color: dim edges -> baseColor -> brighter core
+  vec3 col = baseColor * 0.5 * outerGlow;
+  col += baseColor * 0.6 * innerGlow;
+  col += mix(baseColor, vec3(1.0), 0.3) * coreGlow * 0.4;
 
-  // Anti-aliasing width based on screen-space derivatives
-  float aa = fwidth(field) * 1.5;
-  float lineWidth = 0.015;
-  float fadeWidth = 0.06;
+  // Subtle edge highlight at the boundary
+  float edgeHighlight = smoothstep(0.08, 0.15, field) * (1.0 - smoothstep(0.15, 0.25, field));
+  col += baseColor * 0.8 * edgeHighlight;
 
-  for (int i = 0; i < 4; i++) {
-    float t = thresholds[i];
-    float distFromLine = abs(field - t);
-
-    // Sharp anti-aliased contour line
-    float line = 1.0 - smoothstep(lineWidth - aa, lineWidth + aa, distFromLine);
-
-    // Inward fade: visible only where field > threshold, fades out further in
-    float inwardFade = smoothstep(t, t + fadeWidth, field) *
-                       (1.0 - smoothstep(t + fadeWidth, t + fadeWidth * 2.0, field));
-
-    // Combine line and fade
-    float contour = max(line, inwardFade * 0.4);
-
-    // Depth-based brightness: inner contours brighter
-    float depth = float(i) / 3.0;
-    float brightness = 0.3 + depth * 0.7;
-
-    // Color: outer contours dim, inner contours glow
-    vec3 contourColor = mix(baseColor * 0.5, baseColor * 1.3, depth);
-    contourColor = mix(contourColor, vec3(1.0), depth * 0.4);
-
-    col += contourColor * contour * brightness;
-    alpha += contour * brightness * 0.5;
-  }
-
-  // Subtle center glow for depth
-  float centerGlow = pow(field, 2.5) * 0.25;
-  col += baseColor * 1.1 * centerGlow;
-  alpha += centerGlow * 0.3;
-
-  alpha = clamp(alpha * opacity, 0.0, 0.85);
+  float alpha = outerGlow * 0.25 + innerGlow * 0.2 + coreGlow * 0.12;
+  alpha = clamp(alpha * opacity, 0.0, 0.45);
 
   if (alpha < 0.01) {
     discard;
