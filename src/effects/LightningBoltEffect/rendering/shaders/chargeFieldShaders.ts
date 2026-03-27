@@ -74,12 +74,12 @@ void main() {
     vec2 d = vWorldXZ - cellCenters[i];
 
     // Noise warp: distort distance for irregular organic boundaries
-    float noiseWarp = fbm(vWorldXZ * 2.5 + vec2(float(i) * 17.3, float(i) * 31.7));
+    float noiseWarp = fbm(vWorldXZ * 3.5 + vec2(float(i) * 17.3, float(i) * 31.7));
 
     float alongWind = dot(d, windDir);
     float perpWind = dot(d, perpDir);
     float dist = sqrt((alongWind / stretchFactor) * (alongWind / stretchFactor) + perpWind * perpWind);
-    dist *= (1.0 - 0.25 * noiseWarp);
+    dist *= (1.0 - 0.35 * noiseWarp);
 
     float r = cellRadii[i];
     if (dist < r) {
