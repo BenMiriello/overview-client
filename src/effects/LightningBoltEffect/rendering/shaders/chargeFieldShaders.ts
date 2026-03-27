@@ -75,23 +75,17 @@ void main() {
   // Normalize field (max ~1.5 when cells overlap)
   float field = clamp(totalField / 1.2, 0.0, 1.0);
 
-  // Smooth organic glow: field strength directly drives color and alpha
-  // Outer regions dim, inner regions bright and saturated
-  float outerGlow = smoothstep(0.05, 0.3, field);
-  float innerGlow = smoothstep(0.3, 0.7, field);
-  float coreGlow = smoothstep(0.6, 1.0, field);
+  // Soft atmospheric glow - very subtle, blends into environment
+  float outerGlow = smoothstep(0.08, 0.35, field);
+  float innerGlow = smoothstep(0.35, 0.7, field);
+  float coreGlow = smoothstep(0.65, 1.0, field);
 
-  // Color: dim edges -> baseColor -> brighter core
-  vec3 col = baseColor * 0.5 * outerGlow;
-  col += baseColor * 0.6 * innerGlow;
-  col += mix(baseColor, vec3(1.0), 0.3) * coreGlow * 0.4;
+  vec3 col = baseColor * 0.3 * outerGlow;
+  col += baseColor * 0.4 * innerGlow;
+  col += mix(baseColor, vec3(1.0), 0.2) * coreGlow * 0.3;
 
-  // Subtle edge highlight at the boundary
-  float edgeHighlight = smoothstep(0.08, 0.15, field) * (1.0 - smoothstep(0.15, 0.25, field));
-  col += baseColor * 0.8 * edgeHighlight;
-
-  float alpha = outerGlow * 0.25 + innerGlow * 0.2 + coreGlow * 0.12;
-  alpha = clamp(alpha * opacity, 0.0, 0.45);
+  float alpha = outerGlow * 0.15 + innerGlow * 0.12 + coreGlow * 0.08;
+  alpha = clamp(alpha * opacity, 0.0, 0.3);
 
   if (alpha < 0.01) {
     discard;

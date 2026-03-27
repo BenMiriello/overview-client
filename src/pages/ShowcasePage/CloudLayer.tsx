@@ -92,11 +92,12 @@ const CloudLayer = () => {
           float underside = smoothstep(0.35, 0.5, density) * 0.05;
           cloudColor -= vec3(underside);
 
-          // Lightning illumination from below
+          // Lightning illumination from below - strong bloom through cloud
           float flashDist = distance(uv, flashPosition);
-          float flashGlow = (1.0 - smoothstep(0.0, 0.4, flashDist)) * flashIntensity;
-          vec3 flashColor = vec3(0.7, 0.75, 0.9);
-          cloudColor += flashColor * flashGlow * 0.6;
+          float flashGlow = (1.0 - smoothstep(0.0, 0.5, flashDist)) * flashIntensity;
+          float flashScatter = (1.0 - smoothstep(0.0, 0.8, flashDist)) * flashIntensity * 0.3;
+          vec3 flashColor = vec3(0.8, 0.82, 1.0);
+          cloudColor += flashColor * (flashGlow * 1.2 + flashScatter);
 
           float alpha = cloudMask * 0.85;
 
