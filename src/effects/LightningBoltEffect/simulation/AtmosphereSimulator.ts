@@ -119,8 +119,46 @@ export class AtmosphereSimulator {
     // 3. Update ground charge to follow ceiling
     this.updateGroundCharge();
 
-    // 4. Check for breakdown
+    // 4. Recover 3D field intensities (fields replenish over time)
+    this.recover3DFields(dt);
+
+    // 5. Check for breakdown
     return this.checkBreakdown();
+  }
+
+  private recover3DFields(dt: number): void {
+    const recoveryRate = 0.08;
+    const ionizationDecayRate = 0.15;
+
+    // Atmospheric charge recovers toward a baseline
+    for (let i = 0; i < this.atmosphericCharge.cells.length; i++) {
+      const cell = this.atmosphericCharge.cells[i];
+      const baseline = 0.4;
+      if (cell.intensity < baseline) {
+        const newI = cell.intensity + recoveryRate * (baseline - cell.intensity) * dt;
+        this.atmosphericCharge.setCellIntensity(i, Math.min(baseline, newI));
+      }
+    }
+
+    // Moisture recovers toward baseline
+    for (let i = 0; i < this.moisture.cells.length; i++) {
+      const cell = this.moisture.cells[i];
+      const baseline = 0.5;
+      if (cell.intensity < baseline) {
+        const newI = cell.intensity + recoveryRate * (baseline - cell.intensity) * dt;
+        this.moisture.setCellIntensity(i, Math.min(baseline, newI));
+      }
+    }
+
+    // Ionization decays after being boosted by strikes
+    for (let i = 0; i < this.ionizationSeeds.cells.length; i++) {
+      const cell = this.ionizationSeeds.cells[i];
+      const baseline = 0.3;
+      if (cell.intensity > baseline) {
+        const newI = cell.intensity - ionizationDecayRate * (cell.intensity - baseline) * dt;
+        this.ionizationSeeds.setCellIntensity(i, Math.max(baseline, newI));
+      }
+    }
   }
 
   /**
@@ -145,13 +183,35 @@ export class AtmosphereSimulator {
       }
     }
 
-    // Also reduce 3D atmospheric charge near the strike path
+    // Reduce 3D atmospheric charge near the strike path
     for (let i = 0; i < this.atmosphericCharge.cells.length; i++) {
       const cell = this.atmosphericCharge.cells[i];
       const dist = this.distance3D(cell.center, strikePosition);
       if (dist < dissipationRadius) {
         const factor = 0.3 + 0.5 * (dist / dissipationRadius);
         this.atmosphericCharge.setCellIntensity(i, cell.intensity * factor);
+      }
+    }
+
+    // Moisture responds to strikes -- evaporation/disruption near channel
+    for (let i = 0; i < this.moisture.cells.length; i++) {
+      const cell = this.moisture.cells[i];
+      const dist = this.distance3D(cell.center, strikePosition);
+      if (dist < dissipationRadius * 0.7) {
+        const factor = 0.5 + 0.4 * (dist / (dissipationRadius * 0.7));
+        this.moisture.setCellIntensity(i, cell.intensity * factor);
+      }
+    }
+
+    // Ionization INCREASES along the strike channel
+    for (let i = 0; i < this.ionizationSeeds.cells.length; i++) {
+      const cell = this.ionizationSeeds.cells[i];
+      const dist = this.distance3D(cell.center, strikePosition);
+      if (dist < dissipationRadius * 0.5) {
+        const boost = (1.0 - dist / (dissipationRadius * 0.5)) * 0.6;
+        this.ionizationSeeds.setCellIntensity(
+          i, Math.min(1.0, cell.intensity + boost)
+        );
       }
     }
   }

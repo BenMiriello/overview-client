@@ -171,40 +171,44 @@ export class ChargeFieldRenderer {
       true
     );
 
-    // Create volumetric atmospheric field (occupies upper-middle region)
+    // Volumetric atmospheric charge - fills most of the atmosphere
+    // Concentrated in upper half but extends through the full column
     if (atmosphere.atmosphericCharge) {
-      const upperBound = this.worldCeilingY - (this.worldCeilingY - this.worldGroundY) * 0.1;
-      const lowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
+      const height = this.worldCeilingY - this.worldGroundY;
+      const upperBound = this.worldCeilingY - height * 0.05;
+      const lowerBound = this.worldGroundY + height * 0.15;
       this.atmosphericVolume = this.createVolumetricField(
         atmosphere.atmosphericCharge,
         this.options.atmosphericColor,
-        this.options.opacity * 1.5,
+        this.options.opacity * 3.0,
         lowerBound,
         upperBound
       );
     }
 
-    // Volumetric moisture field - mid-lower region
+    // Moisture - pervades mid and lower atmosphere, overlaps with atmospheric
     if (atmosphere.moisture) {
-      const upperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.5;
-      const lowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.2;
+      const height = this.worldCeilingY - this.worldGroundY;
+      const upperBound = this.worldCeilingY - height * 0.2;
+      const lowerBound = this.worldGroundY + height * 0.05;
       this.moistureVolume = this.createVolumetricField(
         atmosphere.moisture,
         this.options.moistureColor,
-        this.options.opacity * 1.8,
+        this.options.opacity * 3.5,
         lowerBound,
         upperBound
       );
     }
 
-    // Volumetric ionization field - lower region
+    // Ionization - spans the full column (ionization happens everywhere)
     if (atmosphere.ionizationSeeds) {
-      const upperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
-      const lowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.1;
+      const height = this.worldCeilingY - this.worldGroundY;
+      const upperBound = this.worldCeilingY - height * 0.1;
+      const lowerBound = this.worldGroundY + height * 0.1;
       this.ionizationVolume = this.createVolumetricField(
         atmosphere.ionizationSeeds,
         this.options.ionizationColor,
-        this.options.opacity * 1.5,
+        this.options.opacity * 3.0,
         lowerBound,
         upperBound
       );
@@ -236,37 +240,32 @@ export class ChargeFieldRenderer {
       true
     );
 
-    // Volumetric atmospheric field
-    const atmUpperBound = this.worldCeilingY - (this.worldCeilingY - this.worldGroundY) * 0.1;
-    const atmLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
+    // Volumetric atmospheric field - fills most of the column
+    const height = this.worldCeilingY - this.worldGroundY;
     this.atmosphericVolume = this.createVolumetricField(
       simulator.atmosphericCharge,
       this.options.atmosphericColor,
-      this.options.opacity * 1.5,
-      atmLowerBound,
-      atmUpperBound
+      this.options.opacity * 3.0,
+      this.worldGroundY + height * 0.15,
+      this.worldCeilingY - height * 0.05
     );
 
-    // Volumetric moisture field
-    const moistUpperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.5;
-    const moistLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.2;
+    // Volumetric moisture field - mid to lower, overlapping atmospheric
     this.moistureVolume = this.createVolumetricField(
       simulator.moisture,
       this.options.moistureColor,
-      this.options.opacity * 1.8,
-      moistLowerBound,
-      moistUpperBound
+      this.options.opacity * 3.5,
+      this.worldGroundY + height * 0.05,
+      this.worldCeilingY - height * 0.2
     );
 
-    // Volumetric ionization field
-    const ionUpperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
-    const ionLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.1;
+    // Volumetric ionization field - spans full column
     this.ionizationVolume = this.createVolumetricField(
       simulator.ionizationSeeds,
       this.options.ionizationColor,
-      this.options.opacity * 1.5,
-      ionLowerBound,
-      ionUpperBound
+      this.options.opacity * 3.0,
+      this.worldGroundY + height * 0.1,
+      this.worldCeilingY - height * 0.1
     );
 
     this.updateVisibility();
@@ -315,37 +314,30 @@ export class ChargeFieldRenderer {
       true
     );
 
-    // Volumetric atmospheric field
-    const atmUpperBound = this.worldCeilingY - (this.worldCeilingY - this.worldGroundY) * 0.1;
-    const atmLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
+    // Volumetric fields - overlapping vertical regions
+    const height = this.worldCeilingY - this.worldGroundY;
     this.atmosphericVolume = this.createVolumetricField(
       snapshot.atmosphericCharge,
       this.options.atmosphericColor,
-      this.options.opacity * 1.5,
-      atmLowerBound,
-      atmUpperBound
+      this.options.opacity * 3.0,
+      this.worldGroundY + height * 0.15,
+      this.worldCeilingY - height * 0.05
     );
 
-    // Volumetric moisture field
-    const moistUpperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.5;
-    const moistLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.2;
     this.moistureVolume = this.createVolumetricField(
       snapshot.moisture,
       this.options.moistureColor,
-      this.options.opacity * 1.8,
-      moistLowerBound,
-      moistUpperBound
+      this.options.opacity * 3.5,
+      this.worldGroundY + height * 0.05,
+      this.worldCeilingY - height * 0.2
     );
 
-    // Volumetric ionization field
-    const ionUpperBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.4;
-    const ionLowerBound = this.worldGroundY + (this.worldCeilingY - this.worldGroundY) * 0.1;
     this.ionizationVolume = this.createVolumetricField(
       snapshot.ionizationSeeds,
       this.options.ionizationColor,
-      this.options.opacity * 1.5,
-      ionLowerBound,
-      ionUpperBound
+      this.options.opacity * 3.0,
+      this.worldGroundY + height * 0.1,
+      this.worldCeilingY - height * 0.1
     );
 
     this.updateVisibility();

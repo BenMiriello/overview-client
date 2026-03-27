@@ -215,7 +215,8 @@ void main() {
   vec3 accumulatedColor = vec3(0.0);
   float accumulatedAlpha = 0.0;
 
-  float jitter = hash3D(vWorldPosition * 100.0) * stepSize;
+  // Small jitter to reduce banding, but low amplitude to avoid graininess
+  float jitter = hash3D(vWorldPosition * 10.0) * stepSize * 0.3;
 
   vec3 boundCenter = (boundMin + boundMax) * 0.5;
   vec3 boundExtent = (boundMax - boundMin) * 0.5;
@@ -227,13 +228,13 @@ void main() {
     vec3 p = cameraPosition + rayDir * t;
     float field = sampleField(p);
 
-    if (field > 0.08) {
+    if (field > 0.05) {
       // Soft edge fade near bounding box boundaries
       vec3 edgeDist = abs(p - boundCenter) / boundExtent;
-      float edgeFade = 1.0 - smoothstep(0.6, 1.0, max(max(edgeDist.x, edgeDist.y), edgeDist.z));
+      float edgeFade = 1.0 - smoothstep(0.5, 0.95, max(max(edgeDist.x, edgeDist.y), edgeDist.z));
 
-      // Density scales with step size to be step-count-independent
-      float density = field * edgeFade * 0.15 * stepSize;
+      // Density proportional to field strength and step size
+      float density = field * edgeFade * 0.5 * stepSize;
       vec3 stepColor = baseColor * (0.5 + field * 0.5);
 
       accumulatedColor += stepColor * density * (1.0 - accumulatedAlpha);
