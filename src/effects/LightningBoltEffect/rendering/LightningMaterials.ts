@@ -9,7 +9,7 @@ export class LightningMaterials {
   constructor() {
     this.baseMaterial = new LineMaterial({
       color: 0xffffff,
-      linewidth: 4,
+      linewidth: 3,
       transparent: true,
       opacity: 1.0,
       depthWrite: false,
@@ -54,9 +54,8 @@ export class LightningMaterials {
   }
 
   private getLineWidth(depth: number, baseWidth: number): number {
-    // Line width falls off more slowly - branches remain visible
-    const minWidth = baseWidth * 0.3;
-    const decay = Math.exp(-depth * 0.5);
+    const minWidth = baseWidth * 0.25;
+    const decay = Math.exp(-depth * 0.6);
     return minWidth + (baseWidth - minWidth) * decay;
   }
 

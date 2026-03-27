@@ -76,7 +76,7 @@ export class BoltRenderer {
 
   render(state: AnimationState): void {
     const BRIGHTNESS_THRESHOLD = 0.05;
-    const MAX_BRIGHTNESS = 0.50;
+    const MAX_BRIGHTNESS = 0.55;
 
     // Compute continuing current color based on phase
     const continuingColor = this.getContinuingCurrentColor(state);
@@ -117,7 +117,7 @@ export class BoltRenderer {
 
     if (this.glowGroup) {
       const { colors, segmentIds, geometry: geom } = this.glowGroup;
-      const GLOW_MAX = 0.20;
+      const GLOW_MAX = 0.25;
 
       // Glow also shifts color during continuing current
       const glowColor = this.getGlowColor(continuingColor, state);
