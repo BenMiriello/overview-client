@@ -261,8 +261,8 @@ const LightningController = ({
       speed: speedRef.current,
       detail: detailRef.current,
       baseWindSpeed: windSpeedRef.current * KTS_TO_SIM,
-      chargeAccumulationRate: 0.18,
-      breakdownThreshold: 0.80,
+      chargeAccumulationRate: 0.30,
+      breakdownThreshold: 0.68,
     };
     playerRef.current.start(initialConfig);
 
