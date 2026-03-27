@@ -45,8 +45,7 @@ const SkyDome = () => {
 
           // Storm sky gradient
           vec3 zenith = vec3(0.02, 0.02, 0.06);
-          vec3 midSky = vec3(0.04, 0.04, 0.10);
-          vec3 horizon = vec3(0.06, 0.06, 0.10);
+          vec3 horizon = vec3(0.07, 0.07, 0.11);
           vec3 belowHorizon = vec3(0.03, 0.03, 0.05);
 
           vec3 skyColor;
@@ -55,6 +54,11 @@ const SkyDome = () => {
           } else {
             skyColor = mix(belowHorizon, horizon, elevation * 2.0);
           }
+
+          // Subtle horizon glow band
+          float horizonDist = abs(elevation - 0.5);
+          float horizonGlow = exp(-horizonDist * horizonDist * 80.0) * 0.04;
+          skyColor += vec3(horizonGlow * 0.8, horizonGlow * 0.7, horizonGlow);
 
           // Subtle cloud-like noise variation
           vec2 skyUV = dir.xz / max(abs(dir.y) + 0.1, 0.1) * 0.3;
