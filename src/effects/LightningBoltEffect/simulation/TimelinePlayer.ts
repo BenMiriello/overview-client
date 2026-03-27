@@ -244,9 +244,15 @@ export class TimelinePlayer {
         break;
 
       case 'strike':
-        console.log(`[TimelinePlayer] Strike received: simTime=${msg.event.simTimeMs.toFixed(0)}, playhead=${this.buffer.playheadMs.toFixed(0)}, bufferEnd=${this.buffer.bufferEndMs.toFixed(0)}, computeTime=${msg.computeTimeMs.toFixed(0)}ms`);
+        // If geometry arrived late (playhead already passed strike time),
+        // reschedule the strike slightly ahead of the playhead so it renders now
+        if (msg.event.simTimeMs <= this.visualTimeMs) {
+          console.log(`[TimelinePlayer] Strike late (sim=${msg.event.simTimeMs.toFixed(0)}, playhead=${this.visualTimeMs.toFixed(0)}), rescheduling`);
+          msg.event.simTimeMs = this.visualTimeMs + 50;
+        } else {
+          console.log(`[TimelinePlayer] Strike received: simTime=${msg.event.simTimeMs.toFixed(0)}, playhead=${this.visualTimeMs.toFixed(0)}, computeTime=${msg.computeTimeMs.toFixed(0)}ms`);
+        }
         this.buffer.addEvent(msg.event);
-        // Record actual strike compute time for adaptive buffering
         this.leadTimeManager.recordStrikeCompute(msg.computeTimeMs);
         break;
 
