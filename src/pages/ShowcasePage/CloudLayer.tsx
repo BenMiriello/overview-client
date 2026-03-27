@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 
 const CLOUD_Y = 1.5;
-const CLOUD_SIZE = 12;
+const CLOUD_SIZE = 18;
 
 const CloudLayer = () => {
   const materialRef = useRef<THREE.ShaderMaterial | null>(null);
@@ -78,7 +78,7 @@ const CloudLayer = () => {
 
           // Edge fade
           float edgeDist = length((uv - 0.5) * 2.0);
-          float edgeFade = 1.0 - smoothstep(0.5, 0.95, edgeDist);
+          float edgeFade = 1.0 - smoothstep(0.3, 0.8, edgeDist);
           cloudMask *= edgeFade;
 
           // Base cloud color: visible dark gray against navy sky
