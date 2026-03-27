@@ -42,7 +42,6 @@ const Scene = ({ detail = 1.0, speed = 1.0, windSpeed = 25, showCharge = true, s
     <>
       <SkyDome />
       <ambientLight intensity={0.15} />
-      <fogExp2 attach="fog" color="#0a0a18" density={0.06} />
 
       {/* Rotated by 20 degrees around Y axis */}
       <group rotation={[0, Math.PI * 20 / 180, 0]}>

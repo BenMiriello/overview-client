@@ -163,7 +163,7 @@ const LightningController = ({
         groundAltitude: 0,
         resolution: detailRef.current,
         seed: event.seed,
-        enableScreenFlash: true,
+        enableScreenFlash: false,
         duration: 1.5,
         fadeTime: 0.3,
         detailLevel: DetailLevel.SHOWCASE,
