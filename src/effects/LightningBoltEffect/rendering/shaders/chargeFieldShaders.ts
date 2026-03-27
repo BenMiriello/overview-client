@@ -38,14 +38,34 @@ uniform float windSpeed;
 varying vec2 vWorldXZ;
 varying vec2 vUv;
 
-void main() {
-  // Compute perpendicular to wind direction
-  vec2 perpDir = vec2(-windDir.y, windDir.x);
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
 
-  // Wind stretch factor (1.0 to 2.5 based on wind speed)
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
+             mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+}
+
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.5));
+  for (int i = 0; i < 3; i++) {
+    v += a * noise(p);
+    p = rot * p * 2.0 + vec2(100.0);
+    a *= 0.5;
+  }
+  return v;
+}
+
+void main() {
+  vec2 perpDir = vec2(-windDir.y, windDir.x);
   float stretchFactor = 1.0 + windSpeed * 1.5;
 
-  // Sum field contributions from all cells (metaball technique)
   float totalField = 0.0;
 
   for (int i = 0; i < MAX_CELLS; i++) {
@@ -53,15 +73,17 @@ void main() {
 
     vec2 d = vWorldXZ - cellCenters[i];
 
-    // Wind deformation: elliptical stretch in wind direction
+    // Noise warp: distort distance for irregular organic boundaries
+    float noiseWarp = fbm(vWorldXZ * 2.5 + vec2(float(i) * 17.3, float(i) * 31.7));
+
     float alongWind = dot(d, windDir);
     float perpWind = dot(d, perpDir);
     float dist = sqrt((alongWind / stretchFactor) * (alongWind / stretchFactor) + perpWind * perpWind);
+    dist *= (1.0 - 0.25 * noiseWarp);
 
     float r = cellRadii[i];
     if (dist < r) {
       float t = dist / r;
-      // Smooth falloff for metaball merging
       float falloff = 1.0 - t * t;
       totalField += cellIntensities[i] * falloff;
     }

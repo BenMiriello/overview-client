@@ -18,8 +18,8 @@ export class FlashEffect {
 
     this.light = new THREE.PointLight(
       config.color,
-      config.intensity * 100,
-      50,
+      config.intensity * 15,
+      20,
       2
     );
 
@@ -36,7 +36,7 @@ export class FlashEffect {
     }
 
     const flashCurve = Math.pow(1 - progress, 3);
-    this.light.intensity = this.config.intensity * 100 * flashCurve;
+    this.light.intensity = this.config.intensity * 15 * flashCurve;
 
     return true;
   }
@@ -85,7 +85,7 @@ export class ScreenFlashEffect {
       return false;
     }
 
-    const opacity = Math.pow(1 - progress, 2);
+    const opacity = Math.pow(1 - progress, 2) * 0.15;
     this.overlay.style.opacity = opacity.toString();
 
     return true;
