@@ -133,7 +133,7 @@ export const volumetricFragmentShader = `
 precision highp float;
 
 #define MAX_CELLS 16
-#define MAX_STEPS 24
+#define MAX_STEPS 8
 
 uniform vec3 cellCenters[MAX_CELLS];
 uniform float cellIntensities[MAX_CELLS];
@@ -215,47 +215,32 @@ void main() {
   float accumulatedAlpha = 0.0;
 
   float jitter = hash3D(vWorldPosition * 100.0) * stepSize;
-  float prevField = 0.0;
+
+  vec3 boundCenter = (boundMin + boundMax) * 0.5;
+  vec3 boundExtent = (boundMax - boundMin) * 0.5;
 
   for (int step = 0; step < MAX_STEPS; step++) {
     float t = tMin + jitter + float(step) * stepSize;
-    if (t > tMax || accumulatedAlpha > 0.95) break;
+    if (t > tMax || accumulatedAlpha > 0.5) break;
 
     vec3 p = cameraPosition + rayDir * t;
     float field = sampleField(p);
 
-    if (field > 0.05) {
-      // Determine layer (0-3) based on field value
-      int layer = 0;
-      if (field > 0.6) layer = 3;
-      else if (field > 0.4) layer = 2;
-      else if (field > 0.2) layer = 1;
+    if (field > 0.08) {
+      // Soft edge fade near bounding box boundaries
+      vec3 edgeDist = abs(p - boundCenter) / boundExtent;
+      float edgeFade = 1.0 - smoothstep(0.6, 1.0, max(max(edgeDist.x, edgeDist.y), edgeDist.z));
 
-      // Previous layer for boundary detection
-      int prevLayer = 0;
-      if (prevField > 0.6) prevLayer = 3;
-      else if (prevField > 0.4) prevLayer = 2;
-      else if (prevField > 0.2) prevLayer = 1;
+      // Simple density-based accumulation
+      float density = field * edgeFade * 0.04;
+      vec3 stepColor = baseColor * (0.5 + field * 0.5);
 
-      // Layer-based brightness (inner = brighter)
-      float layerBrightness = 0.6 + float(layer) * 0.15;
-      vec3 layerColor = baseColor * layerBrightness;
-      layerColor = mix(layerColor, vec3(1.0), float(layer) * 0.1);
-
-      // Boundary emphasis when crossing layers
-      float boundaryBoost = (layer != prevLayer && step > 0) ? 2.5 : 1.0;
-
-      // Alpha per step
-      float alpha = 0.12 * boundaryBoost * stepSize * 4.0;
-
-      accumulatedColor += layerColor * alpha * (1.0 - accumulatedAlpha);
-      accumulatedAlpha += alpha * (1.0 - accumulatedAlpha);
+      accumulatedColor += stepColor * density * (1.0 - accumulatedAlpha);
+      accumulatedAlpha += density * (1.0 - accumulatedAlpha);
     }
-
-    prevField = field;
   }
 
-  if (accumulatedAlpha < 0.01) {
+  if (accumulatedAlpha < 0.005) {
     discard;
   }
 

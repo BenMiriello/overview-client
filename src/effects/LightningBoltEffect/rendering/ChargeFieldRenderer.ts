@@ -99,7 +99,7 @@ export class ChargeFieldRenderer {
 
   constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
     this.scene = scene;
-    this.resolutionScale = options.volumetricResolution ?? 0.5;
+    this.resolutionScale = options.volumetricResolution ?? 0.35;
     this.options = {
       planeSize: options.planeSize ?? 1.0,
       ceilingColor: options.ceilingColor ?? new THREE.Color(0.7, 0.85, 1.0),
@@ -108,7 +108,7 @@ export class ChargeFieldRenderer {
       moistureColor: options.moistureColor ?? new THREE.Color(0.6, 0.8, 0.95),
       ionizationColor: options.ionizationColor ?? new THREE.Color(1.0, 1.0, 0.9),
       opacity: options.opacity ?? 0.2,
-      volumetricResolution: options.volumetricResolution ?? 0.5,
+      volumetricResolution: options.volumetricResolution ?? 0.35,
     };
 
     // Create separate scene for volumetrics when using low-res rendering
@@ -177,7 +177,7 @@ export class ChargeFieldRenderer {
       this.atmosphericVolume = this.createVolumetricField(
         atmosphere.atmosphericCharge,
         this.options.atmosphericColor,
-        this.options.opacity * 0.9,
+        this.options.opacity * 0.4,
         lowerBound,
         upperBound
       );
@@ -190,7 +190,7 @@ export class ChargeFieldRenderer {
       this.moistureVolume = this.createVolumetricField(
         atmosphere.moisture,
         this.options.moistureColor,
-        this.options.opacity * 1.2,
+        this.options.opacity * 0.5,
         lowerBound,
         upperBound
       );
@@ -203,7 +203,7 @@ export class ChargeFieldRenderer {
       this.ionizationVolume = this.createVolumetricField(
         atmosphere.ionizationSeeds,
         this.options.ionizationColor,
-        this.options.opacity * 1.0,
+        this.options.opacity * 0.4,
         lowerBound,
         upperBound
       );
@@ -241,7 +241,7 @@ export class ChargeFieldRenderer {
     this.atmosphericVolume = this.createVolumetricField(
       simulator.atmosphericCharge,
       this.options.atmosphericColor,
-      this.options.opacity * 0.9,
+      this.options.opacity * 0.4,
       atmLowerBound,
       atmUpperBound
     );
@@ -252,7 +252,7 @@ export class ChargeFieldRenderer {
     this.moistureVolume = this.createVolumetricField(
       simulator.moisture,
       this.options.moistureColor,
-      this.options.opacity * 1.2,
+      this.options.opacity * 0.5,
       moistLowerBound,
       moistUpperBound
     );
@@ -263,7 +263,7 @@ export class ChargeFieldRenderer {
     this.ionizationVolume = this.createVolumetricField(
       simulator.ionizationSeeds,
       this.options.ionizationColor,
-      this.options.opacity * 1.0,
+      this.options.opacity * 0.4,
       ionLowerBound,
       ionUpperBound
     );
@@ -320,7 +320,7 @@ export class ChargeFieldRenderer {
     this.atmosphericVolume = this.createVolumetricField(
       snapshot.atmosphericCharge,
       this.options.atmosphericColor,
-      this.options.opacity * 0.9,
+      this.options.opacity * 0.4,
       atmLowerBound,
       atmUpperBound
     );
@@ -331,7 +331,7 @@ export class ChargeFieldRenderer {
     this.moistureVolume = this.createVolumetricField(
       snapshot.moisture,
       this.options.moistureColor,
-      this.options.opacity * 1.2,
+      this.options.opacity * 0.5,
       moistLowerBound,
       moistUpperBound
     );
@@ -342,7 +342,7 @@ export class ChargeFieldRenderer {
     this.ionizationVolume = this.createVolumetricField(
       snapshot.ionizationSeeds,
       this.options.ionizationColor,
-      this.options.opacity * 1.0,
+      this.options.opacity * 0.4,
       ionLowerBound,
       ionUpperBound
     );
