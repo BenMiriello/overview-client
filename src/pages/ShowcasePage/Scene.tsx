@@ -3,6 +3,7 @@ import { OrbitControls } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import GroundPlane from './GroundPlane';
 import LightningController from './LightningController';
+import SkyDome from './SkyDome';
 
 interface SceneProps {
   detail?: number;
@@ -38,6 +39,7 @@ const Scene = ({ detail = 1.0, speed = 1.0, windSpeed = 25, showCharge = true, s
 
   return (
     <>
+      <SkyDome />
       <ambientLight intensity={0.15} />
 
       {/* Rotated by 20 degrees around Y axis */}

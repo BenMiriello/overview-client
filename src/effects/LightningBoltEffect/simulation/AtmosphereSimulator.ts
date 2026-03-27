@@ -43,7 +43,7 @@ export const DEFAULT_SIMULATOR_CONFIG: AtmosphereSimulatorConfig = {
   ceilingY: 0.5,
   groundY: -0.5,
 
-  initialChargeRange: [0.2, 0.5],
+  initialChargeRange: [0.05, 0.5],
 
   atmosphericConfig: DEFAULT_ATMOSPHERIC_CONFIG,
 };
@@ -68,6 +68,9 @@ export class AtmosphereSimulator {
 
   // Track which ceiling cells correspond to which ground cells
   private ceilingToGroundMap: Map<number, number> = new Map();
+
+  // Per-cell charge rate multipliers (0.5 to 1.5) to spread out breakdown timing
+  private ceilingChargeRateMultipliers: number[] = [];
 
   constructor(seed: number, config: Partial<AtmosphereSimulatorConfig> = {}) {
     this.config = { ...DEFAULT_SIMULATOR_CONFIG, ...config };
@@ -305,6 +308,9 @@ export class AtmosphereSimulator {
     this.ceilingCharge.setCellIntensity(index, newIntensity);
     this.ceilingCharge.setCellRadius(index, newRadius);
 
+    // Assign new rate multiplier for varied breakdown timing
+    this.ceilingChargeRateMultipliers[index] = 0.5 + this.rng.next() * 1.0;
+
     // Also update the correlated ground cell
     const groundIndex = this.ceilingToGroundMap.get(index);
     if (groundIndex !== undefined) {
@@ -336,8 +342,11 @@ export class AtmosphereSimulator {
 
     for (let i = 0; i < this.ceilingCharge.cells.length; i++) {
       const cell = this.ceilingCharge.cells[i];
+      // Per-cell rate variation (0.5x to 1.5x) spreads out breakdown timing
+      const rateMultiplier = this.ceilingChargeRateMultipliers[i] ?? 1.0;
+      const cellRate = chargeAccumulationRate * rateMultiplier;
       // Asymptotic growth: dI/dt = rate * (1 - I)
-      const newIntensity = cell.intensity + chargeAccumulationRate * (1 - cell.intensity) * dt;
+      const newIntensity = cell.intensity + cellRate * (1 - cell.intensity) * dt;
       this.ceilingCharge.setCellIntensity(i, Math.min(1.0, newIntensity));
     }
   }
@@ -408,6 +417,7 @@ export class AtmosphereSimulator {
   private createInitialCeilingCharge(): VoronoiField {
     const { ceilingY, boundsRadius, initialChargeRange, atmosphericConfig } = this.config;
     const cells: VoronoiCell[] = [];
+    this.ceilingChargeRateMultipliers = [];
 
     for (let i = 0; i < atmosphericConfig.ceilingChargeCellCount; i++) {
       const angle = this.rng.next() * Math.PI * 2;
@@ -425,6 +435,9 @@ export class AtmosphereSimulator {
           this.rng.next() *
             (atmosphericConfig.ceilingChargeRadiusRange[1] - atmosphericConfig.ceilingChargeRadiusRange[0]),
       });
+
+      // Per-cell charge rate: 0.5x to 1.5x creates ~16s spread in breakdown timing
+      this.ceilingChargeRateMultipliers.push(0.5 + this.rng.next() * 1.0);
     }
 
     return new VoronoiField(cells, { is2D: true, fixedY: ceilingY });

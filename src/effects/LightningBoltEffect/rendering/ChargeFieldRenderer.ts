@@ -22,6 +22,8 @@ export interface ChargeFieldRenderOptions {
   moistureColor?: THREE.Color;
   ionizationColor?: THREE.Color;
   opacity?: number;
+  /** Resolution scale for volumetric rendering (0.5 = half res, 1.0 = full) */
+  volumetricResolution?: number;
 }
 
 interface FieldPlane {
@@ -34,6 +36,22 @@ interface VolumetricField {
   material: THREE.ShaderMaterial;
 }
 
+// Simple composite shader for low-res volumetric upscaling
+const compositeVertexShader = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const compositeFragmentShader = `
+uniform sampler2D tDiffuse;
+varying vec2 vUv;
+void main() {
+  gl_FragColor = texture2D(tDiffuse, vUv);
+}
+`;
 
 export class ChargeFieldRenderer {
   private scene: THREE.Scene;
@@ -68,8 +86,20 @@ export class ChargeFieldRenderer {
   private windDir: THREE.Vector2 = new THREE.Vector2(1, 0);
   private windSpeed: number = 0;
 
+  // Low-res volumetric rendering
+  private volumetricScene: THREE.Scene | null = null;
+  private renderTarget: THREE.WebGLRenderTarget | null = null;
+  private compositeScene: THREE.Scene | null = null;
+  private compositeCamera: THREE.OrthographicCamera | null = null;
+  private compositeQuad: THREE.Mesh | null = null;
+  private compositeMaterial: THREE.ShaderMaterial | null = null;
+  private resolutionScale: number = 1.0;
+  private lastWidth: number = 0;
+  private lastHeight: number = 0;
+
   constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
     this.scene = scene;
+    this.resolutionScale = options.volumetricResolution ?? 0.5;
     this.options = {
       planeSize: options.planeSize ?? 1.0,
       ceilingColor: options.ceilingColor ?? new THREE.Color(0.7, 0.85, 1.0),
@@ -78,7 +108,13 @@ export class ChargeFieldRenderer {
       moistureColor: options.moistureColor ?? new THREE.Color(0.6, 0.8, 0.95),
       ionizationColor: options.ionizationColor ?? new THREE.Color(1.0, 1.0, 0.9),
       opacity: options.opacity ?? 0.2,
+      volumetricResolution: options.volumetricResolution ?? 0.5,
     };
+
+    // Create separate scene for volumetrics when using low-res rendering
+    if (this.resolutionScale < 1.0) {
+      this.volumetricScene = new THREE.Scene();
+    }
   }
 
   setWindParameters(direction: THREE.Vector2, speed: number): void {
@@ -495,7 +531,9 @@ export class ChargeFieldRenderer {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(worldCenter.x, midY, worldCenter.z);
 
-    this.scene.add(mesh);
+    // Add to volumetric scene if using low-res rendering, otherwise main scene
+    const targetScene = this.volumetricScene ?? this.scene;
+    targetScene.add(mesh);
 
     return { mesh, material };
   }
@@ -620,9 +658,114 @@ export class ChargeFieldRenderer {
 
   private disposeVolumetricField(volume: VolumetricField | null): void {
     if (!volume) return;
-    this.scene.remove(volume.mesh);
+    const targetScene = this.volumetricScene ?? this.scene;
+    targetScene.remove(volume.mesh);
     volume.mesh.geometry.dispose();
     volume.material.dispose();
+  }
+
+  /**
+   * Render volumetric fields to low-res target and composite.
+   * Call this each frame when using volumetricResolution < 1.0.
+   */
+  renderVolumetrics(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void {
+    if (!this.volumetricScene || this.resolutionScale >= 1.0) return;
+
+    // Check if any volumetric is visible
+    const hasVisibleVolumetric =
+      (this.visible && this.atmosphericVisible && this.atmosphericVolume) ||
+      (this.visible && this.moistureVisible && this.moistureVolume) ||
+      (this.visible && this.ionizationVisible && this.ionizationVolume);
+
+    if (!hasVisibleVolumetric) {
+      return;
+    }
+
+    // Get current size and update render target if needed
+    const size = renderer.getSize(new THREE.Vector2());
+    const width = Math.floor(size.x * this.resolutionScale);
+    const height = Math.floor(size.y * this.resolutionScale);
+
+    if (width !== this.lastWidth || height !== this.lastHeight) {
+      this.initRenderTarget(width, height);
+      this.lastWidth = width;
+      this.lastHeight = height;
+    }
+
+    if (!this.renderTarget || !this.compositeScene || !this.compositeCamera) return;
+
+    // Update volumetric visibility in the separate scene
+    if (this.atmosphericVolume) {
+      this.atmosphericVolume.mesh.visible = this.visible && this.atmosphericVisible;
+    }
+    if (this.moistureVolume) {
+      this.moistureVolume.mesh.visible = this.visible && this.moistureVisible;
+    }
+    if (this.ionizationVolume) {
+      this.ionizationVolume.mesh.visible = this.visible && this.ionizationVisible;
+    }
+
+    // Render volumetric scene to low-res target
+    const currentRenderTarget = renderer.getRenderTarget();
+    const currentAutoClear = renderer.autoClear;
+
+    renderer.setRenderTarget(this.renderTarget);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear();
+    renderer.render(this.volumetricScene, camera);
+
+    // Composite to main framebuffer using orthographic camera
+    renderer.setRenderTarget(currentRenderTarget);
+    renderer.autoClear = false;
+    renderer.render(this.compositeScene!, this.compositeCamera!);
+    renderer.autoClear = currentAutoClear;
+  }
+
+  private initRenderTarget(width: number, height: number): void {
+    // Dispose old render target
+    if (this.renderTarget) {
+      this.renderTarget.dispose();
+    }
+
+    // Create new render target
+    this.renderTarget = new THREE.WebGLRenderTarget(width, height, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.HalfFloatType,
+    });
+
+    // Create composite scene and camera on first init
+    if (!this.compositeScene) {
+      this.compositeScene = new THREE.Scene();
+      this.compositeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      this.compositeMaterial = new THREE.ShaderMaterial({
+        vertexShader: compositeVertexShader,
+        fragmentShader: compositeFragmentShader,
+        uniforms: {
+          tDiffuse: { value: this.renderTarget.texture },
+        },
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      });
+
+      const geometry = new THREE.PlaneGeometry(2, 2);
+      this.compositeQuad = new THREE.Mesh(geometry, this.compositeMaterial);
+      this.compositeScene.add(this.compositeQuad);
+    } else {
+      // Update texture reference
+      this.compositeMaterial!.uniforms.tDiffuse.value = this.renderTarget.texture;
+    }
+  }
+
+  /**
+   * Check if low-res volumetric rendering is enabled.
+   */
+  isLowResEnabled(): boolean {
+    return this.resolutionScale < 1.0 && this.volumetricScene !== null;
   }
 
   dispose(): void {
@@ -640,5 +783,25 @@ export class ChargeFieldRenderer {
 
     this.disposeVolumetricField(this.ionizationVolume);
     this.ionizationVolume = null;
+
+    // Dispose low-res rendering resources
+    if (this.renderTarget) {
+      this.renderTarget.dispose();
+      this.renderTarget = null;
+    }
+
+    if (this.compositeQuad) {
+      this.compositeQuad.geometry.dispose();
+      this.compositeQuad = null;
+    }
+
+    if (this.compositeMaterial) {
+      this.compositeMaterial.dispose();
+      this.compositeMaterial = null;
+    }
+
+    this.compositeScene = null;
+    this.compositeCamera = null;
+    this.volumetricScene = null;
   }
 }

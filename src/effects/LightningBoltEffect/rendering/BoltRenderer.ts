@@ -2,9 +2,14 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { BoltGeometry, Vec3 } from '../simulation';
-import { AnimationState } from '../animation';
+import { AnimationState, AnimationPhase } from '../animation';
 import { LightningMaterials } from './LightningMaterials';
 import { CoordinateTransform } from '../CoordinateTransform';
+
+// Continuing current colors: transition from white -> orange -> red during decay
+const WHITE = new THREE.Color(1.0, 1.0, 1.0);
+const ORANGE = new THREE.Color(1.0, 0.6, 0.2);
+const DIM_RED = new THREE.Color(0.8, 0.3, 0.1);
 
 interface DepthGroup {
   segmentIds: number[];
@@ -71,21 +76,30 @@ export class BoltRenderer {
 
   render(state: AnimationState): void {
     const BRIGHTNESS_THRESHOLD = 0.05;
+    const MAX_BRIGHTNESS = 0.85;
+
+    // Compute continuing current color based on phase
+    const continuingColor = this.getContinuingCurrentColor(state);
 
     for (const [bucket, group] of this.depthGroups) {
       const { colors, segmentIds, geometry: geom } = group;
       const mat = this.materials.getMaterialForDepth(bucket);
       const baseColor = new THREE.Color(mat.color);
 
+      // Blend base color with continuing current color during decay phases
+      const blendedColor = this.blendWithContinuingCurrent(baseColor, continuingColor, state);
+
       for (let i = 0; i < segmentIds.length; i++) {
         const segId = segmentIds[i];
         const rawBrightness = state.segmentBrightness.get(segId) ?? 0;
         const visible = state.visibleSegments.has(segId);
-        const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD) ? rawBrightness : 0;
+        const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD)
+          ? Math.min(rawBrightness, MAX_BRIGHTNESS)
+          : 0;
 
-        const r = baseColor.r * alpha;
-        const g = baseColor.g * alpha;
-        const b = baseColor.b * alpha;
+        const r = blendedColor.r * alpha;
+        const g = blendedColor.g * alpha;
+        const b = blendedColor.b * alpha;
 
         const ci = i * 6;
         colors[ci] = r;
@@ -103,26 +117,78 @@ export class BoltRenderer {
 
     if (this.glowGroup) {
       const { colors, segmentIds, geometry: geom } = this.glowGroup;
+      const GLOW_MAX = 0.35;
+
+      // Glow also shifts color during continuing current
+      const glowColor = this.getGlowColor(continuingColor, state);
 
       for (let i = 0; i < segmentIds.length; i++) {
         const segId = segmentIds[i];
         const rawBrightness = state.segmentBrightness.get(segId) ?? 0;
         const visible = state.visibleSegments.has(segId);
-        const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD) ? rawBrightness * 0.4 : 0;
+        const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD)
+          ? Math.min(rawBrightness * 0.4, GLOW_MAX)
+          : 0;
 
         const ci = i * 6;
-        colors[ci] = 0.67 * alpha;
-        colors[ci + 1] = 0.8 * alpha;
-        colors[ci + 2] = 1.0 * alpha;
-        colors[ci + 3] = 0.67 * alpha;
-        colors[ci + 4] = 0.8 * alpha;
-        colors[ci + 5] = 1.0 * alpha;
+        colors[ci] = glowColor.r * alpha;
+        colors[ci + 1] = glowColor.g * alpha;
+        colors[ci + 2] = glowColor.b * alpha;
+        colors[ci + 3] = glowColor.r * alpha;
+        colors[ci + 4] = glowColor.g * alpha;
+        colors[ci + 5] = glowColor.b * alpha;
       }
 
       geom.setColors(colors);
       geom.getAttribute('instanceColorStart').needsUpdate = true;
       geom.getAttribute('instanceColorEnd').needsUpdate = true;
     }
+  }
+
+  private getContinuingCurrentColor(state: AnimationState): THREE.Color {
+    // Only apply continuing current color during stroke hold and fading
+    if (state.phase === AnimationPhase.STROKE_HOLD) {
+      // During hold: transition white -> orange
+      const t = state.phaseProgress;
+      return WHITE.clone().lerp(ORANGE, t * 0.7);
+    } else if (state.phase === AnimationPhase.FADING) {
+      // During fade: transition orange -> dim red
+      const t = state.phaseProgress;
+      return ORANGE.clone().lerp(DIM_RED, t);
+    }
+    return WHITE;
+  }
+
+  private blendWithContinuingCurrent(
+    baseColor: THREE.Color,
+    continuingColor: THREE.Color,
+    state: AnimationState
+  ): THREE.Color {
+    // Only blend during post-stroke phases
+    if (state.phase === AnimationPhase.STROKE_HOLD ||
+        state.phase === AnimationPhase.FADING) {
+      // Stronger blend as we progress through decay
+      const blendAmount = state.phase === AnimationPhase.FADING
+        ? 0.5 + state.phaseProgress * 0.5
+        : state.phaseProgress * 0.4;
+      return baseColor.clone().lerp(continuingColor, blendAmount);
+    }
+    return baseColor;
+  }
+
+  private getGlowColor(continuingColor: THREE.Color, state: AnimationState): THREE.Color {
+    // Default glow is blue-white
+    const defaultGlow = new THREE.Color(0.67, 0.8, 1.0);
+
+    if (state.phase === AnimationPhase.STROKE_HOLD ||
+        state.phase === AnimationPhase.FADING) {
+      // Shift glow toward orange during continuing current
+      const t = state.phase === AnimationPhase.FADING
+        ? 0.3 + state.phaseProgress * 0.4
+        : state.phaseProgress * 0.3;
+      return defaultGlow.lerp(continuingColor, t);
+    }
+    return defaultGlow;
   }
 
   updateResolution(width: number, height: number): void {

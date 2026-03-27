@@ -25,7 +25,8 @@ const ShowcasePage = () => {
     <div className="showcase-page">
       <Canvas
         camera={{ position: [0, 0, 6], fov: 50 }}
-        style={{ background: '#000' }}
+        gl={{ preserveDrawingBuffer: true, antialias: true }}
+        style={{ background: '#050510' }}
       >
         <Scene
           detail={settings.detail}

@@ -55,7 +55,7 @@ const LightningController = ({
   showMoisture = true,
   showIonization = true,
 }: LightningControllerProps) => {
-  const { scene, size } = useThree();
+  const { scene, size, gl, camera } = useThree();
 
   // Timeline-based simulation (runs in worker, plays back pre-computed data)
   const playerRef = useRef<TimelinePlayer | null>(null);
@@ -300,6 +300,11 @@ const LightningController = ({
     // Update timeline player (fetches snapshots/events, calls callbacks)
     if (playerRef.current) {
       playerRef.current.update();
+    }
+
+    // Render low-res volumetrics
+    if (atmosphereRendererRef.current?.isLowResEnabled()) {
+      atmosphereRendererRef.current.renderVolumetrics(gl, camera);
     }
 
     // Update active strike and dispatch glow updates

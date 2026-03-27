@@ -4,20 +4,19 @@
  * This worker:
  * 1. Runs AtmosphereSimulator continuously
  * 2. Detects breakdown events
- * 3. Computes bolt geometry SYNCHRONOUSLY (atmosphere + strikes are causally linked)
- * 4. Applies post-strike effects (ionization, charge dissipation)
+ * 3. Applies post-strike effects IMMEDIATELY (doesn't need geometry)
+ * 4. Sends atmosphere snapshot to BoltSimulationWorker for ASYNC geometry computation
  * 5. Streams snapshots and events to main thread via postMessage
  *
  * Main thread NEVER runs simulation logic - only plays back pre-computed data.
  *
- * ARCHITECTURE: Everything runs in sequence because:
- * - Strike path depends on current atmosphere state
- * - Strike affects atmosphere (ionization, charge dissipation)
- * - These are deterministic and must stay in sync
+ * ARCHITECTURE: Geometry computation is decoupled because:
+ * - onStrikeComplete() only needs position + radius, NOT geometry
+ * - Geometry is a leaf node - it's only used for rendering, never feeds back
+ * - This allows simulation to continue while 30-second bolt computations run
  */
 
 import { AtmosphereSimulator } from './AtmosphereSimulator';
-import { simulateBolt } from './BoltSimulator';
 import { createConfig } from './config';
 import { VoronoiField } from './VoronoiField';
 import {
@@ -28,7 +27,8 @@ import {
   StrikeEvent,
   DEFAULT_TIMELINE_CONFIG,
 } from './SimulationTimeline';
-import { DetailLevel, Vec3, VoronoiFieldData } from './types';
+import { DetailLevel, Vec3, VoronoiFieldData, AtmosphericModelData, SimulationConfig } from './types';
+import { WorkerInput, WorkerOutput } from './BoltSimulationWorker';
 
 let simulator: AtmosphereSimulator | null = null;
 let config: TimelineConfig = { ...DEFAULT_TIMELINE_CONFIG };
@@ -38,17 +38,20 @@ let lastSnapshotTimeMs = 0;
 let strikeCooldownUntilMs = 0;
 let visualTimeMs = 0;  // Tracked from main thread for pacing
 
-const STRIKE_COOLDOWN_MS = 500;
+// Bolt geometry worker for async computation
+let boltWorker: Worker | null = null;
+const pendingStrikes = new Map<string, { simTimeMs: number; position: Vec3 }>();
+let strikeIdCounter = 0;
+
+const STRIKE_COOLDOWN_MS = 2000;
 const SNAPSHOT_INTERVAL_MS = 33;  // ~30fps snapshots for smooth animation
 const SIM_STEP_MS = 16;
 const MAX_LEAD_MS = 45000;  // Don't compute more than 45 seconds ahead
 
-// Adaptive charge rate thresholds
-// When buffer is low, we slow charge accumulation so strikes happen less frequently
-// This gives time to build buffer before the next strike blocks the worker
-const MIN_LEAD_FOR_NORMAL_CHARGE_MS = 15000;  // Below this, start slowing charge
-const CRITICAL_LEAD_MS = 5000;  // Below this, charge very slowly
-const BASE_CHARGE_RATE = 0.15;  // Normal charge accumulation rate
+// Adaptive charge rate thresholds - lower now that geometry doesn't block
+const MIN_LEAD_FOR_NORMAL_CHARGE_MS = 10000;
+const CRITICAL_LEAD_MS = 3000;
+const BASE_CHARGE_RATE = 0.15;
 
 function fieldToData(field: VoronoiField): VoronoiFieldData {
   const fieldConfig = field.getConfig();
@@ -79,65 +82,104 @@ function createSnapshot(): AtmosphereSnapshot {
 }
 
 /**
- * Compute strike synchronously and return the event.
- * This blocks the simulation loop during computation - that's intentional
- * because strikes and atmosphere are causally linked.
+ * Serialize atmosphere state for sending to bolt worker.
  */
-function computeStrike(breakdownPosition: Vec3): StrikeEvent | null {
-  if (!simulator) return null;
+function serializeAtmosphere(): AtmosphericModelData & { startingPoints: Vec3[]; ceilingY: number; groundY: number } {
+  if (!simulator) throw new Error('Simulator not initialized');
+  const model = simulator.getAtmosphericModel();
+  return {
+    ceilingCharge: fieldToData(model.ceilingCharge),
+    groundCharge: fieldToData(model.groundCharge),
+    atmosphericCharge: fieldToData(model.atmosphericCharge),
+    moisture: fieldToData(model.moisture),
+    ionizationSeeds: fieldToData(model.ionizationSeeds),
+    startingPoints: model.startingPoints,
+    ceilingY: model.ceilingY,
+    groundY: model.groundY,
+  };
+}
 
-  const t0 = performance.now();
-  const seed = Math.random() * 0xffffffff;
-
-  // Get current atmosphere model
-  const atmosphere = simulator.getAtmosphericModel();
-
-  // Create config based on detail level
+/**
+ * Get simulation config based on detail level.
+ */
+function getSimConfig(): SimulationConfig {
   const baseConfig = createConfig(DetailLevel.SHOWCASE);
-  const simConfig = createConfig(DetailLevel.SHOWCASE, {
+  return createConfig(DetailLevel.SHOWCASE, {
     stepLength: baseConfig.stepLength / config.detail,
     maxSteps: Math.round(baseConfig.maxSteps * config.detail),
-    candidateCount: Math.round(
-      baseConfig.candidateCount * Math.sqrt(config.detail)
-    ),
+    candidateCount: Math.round(baseConfig.candidateCount * Math.sqrt(config.detail)),
     maxSegments: Math.round(baseConfig.maxSegments * config.detail),
   });
+}
 
-  // Run bolt simulation
-  const result = simulateBolt(
-    {
-      start: breakdownPosition,
-      end: { x: breakdownPosition.x * 0.3, y: -0.5, z: breakdownPosition.z * 0.3 },
-      seed,
-      config: simConfig,
-    },
-    atmosphere
-  );
+/**
+ * Start async geometry computation for a breakdown.
+ * This captures atmosphere state BEFORE applying effects, then applies effects immediately.
+ * Geometry computation runs in parallel without blocking the simulation loop.
+ */
+function handleBreakdown(breakdownPosition: Vec3): void {
+  if (!simulator || !boltWorker) return;
 
-  const computeTimeMs = performance.now() - t0;
-  console.log(`[Worker] Strike computed in ${computeTimeMs.toFixed(0)}ms`);
+  const id = `strike-${strikeIdCounter++}`;
+  const seed = Math.random() * 0xffffffff;
+
+  // 1. Capture atmosphere snapshot BEFORE applying effects
+  const atmosphereData = serializeAtmosphere();
+
+  // 2. Apply post-strike effects IMMEDIATELY (doesn't need geometry)
+  simulator.onStrikeComplete(breakdownPosition, 0.2);
+
+  // 3. Track pending strike
+  pendingStrikes.set(id, { simTimeMs, position: breakdownPosition });
+
+  // 4. Send to geometry worker (ASYNC)
+  const workerInput: WorkerInput = {
+    id,
+    start: breakdownPosition,
+    end: { x: breakdownPosition.x * 0.3, y: -0.5, z: breakdownPosition.z * 0.3 },
+    seed,
+    config: getSimConfig(),
+    atmosphereData,
+  };
+  boltWorker.postMessage(workerInput);
+
+  console.log(`[Worker] Breakdown at simTime=${simTimeMs.toFixed(0)}ms, sent to bolt worker (id=${id})`);
+}
+
+/**
+ * Handle completed geometry from bolt worker.
+ */
+function handleBoltResult(event: MessageEvent<WorkerOutput>): void {
+  const { id, result, elapsedMs } = event.data;
+  const pending = pendingStrikes.get(id);
+  if (!pending) {
+    console.warn(`[Worker] Received result for unknown strike ${id}`);
+    return;
+  }
+  pendingStrikes.delete(id);
+
+  console.log(`[Worker] Strike geometry computed in ${elapsedMs.toFixed(0)}ms (id=${id})`);
 
   // Extract ionization path from main channel
   const ionizationPath: Vec3[] = result.geometry.segments
     .filter((s) => s.isMainChannel)
     .map((s) => ({ ...s.end }));
 
-  return {
-    simTimeMs,
-    breakdownPosition,
+  const strike: StrikeEvent = {
+    simTimeMs: pending.simTimeMs,
+    breakdownPosition: pending.position,
     geometry: result.geometry,
-    seed,
+    seed: 0,
     ionizationPath,
     dissipationRegion: {
-      center: breakdownPosition,
+      center: pending.position,
       radius: 0.2,
     },
   };
-}
 
-function applyPostStrikeEffects(strike: StrikeEvent): void {
-  if (!simulator) return;
-  simulator.onStrikeComplete(strike.breakdownPosition, strike.dissipationRegion.radius);
+  // Send to main thread
+  const msg: WorkerOutMessage = { type: 'strike', event: strike, computeTimeMs: elapsedMs };
+  self.postMessage(msg);
 }
 
 function simulationStep(): void {
@@ -179,20 +221,11 @@ function simulationStep(): void {
     lastSnapshotTimeMs = simTimeMs;
   }
 
-  // Handle breakdown -> compute strike SYNCHRONOUSLY
-  // This blocks but maintains causal consistency
+  // Handle breakdown -> send to bolt worker ASYNCHRONOUSLY
+  // Post-strike effects are applied immediately; geometry is computed in parallel
   if (breakdownEvent && simTimeMs >= strikeCooldownUntilMs) {
-    const strike = computeStrike(breakdownEvent.position);
-    if (strike) {
-      // Send strike event to main thread
-      const msg: WorkerOutMessage = { type: 'strike', event: strike };
-      self.postMessage(msg);
-
-      // Apply post-strike effects (ionization, charge dissipation)
-      applyPostStrikeEffects(strike);
-
-      strikeCooldownUntilMs = simTimeMs + STRIKE_COOLDOWN_MS;
-    }
+    handleBreakdown(breakdownEvent.position);
+    strikeCooldownUntilMs = simTimeMs + STRIKE_COOLDOWN_MS;
   }
 
   // Schedule next step - run at max speed until MAX_LEAD reached
@@ -207,6 +240,16 @@ function startSimulation(seed: number, newConfig: TimelineConfig): void {
   simTimeMs = 0;
   lastSnapshotTimeMs = 0;
   strikeCooldownUntilMs = 0;
+  strikeIdCounter = 0;
+  pendingStrikes.clear();
+
+  // Spawn bolt geometry worker
+  if (boltWorker) {
+    boltWorker.terminate();
+  }
+  boltWorker = new Worker(new URL('./BoltSimulationWorker.ts', import.meta.url), { type: 'module' });
+  boltWorker.onmessage = handleBoltResult;
+  boltWorker.onerror = (e) => console.error('[Worker] Bolt worker error:', e);
 
   simulator = new AtmosphereSimulator(seed, {
     chargeAccumulationRate: config.chargeAccumulationRate,
@@ -245,6 +288,11 @@ function updateParameters(
 function stopSimulation(): void {
   isRunning = false;
   simulator = null;
+  if (boltWorker) {
+    boltWorker.terminate();
+    boltWorker = null;
+  }
+  pendingStrikes.clear();
 }
 
 // Message handler

@@ -74,6 +74,6 @@ export type WorkerInMessage =
  */
 export type WorkerOutMessage =
   | { type: 'snapshot'; snapshot: AtmosphereSnapshot }
-  | { type: 'strike'; event: StrikeEvent }
+  | { type: 'strike'; event: StrikeEvent; computeTimeMs: number }
   | { type: 'status'; simTimeMs: number; computeTimeMs: number }
   | { type: 'error'; message: string };

@@ -38,19 +38,35 @@ const GroundPlane = () => {
 
         varying vec2 vUv;
 
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+
+        float noise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
+                     mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+        }
+
         void main() {
-          // Distance from glow center (in UV space)
+          float edgeDist = length((vUv - 0.5) * 2.0);
+          float edgeFade = 1.0 - smoothstep(0.3, 0.85, edgeDist);
+
+          // Subtle terrain noise for ground texture
+          float n = noise(vUv * 8.0) * 0.4 + noise(vUv * 16.0) * 0.2;
+          vec3 groundColor = vec3(0.03, 0.03, 0.04) + vec3(n * 0.02);
+          float groundAlpha = edgeFade * 0.6;
+
+          // Flash glow on top of base ground
           float dist = distance(vUv, flashPosition);
-          float glow = 1.0 - smoothstep(0.0, 0.15, dist);
+          float glow = 1.0 - smoothstep(0.0, 0.2, dist);
+          vec3 glowColor = vec3(0.85, 0.9, 1.0);
+          float glowStrength = flashIntensity * glow * 0.9;
 
-          vec3 glowColor = vec3(0.9, 0.95, 1.0);
-          float glowStrength = flashIntensity * glow * 0.8;
-
-          // Fade out at plane edges
-          float edgeFade = 1.0 - smoothstep(0.4, 0.95, length((vUv - 0.5) * 2.0));
-
-          vec3 finalColor = glowColor * glowStrength * edgeFade;
-          float alpha = glowStrength * edgeFade;
+          vec3 finalColor = groundColor + glowColor * glowStrength * edgeFade;
+          float alpha = max(groundAlpha, glowStrength * edgeFade);
 
           gl_FragColor = vec4(finalColor, alpha);
         }

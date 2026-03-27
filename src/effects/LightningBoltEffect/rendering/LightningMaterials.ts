@@ -54,19 +54,24 @@ export class LightningMaterials {
   }
 
   private getLineWidth(depth: number, baseWidth: number): number {
-    const minWidth = baseWidth * 0.25;
-    const decay = Math.exp(-depth * 0.7);
+    // Line width falls off more slowly - branches remain visible
+    const minWidth = baseWidth * 0.3;
+    const decay = Math.exp(-depth * 0.5);
     return minWidth + (baseWidth - minWidth) * decay;
   }
 
   private getColor(depth: number): number {
+    // Main channel: pure white-blue (brightness 1.0)
+    // Deeper branches: slightly more blue, slightly dimmer
     const baseBrightness = 1.0;
-    const minBrightness = 0.75;
-    const decay = Math.exp(-depth * 0.5);
+    const minBrightness = 0.7;
+    const decay = Math.exp(-depth * 0.35);
     const brightness = minBrightness + (baseBrightness - minBrightness) * decay;
 
-    const r = Math.floor(255 * brightness);
-    const g = Math.floor(255 * brightness);
+    // Keep blue at full, reduce r/g for deeper branches (more blue tint)
+    const rgFactor = 0.9 + 0.1 * decay;
+    const r = Math.floor(255 * brightness * rgFactor);
+    const g = Math.floor(255 * brightness * rgFactor);
     const b = 255;
     return (r << 16) | (g << 8) | b;
   }
