@@ -8,7 +8,7 @@ import Scene from './Scene';
 const ShowcasePage = () => {
   const [settings, setSettings] = useState<Settings>({
     speed: 1.0,
-    detail: 2.0,
+    detail: 1.0,
     windSpeed: 25,
     showCharge: true,
     showAtmospheric: false,

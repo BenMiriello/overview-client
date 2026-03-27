@@ -32,7 +32,7 @@ interface SettingsPanelProps {
 
 const DEFAULT_SETTINGS: Settings = {
   speed: 1.0,  // Strike animation speed: 0.01x to 1.0x (log scale)
-  detail: 2.0,
+  detail: 1.0,
   windSpeed: 12,
   showCharge: true,
   showAtmospheric: false,
