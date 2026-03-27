@@ -20,9 +20,9 @@ export class LightningMaterials {
 
     this.glowMaterial = new LineMaterial({
       color: 0xaaccff,
-      linewidth: 5,
+      linewidth: 3,
       transparent: true,
-      opacity: 0.2,
+      opacity: 0.12,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       vertexColors: true,
