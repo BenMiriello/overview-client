@@ -134,7 +134,7 @@ export const volumetricFragmentShader = `
 precision highp float;
 
 #define MAX_CELLS 8
-#define MAX_STEPS 4
+#define MAX_STEPS 6
 
 uniform vec3 cellCenters[MAX_CELLS];
 uniform float cellIntensities[MAX_CELLS];
@@ -232,8 +232,8 @@ void main() {
       vec3 edgeDist = abs(p - boundCenter) / boundExtent;
       float edgeFade = 1.0 - smoothstep(0.6, 1.0, max(max(edgeDist.x, edgeDist.y), edgeDist.z));
 
-      // Simple density-based accumulation
-      float density = field * edgeFade * 0.04;
+      // Density scales with step size to be step-count-independent
+      float density = field * edgeFade * 0.15 * stepSize;
       vec3 stepColor = baseColor * (0.5 + field * 0.5);
 
       accumulatedColor += stepColor * density * (1.0 - accumulatedAlpha);
