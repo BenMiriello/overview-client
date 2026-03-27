@@ -516,7 +516,7 @@ export class ChargeFieldRenderer {
       transparent: true,
       side: THREE.BackSide,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
     });
 
     const mesh = new THREE.Mesh(geometry, material);
