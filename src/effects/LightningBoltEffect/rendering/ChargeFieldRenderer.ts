@@ -10,6 +10,7 @@ import {
   volumetricVertexShader,
   volumetricFragmentShader,
   MAX_CELLS,
+  MAX_VOLUMETRIC_CELLS,
 } from './shaders/chargeFieldShaders';
 
 type FieldType = VoronoiField | VoronoiFieldData;
@@ -99,7 +100,7 @@ export class ChargeFieldRenderer {
 
   constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
     this.scene = scene;
-    this.resolutionScale = options.volumetricResolution ?? 0.35;
+    this.resolutionScale = options.volumetricResolution ?? 0.25;
     this.options = {
       planeSize: options.planeSize ?? 1.0,
       ceilingColor: options.ceilingColor ?? new THREE.Color(0.7, 0.85, 1.0),
@@ -108,7 +109,7 @@ export class ChargeFieldRenderer {
       moistureColor: options.moistureColor ?? new THREE.Color(0.6, 0.8, 0.95),
       ionizationColor: options.ionizationColor ?? new THREE.Color(1.0, 1.0, 0.9),
       opacity: options.opacity ?? 0.2,
-      volumetricResolution: options.volumetricResolution ?? 0.35,
+      volumetricResolution: options.volumetricResolution ?? 0.25,
     };
 
     // Create separate scene for volumetrics when using low-res rendering
@@ -464,7 +465,7 @@ export class ChargeFieldRenderer {
     const geometry = new THREE.BoxGeometry(planeSize, height, planeSize);
 
     // Prepare cell data arrays (3D positions for volumetric)
-    const cells = field.cells.slice(0, MAX_CELLS);
+    const cells = field.cells.slice(0, MAX_VOLUMETRIC_CELLS);
     const cellCenters: THREE.Vector3[] = [];
     const cellIntensities: number[] = [];
     const cellRadii: number[] = [];
@@ -476,15 +477,13 @@ export class ChargeFieldRenderer {
       const worldPos = this.transform
         ? this.transform.toWorld(cell.center)
         : cell.center;
-      // Deterministic Y distribution using golden ratio for even spread
       const cellY = midY + ((i * 0.618) % 1 - 0.5) * height * 0.7;
       cellCenters.push(new THREE.Vector3(worldPos.x, cellY, worldPos.z));
       cellIntensities.push(cell.intensity);
       cellRadii.push(cell.falloffRadius * worldScale);
     }
 
-    // Pad arrays to MAX_CELLS
-    while (cellCenters.length < MAX_CELLS) {
+    while (cellCenters.length < MAX_VOLUMETRIC_CELLS) {
       cellCenters.push(new THREE.Vector3(0, 0, 0));
       cellIntensities.push(0);
       cellRadii.push(0);
@@ -541,7 +540,7 @@ export class ChargeFieldRenderer {
   private updateVolumetricField(volume: VolumetricField | null, field: FieldType): void {
     if (!volume) return;
 
-    const cells = field.cells.slice(0, MAX_CELLS);
+    const cells = field.cells.slice(0, MAX_VOLUMETRIC_CELLS);
     const worldScale = this.transform?.worldScale ?? 1;
 
     const cellCenters = volume.material.uniforms.cellCenters.value as THREE.Vector3[];
@@ -553,7 +552,7 @@ export class ChargeFieldRenderer {
     const midY = (boundMin.y + boundMax.y) / 2;
     const height = boundMax.y - boundMin.y;
 
-    for (let i = 0; i < MAX_CELLS; i++) {
+    for (let i = 0; i < MAX_VOLUMETRIC_CELLS; i++) {
       if (i < cells.length) {
         const cell = cells[i];
         const worldPos = this.transform

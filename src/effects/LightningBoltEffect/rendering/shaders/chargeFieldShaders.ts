@@ -7,6 +7,7 @@
  */
 
 export const MAX_CELLS = 16;
+export const MAX_VOLUMETRIC_CELLS = 8;
 
 // Vertex shader for flat planes (ceiling/ground) - outputs world XZ for metaball computation
 export const chargeFieldVertexShader = `
@@ -132,8 +133,8 @@ void main() {
 export const volumetricFragmentShader = `
 precision highp float;
 
-#define MAX_CELLS 16
-#define MAX_STEPS 8
+#define MAX_CELLS 8
+#define MAX_STEPS 4
 
 uniform vec3 cellCenters[MAX_CELLS];
 uniform float cellIntensities[MAX_CELLS];
