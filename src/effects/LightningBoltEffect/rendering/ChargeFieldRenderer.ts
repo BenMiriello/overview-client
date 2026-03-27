@@ -103,7 +103,7 @@ export class ChargeFieldRenderer {
     this.options = {
       planeSize: options.planeSize ?? 1.0,
       ceilingColor: options.ceilingColor ?? new THREE.Color(0.7, 0.85, 1.0),
-      groundColor: options.groundColor ?? new THREE.Color(0.9, 0.7, 0.5),
+      groundColor: options.groundColor ?? new THREE.Color(0.7, 0.55, 0.4),
       atmosphericColor: options.atmosphericColor ?? new THREE.Color(0.85, 0.95, 1.0),
       moistureColor: options.moistureColor ?? new THREE.Color(0.6, 0.8, 0.95),
       ionizationColor: options.ionizationColor ?? new THREE.Color(1.0, 1.0, 0.9),

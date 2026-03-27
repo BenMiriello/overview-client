@@ -246,7 +246,7 @@ const LightningController = ({
     // Create atmosphere renderer (sprites will be created on first snapshot)
     atmosphereRendererRef.current = new ChargeFieldRenderer(scene, {
       planeSize: 1.0,
-      opacity: 0.2,
+      opacity: 0.15,
     });
 
     // Create timeline player with callbacks
