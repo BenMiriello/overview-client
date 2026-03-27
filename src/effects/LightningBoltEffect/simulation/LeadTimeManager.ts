@@ -11,14 +11,14 @@ export class LeadTimeManager {
   private defaultStrikeTimeMs: number;
 
   // Configurable thresholds (in ms)
-  // With async geometry, snapshots flow continuously - lower thresholds needed
-  private minLeadTime = 3000;
-  private targetLeadTime = 8000;
-  private maxLeadTime = 15000;
+  // Geometry is async now - snapshots flow regardless of strike computation
+  private minLeadTime = 2000;
+  private targetLeadTime = 5000;
+  private maxLeadTime = 12000;
 
   constructor(detail: number = 1.0) {
-    // Conservative: detail=1.0→15s, detail=2.0→35s
-    this.defaultStrikeTimeMs = Math.max(10000, detail * 17500);
+    // Geometry is fully async -- only snapshot delivery matters, not bolt compute
+    this.defaultStrikeTimeMs = Math.max(1500, detail * 2000);
   }
 
   /**
@@ -52,8 +52,8 @@ export class LeadTimeManager {
         ? Math.max(...this.strikeComputeHistory)
         : this.defaultStrikeTimeMs;
 
-    // Add safety margin (2x worst case)
-    const required = Math.max(this.minLeadTime, maxStrikeTime * 2);
+    // Safety margin (1.5x worst case -- geometry is async)
+    const required = Math.max(this.minLeadTime, maxStrikeTime * 1.5);
     return Math.min(required, this.maxLeadTime);
   }
 
@@ -61,7 +61,7 @@ export class LeadTimeManager {
    * Get the target lead time we should try to maintain.
    */
   getTargetLeadTime(): number {
-    return Math.max(this.targetLeadTime, this.getRequiredLeadTime() * 1.5);
+    return Math.max(this.targetLeadTime, this.getRequiredLeadTime() * 1.2);
   }
 
   /**
@@ -89,8 +89,8 @@ export class LeadTimeManager {
       return 1.0;
     }
 
-    // Critical threshold: below 2 seconds, pause completely
-    const criticalMs = 2000;
+    // Critical threshold: below 500ms, pause completely
+    const criticalMs = 500;
     if (currentLeadTimeMs < criticalMs) {
       return 0.0;
     }

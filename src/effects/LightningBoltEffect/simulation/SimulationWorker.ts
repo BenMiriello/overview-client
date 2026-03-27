@@ -43,15 +43,11 @@ let boltWorker: Worker | null = null;
 const pendingStrikes = new Map<string, { simTimeMs: number; position: Vec3 }>();
 let strikeIdCounter = 0;
 
-const STRIKE_COOLDOWN_MS = 2000;
+const STRIKE_COOLDOWN_MS = 1500;
 const SNAPSHOT_INTERVAL_MS = 33;  // ~30fps snapshots for smooth animation
 const SIM_STEP_MS = 16;
 const MAX_LEAD_MS = 45000;  // Don't compute more than 45 seconds ahead
 
-// Adaptive charge rate thresholds - lower now that geometry doesn't block
-const MIN_LEAD_FOR_NORMAL_CHARGE_MS = 10000;
-const CRITICAL_LEAD_MS = 3000;
-const BASE_CHARGE_RATE = 0.15;
 
 function fieldToData(field: VoronoiField): VoronoiFieldData {
   const fieldConfig = field.getConfig();
@@ -193,18 +189,9 @@ function simulationStep(): void {
     return;
   }
 
-  // ADAPTIVE CHARGE RATE: When buffer is low, slow charge accumulation
-  // This delays breakdown, giving time to build buffer before next strike blocks
-  let chargeRate = BASE_CHARGE_RATE;
-  if (leadTime < CRITICAL_LEAD_MS) {
-    // Very low buffer - barely any charge buildup (10% of normal)
-    chargeRate = BASE_CHARGE_RATE * 0.1;
-  } else if (leadTime < MIN_LEAD_FOR_NORMAL_CHARGE_MS) {
-    // Low buffer - interpolate between 10% and 100%
-    const t = (leadTime - CRITICAL_LEAD_MS) / (MIN_LEAD_FOR_NORMAL_CHARGE_MS - CRITICAL_LEAD_MS);
-    chargeRate = BASE_CHARGE_RATE * (0.1 + 0.9 * t);
-  }
-  simulator.setChargeAccumulationRate(chargeRate);
+  // Use config charge rate directly -- geometry is async so charge
+  // accumulation no longer needs to be throttled for buffer safety
+  simulator.setChargeAccumulationRate(config.chargeAccumulationRate);
 
   const dtSec = (SIM_STEP_MS / 1000) * config.speed;
 

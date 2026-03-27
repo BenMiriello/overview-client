@@ -43,7 +43,7 @@ export class TimelinePlayer {
 
   // Playback state
   private effectiveSpeed: number = 1.0;
-  private minBufferBeforePlay: number = 5000; // With async geometry, don't need as much buffer
+  private minBufferBeforePlay: number = 1000; // Geometry is async, start quickly
 
   constructor(callbacks: TimelinePlayerCallbacks) {
     this.callbacks = callbacks;
