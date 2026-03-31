@@ -305,21 +305,21 @@ export class ChargeFieldRenderer {
         atmoRadii: { value: atmo.radii },
         atmoCount: { value: atmo.count },
         atmoColor: { value: this.options.atmosphericColor },
-        atmoOpacity: { value: this.atmosphericVisible ? this.options.opacity * 3.0 : 0.0 },
+        atmoOpacity: { value: this.atmosphericVisible ? this.options.opacity * 2.0 : 0.0 },
 
         moistCenters: { value: moist.centers },
         moistIntensities: { value: moist.intensities },
         moistRadii: { value: moist.radii },
         moistCount: { value: moist.count },
         moistColor: { value: this.options.moistureColor },
-        moistOpacity: { value: this.moistureVisible ? this.options.opacity * 3.5 : 0.0 },
+        moistOpacity: { value: this.moistureVisible ? this.options.opacity * 2.5 : 0.0 },
 
         ionCenters: { value: ion.centers },
         ionIntensities: { value: ion.intensities },
         ionRadii: { value: ion.radii },
         ionCount: { value: ion.count },
         ionColor: { value: this.options.ionizationColor },
-        ionOpacity: { value: this.ionizationVisible ? this.options.opacity * 3.0 : 0.0 },
+        ionOpacity: { value: this.ionizationVisible ? this.options.opacity * 2.0 : 0.0 },
 
         volumeCenter: { value: new THREE.Vector3(worldCenter.x, midY, worldCenter.z) },
         volumeRadius: { value: sphereRadius },
@@ -405,9 +405,9 @@ export class ChargeFieldRenderer {
     const anyVisible = this.visible && (this.atmosphericVisible || this.moistureVisible || this.ionizationVisible);
     this.unifiedVolume.mesh.visible = anyVisible;
 
-    u.atmoOpacity.value = (this.visible && this.atmosphericVisible) ? this.options.opacity * 3.0 : 0.0;
-    u.moistOpacity.value = (this.visible && this.moistureVisible) ? this.options.opacity * 3.5 : 0.0;
-    u.ionOpacity.value = (this.visible && this.ionizationVisible) ? this.options.opacity * 3.0 : 0.0;
+    u.atmoOpacity.value = (this.visible && this.atmosphericVisible) ? this.options.opacity * 2.0 : 0.0;
+    u.moistOpacity.value = (this.visible && this.moistureVisible) ? this.options.opacity * 2.5 : 0.0;
+    u.ionOpacity.value = (this.visible && this.ionizationVisible) ? this.options.opacity * 2.0 : 0.0;
   }
 
   setVisible(visible: boolean): void {

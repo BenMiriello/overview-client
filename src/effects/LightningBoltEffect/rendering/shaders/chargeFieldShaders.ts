@@ -233,7 +233,7 @@ void main() {
     float moistD = sqrt(max(moistField, 0.0)) * moistOpacity;
     float ionD = sqrt(max(ionField, 0.0)) * ionOpacity;
 
-    float totalDensity = (atmoD + moistD + ionD) * 0.4 * stepSize;
+    float totalDensity = (atmoD + moistD + ionD) * 0.25 * stepSize;
 
     if (totalDensity > 0.001) {
       // Weighted color blend
