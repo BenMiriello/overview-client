@@ -87,6 +87,8 @@ const GroundPlane = () => {
           vec3 terrainReveal = groundColor * 3.0 * flashIntensity * (1.0 - smoothstep(0.0, 0.6, dist));
 
           vec3 finalColor = groundColor + glowColor * glowStrength * edgeFade + terrainReveal * edgeFade;
+          // Cap brightness so ground flash doesn't trigger bloom
+          finalColor = min(finalColor, vec3(0.7));
           float alpha = max(groundAlpha, glowStrength * edgeFade);
 
           gl_FragColor = vec4(finalColor, alpha);
