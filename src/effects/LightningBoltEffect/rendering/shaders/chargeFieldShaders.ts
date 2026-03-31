@@ -118,129 +118,86 @@ void main() {
 }
 `;
 
-// Volumetric ray marching vertex shader - box geometry for volume bounds
-export const volumetricVertexShader = `
+/**
+ * Sphere impostor shaders for moisture and ionization fields.
+ * Each cell is a camera-facing quad; the fragment shader does analytical
+ * ray-sphere intersection to produce a true 3D sphere with directional lighting.
+ */
+
+// Vertex shader: billboard quad that always faces the camera
+export const sphereImpostorVertexShader = `
+uniform vec3 sphereCenter;
+uniform float sphereRadius;
+
 varying vec3 vWorldPosition;
+varying vec3 vSphereCenter;
+varying float vRadius;
 
 void main() {
-  vec4 worldPos = modelMatrix * vec4(position, 1.0);
-  vWorldPosition = worldPos.xyz;
-  gl_Position = projectionMatrix * viewMatrix * worldPos;
+  // Billboard: use view matrix columns to get camera-aligned axes
+  vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+  vec3 camUp = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+
+  // position.xy is the quad corner (-1 to 1), scaled by radius
+  vec3 worldPos = sphereCenter
+    + camRight * position.x * sphereRadius * 1.3
+    + camUp * position.y * sphereRadius * 1.3;
+
+  vWorldPosition = worldPos;
+  vSphereCenter = sphereCenter;
+  vRadius = sphereRadius;
+
+  gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
 }
 `;
 
-// Volumetric field rendering — smooth, no jitter/grain
-export const volumetricFragmentShader = `
+export const sphereImpostorFragmentShader = `
 precision highp float;
 
-#define MAX_CELLS 8
-#define MAX_STEPS 6
-
-uniform vec3 cellCenters[MAX_CELLS];
-uniform float cellIntensities[MAX_CELLS];
-uniform float cellRadii[MAX_CELLS];
-uniform int cellCount;
 uniform vec3 baseColor;
 uniform float opacity;
-uniform vec3 boundMin;
-uniform vec3 boundMax;
+uniform float intensity;
 uniform vec3 lightDir;
-uniform vec2 windDir;
-uniform float windSpeed;
-uniform float radiusScale;
 
 varying vec3 vWorldPosition;
-
-float sampleField(vec3 p) {
-  vec3 windDir3D = vec3(windDir.x, 0.0, windDir.y);
-  vec3 perpDir = vec3(-windDir.y, 0.0, windDir.x);
-  float stretchFactor = 1.0 + windSpeed * 1.5;
-
-  float totalField = 0.0;
-
-  for (int i = 0; i < MAX_CELLS; i++) {
-    if (i >= cellCount) break;
-
-    vec3 d = p - cellCenters[i];
-    float alongWind = dot(d, windDir3D);
-    float perpWind = dot(d, perpDir);
-    float verticalDist = d.y;
-
-    float dist = sqrt(
-      (alongWind / stretchFactor) * (alongWind / stretchFactor) +
-      perpWind * perpWind +
-      verticalDist * verticalDist
-    );
-
-    float r = cellRadii[i] * radiusScale;
-    if (dist < r) {
-      float t = dist / r;
-      float t2 = t * t;
-      float falloff = 1.0 - t2 * (3.0 - 2.0 * t);
-      totalField += cellIntensities[i] * falloff;
-    }
-  }
-
-  return totalField;
-}
-
-vec2 intersectBox(vec3 origin, vec3 dir, vec3 bmin, vec3 bmax) {
-  vec3 invDir = 1.0 / dir;
-  vec3 t0s = (bmin - origin) * invDir;
-  vec3 t1s = (bmax - origin) * invDir;
-  vec3 tsmaller = min(t0s, t1s);
-  vec3 tbigger = max(t0s, t1s);
-  float tmin = max(max(tsmaller.x, tsmaller.y), tsmaller.z);
-  float tmax = min(min(tbigger.x, tbigger.y), tbigger.z);
-  return vec2(max(tmin, 0.0), tmax);
-}
+varying vec3 vSphereCenter;
+varying float vRadius;
 
 void main() {
+  vec3 rayOrigin = cameraPosition;
   vec3 rayDir = normalize(vWorldPosition - cameraPosition);
 
-  vec2 tBounds = intersectBox(cameraPosition, rayDir, boundMin, boundMax);
-  float tMin = tBounds.x;
-  float tMax = tBounds.y;
+  // Analytical ray-sphere intersection
+  vec3 oc = rayOrigin - vSphereCenter;
+  float b = dot(oc, rayDir);
+  float c = dot(oc, oc) - vRadius * vRadius;
+  float discriminant = b * b - c;
 
-  if (tMax < tMin || tMax < 0.0) {
+  if (discriminant < 0.0) {
     discard;
   }
 
-  // No jitter — deterministic steps for smooth, flicker-free output
-  float stepSize = (tMax - tMin) / float(MAX_STEPS);
-  vec3 accumulatedColor = vec3(0.0);
-  float accumulatedAlpha = 0.0;
+  float t = -b - sqrt(discriminant);
+  vec3 hitPoint = rayOrigin + t * rayDir;
+  vec3 normal = normalize(hitPoint - vSphereCenter);
 
-  vec3 boundCenter = (boundMin + boundMax) * 0.5;
-  vec3 boundExtent = (boundMax - boundMin) * 0.5;
+  // Soft lighting with subtle directionality
+  float diffuse = max(0.0, dot(normal, lightDir)) * 0.4 + 0.6;
 
-  for (int step = 0; step < MAX_STEPS; step++) {
-    // Sample at step midpoints for better coverage with fewer steps
-    float t = tMin + (float(step) + 0.5) * stepSize;
-    if (t > tMax) break;
+  // Radial falloff: bright core, transparent edges
+  float distFromCenter = length(hitPoint - vSphereCenter) / vRadius;
+  float coreBright = 1.0 - distFromCenter * distFromCenter;
 
-    vec3 p = cameraPosition + rayDir * t;
-    float field = sampleField(p);
+  // Subtle edge transparency (not a bright rim — just fades out at edges)
+  float rim = 1.0 - max(0.0, dot(normal, -rayDir));
+  float edgeFade = 1.0 - rim * rim;
 
-    if (field > 0.02) {
-      vec3 edgeDist = abs(p - boundCenter) / boundExtent;
-      float edgeFade = 1.0 - smoothstep(0.6, 1.0, max(max(edgeDist.x, edgeDist.y), edgeDist.z));
+  vec3 col = baseColor * diffuse * (0.5 + coreBright * 0.5);
 
-      float density = field * edgeFade * 0.7 * stepSize;
-      vec3 stepColor = baseColor * (0.5 + field * 0.5);
+  float alpha = (0.15 + coreBright * 0.2) * edgeFade * intensity * opacity;
+  alpha = clamp(alpha, 0.0, 0.3);
 
-      accumulatedColor += stepColor * density * (1.0 - accumulatedAlpha);
-      accumulatedAlpha += density * (1.0 - accumulatedAlpha);
-
-      if (accumulatedAlpha > 0.6) break;
-    }
-  }
-
-  if (accumulatedAlpha < 0.005) {
-    discard;
-  }
-
-  gl_FragColor = vec4(accumulatedColor, accumulatedAlpha * opacity);
+  gl_FragColor = vec4(col, alpha);
 }
 `;
 

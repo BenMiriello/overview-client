@@ -211,16 +211,10 @@ const LightningController = ({
       );
       rendererInitializedRef.current = true;
 
-      // Apply initial visibility settings
-      atmosphereRendererRef.current.setCeilingVisible(showChargeRef.current);
-      atmosphereRendererRef.current.setGroundVisible(showChargeRef.current);
-      atmosphereRendererRef.current.setAtmosphericVisible(
-        showAtmosphericRef.current
-      );
-      atmosphereRendererRef.current.setMoistureVisible(showMoistureRef.current);
-      atmosphereRendererRef.current.setIonizationVisible(
-        showIonizationRef.current
-      );
+      // Visibility is managed by the useEffect hooks for each layer.
+      // The ChargeFieldRenderer defaults all layers to visible=true.
+      // useEffects will apply the correct localStorage-driven state
+      // after the next React render cycle.
     } else {
       atmosphereRendererRef.current.updateFromSnapshot(snapshot);
     }
