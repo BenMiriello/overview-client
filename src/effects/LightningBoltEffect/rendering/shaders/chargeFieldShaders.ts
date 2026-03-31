@@ -129,62 +129,65 @@ void main() {
 }
 `;
 
-// Volumetric field rendering — smooth, no jitter/grain
+/**
+ * Unified volumetric field shader — samples all three atmospheric fields
+ * (atmospheric charge, moisture, ionization) in a single ray-march pass.
+ * This avoids depth-test conflicts between overlapping transparent volumes.
+ */
 export const volumetricFragmentShader = `
 precision highp float;
 
 #define MAX_CELLS 8
 #define MAX_STEPS 6
 
-uniform vec3 cellCenters[MAX_CELLS];
-uniform float cellIntensities[MAX_CELLS];
-uniform float cellRadii[MAX_CELLS];
-uniform int cellCount;
-uniform vec3 baseColor;
-uniform float opacity;
+// Three fields, each with up to MAX_CELLS cells
+uniform vec3 atmoCenters[MAX_CELLS];
+uniform float atmoIntensities[MAX_CELLS];
+uniform float atmoRadii[MAX_CELLS];
+uniform int atmoCount;
+uniform vec3 atmoColor;
+uniform float atmoOpacity;
+
+uniform vec3 moistCenters[MAX_CELLS];
+uniform float moistIntensities[MAX_CELLS];
+uniform float moistRadii[MAX_CELLS];
+uniform int moistCount;
+uniform vec3 moistColor;
+uniform float moistOpacity;
+
+uniform vec3 ionCenters[MAX_CELLS];
+uniform float ionIntensities[MAX_CELLS];
+uniform float ionRadii[MAX_CELLS];
+uniform int ionCount;
+uniform vec3 ionColor;
+uniform float ionOpacity;
+
 uniform vec3 volumeCenter;
 uniform float volumeRadius;
-uniform vec3 lightDir;
 uniform vec2 windDir;
 uniform float windSpeed;
-uniform float radiusScale;
 
 varying vec3 vWorldPosition;
 
-float sampleField(vec3 p) {
-  vec3 windDir3D = vec3(windDir.x, 0.0, windDir.y);
-  vec3 perpDir = vec3(-windDir.y, 0.0, windDir.x);
-  float stretchFactor = 1.0 + windSpeed * 1.5;
-
-  float totalField = 0.0;
-
+float sampleCells(vec3 p, vec3 centers[MAX_CELLS], float intensities[MAX_CELLS],
+                   float radii[MAX_CELLS], int count, vec3 wind3D, vec3 perp, float stretch) {
+  float total = 0.0;
   for (int i = 0; i < MAX_CELLS; i++) {
-    if (i >= cellCount) break;
-
-    vec3 d = p - cellCenters[i];
-    float alongWind = dot(d, windDir3D);
-    float perpWind = dot(d, perpDir);
-    float verticalDist = d.y;
-
-    float dist = sqrt(
-      (alongWind / stretchFactor) * (alongWind / stretchFactor) +
-      perpWind * perpWind +
-      verticalDist * verticalDist
-    );
-
-    float r = cellRadii[i] * radiusScale;
+    if (i >= count) break;
+    vec3 d = p - centers[i];
+    float aw = dot(d, wind3D);
+    float pw = dot(d, perp);
+    float dist = sqrt((aw / stretch) * (aw / stretch) + pw * pw + d.y * d.y);
+    float r = radii[i];
     if (dist < r) {
       float t = dist / r;
       float t2 = t * t;
-      float falloff = 1.0 - t2 * (3.0 - 2.0 * t);
-      totalField += cellIntensities[i] * falloff;
+      total += intensities[i] * (1.0 - t2 * (3.0 - 2.0 * t));
     }
   }
-
-  return totalField;
+  return total;
 }
 
-// Sphere intersection: returns (tEntry, tExit), tEntry < 0 means inside sphere
 vec2 intersectSphere(vec3 origin, vec3 dir, vec3 center, float radius) {
   vec3 oc = origin - center;
   float b = dot(oc, dir);
@@ -206,6 +209,10 @@ void main() {
     discard;
   }
 
+  vec3 wind3D = vec3(windDir.x, 0.0, windDir.y);
+  vec3 perp = vec3(-windDir.y, 0.0, windDir.x);
+  float stretch = 1.0 + windSpeed * 1.5;
+
   float stepSize = (tMax - tMin) / float(MAX_STEPS);
   vec3 accumulatedColor = vec3(0.0);
   float accumulatedAlpha = 0.0;
@@ -215,16 +222,26 @@ void main() {
     if (t > tMax) break;
 
     vec3 p = cameraPosition + rayDir * t;
-    float field = sampleField(p);
 
-    if (field > 0.01) {
-      // Field value IS the density — no artificial boundary fade needed
-      float softField = sqrt(field);
-      float density = softField * 0.5 * stepSize;
-      vec3 stepColor = baseColor * (0.6 + softField * 0.3);
+    // Sample all three fields at this point
+    float atmoField = sampleCells(p, atmoCenters, atmoIntensities, atmoRadii, atmoCount, wind3D, perp, stretch);
+    float moistField = sampleCells(p, moistCenters, moistIntensities, moistRadii, moistCount, wind3D, perp, stretch);
+    float ionField = sampleCells(p, ionCenters, ionIntensities, ionRadii, ionCount, wind3D, perp, stretch);
 
-      accumulatedColor += stepColor * density * (1.0 - accumulatedAlpha);
-      accumulatedAlpha += density * (1.0 - accumulatedAlpha);
+    // Combine fields: each contributes its own color weighted by density
+    float atmoD = sqrt(max(atmoField, 0.0)) * atmoOpacity;
+    float moistD = sqrt(max(moistField, 0.0)) * moistOpacity;
+    float ionD = sqrt(max(ionField, 0.0)) * ionOpacity;
+
+    float totalDensity = (atmoD + moistD + ionD) * 0.4 * stepSize;
+
+    if (totalDensity > 0.001) {
+      // Weighted color blend
+      float totalWeight = atmoD + moistD + ionD + 0.001;
+      vec3 stepColor = (atmoColor * atmoD + moistColor * moistD + ionColor * ionD) / totalWeight;
+
+      accumulatedColor += stepColor * totalDensity * (1.0 - accumulatedAlpha);
+      accumulatedAlpha += totalDensity * (1.0 - accumulatedAlpha);
 
       if (accumulatedAlpha > 0.6) break;
     }
@@ -234,7 +251,7 @@ void main() {
     discard;
   }
 
-  gl_FragColor = vec4(accumulatedColor, accumulatedAlpha * opacity);
+  gl_FragColor = vec4(accumulatedColor, accumulatedAlpha);
 }
 `;
 
