@@ -15,6 +15,7 @@ interface DepthGroup {
   segmentIds: number[];
   positions: Float32Array;
   colors: Float32Array;
+  junctionFactors: Float32Array;
   geometry: LineSegmentsGeometry;
   line: LineSegments2;
   depth: number;
@@ -101,13 +102,16 @@ export class BoltRenderer {
         const g = blendedColor.g * alpha;
         const b = blendedColor.b * alpha;
 
+        const sf = group.junctionFactors[i * 2];
+        const ef = group.junctionFactors[i * 2 + 1];
+
         const ci = i * 6;
-        colors[ci] = r;
-        colors[ci + 1] = g;
-        colors[ci + 2] = b;
-        colors[ci + 3] = r;
-        colors[ci + 4] = g;
-        colors[ci + 5] = b;
+        colors[ci] = r * sf;
+        colors[ci + 1] = g * sf;
+        colors[ci + 2] = b * sf;
+        colors[ci + 3] = r * ef;
+        colors[ci + 4] = g * ef;
+        colors[ci + 5] = b * ef;
       }
 
       geom.setColors(colors);
@@ -130,13 +134,16 @@ export class BoltRenderer {
           ? Math.min(rawBrightness * 0.4, GLOW_MAX)
           : 0;
 
+        const sf = this.glowGroup!.junctionFactors[i * 2];
+        const ef = this.glowGroup!.junctionFactors[i * 2 + 1];
+
         const ci = i * 6;
-        colors[ci] = glowColor.r * alpha;
-        colors[ci + 1] = glowColor.g * alpha;
-        colors[ci + 2] = glowColor.b * alpha;
-        colors[ci + 3] = glowColor.r * alpha;
-        colors[ci + 4] = glowColor.g * alpha;
-        colors[ci + 5] = glowColor.b * alpha;
+        colors[ci] = glowColor.r * alpha * sf;
+        colors[ci + 1] = glowColor.g * alpha * sf;
+        colors[ci + 2] = glowColor.b * alpha * sf;
+        colors[ci + 3] = glowColor.r * alpha * ef;
+        colors[ci + 4] = glowColor.g * alpha * ef;
+        colors[ci + 5] = glowColor.b * alpha * ef;
       }
 
       geom.setColors(colors);
@@ -230,6 +237,31 @@ export class BoltRenderer {
     return this.transform.toWorld(normalized);
   }
 
+  private computeJunctionFactors(positions: Float32Array, n: number): Float32Array {
+    const factors = new Float32Array(n * 2);
+    const positionCounts = new Map<string, number>();
+
+    for (let i = 0; i < n; i++) {
+      const pi = i * 6;
+      const startKey = `${positions[pi].toFixed(4)},${positions[pi + 1].toFixed(4)},${positions[pi + 2].toFixed(4)}`;
+      positionCounts.set(startKey, (positionCounts.get(startKey) ?? 0) + 1);
+
+      const endKey = `${positions[pi + 3].toFixed(4)},${positions[pi + 4].toFixed(4)},${positions[pi + 5].toFixed(4)}`;
+      positionCounts.set(endKey, (positionCounts.get(endKey) ?? 0) + 1);
+    }
+
+    for (let i = 0; i < n; i++) {
+      const pi = i * 6;
+      const startKey = `${positions[pi].toFixed(4)},${positions[pi + 1].toFixed(4)},${positions[pi + 2].toFixed(4)}`;
+      factors[i * 2] = 1.0 / (positionCounts.get(startKey) ?? 1);
+
+      const endKey = `${positions[pi + 3].toFixed(4)},${positions[pi + 4].toFixed(4)},${positions[pi + 5].toFixed(4)}`;
+      factors[i * 2 + 1] = 1.0 / (positionCounts.get(endKey) ?? 1);
+    }
+
+    return factors;
+  }
+
   private createDepthGroup(segments: BoltGeometry['segments'], depthBucket: number): DepthGroup {
     const n = segments.length;
     const positions = new Float32Array(n * 6);
@@ -253,6 +285,8 @@ export class BoltRenderer {
       this.segmentIndexMap.set(seg.id, { depthBucket, indexInGroup: i });
     }
 
+    const junctionFactors = this.computeJunctionFactors(positions, n);
+
     const geom = new LineSegmentsGeometry();
     geom.setPositions(positions);
     geom.setColors(colors);
@@ -261,7 +295,7 @@ export class BoltRenderer {
     const line = new LineSegments2(geom, mat);
     line.computeLineDistances();
 
-    return { segmentIds, positions, colors, geometry: geom, line, depth: depthBucket };
+    return { segmentIds, positions, colors, junctionFactors, geometry: geom, line, depth: depthBucket };
   }
 
   private createGlowGroup(segments: BoltGeometry['segments']): DepthGroup {
@@ -285,6 +319,8 @@ export class BoltRenderer {
       positions[i * 6 + 5] = we.z;
     }
 
+    const junctionFactors = this.computeJunctionFactors(positions, n);
+
     const geom = new LineSegmentsGeometry();
     geom.setPositions(positions);
     geom.setColors(colors);
@@ -293,6 +329,6 @@ export class BoltRenderer {
     const line = new LineSegments2(geom, mat);
     line.computeLineDistances();
 
-    return { segmentIds, positions, colors, geometry: geom, line, depth: 0 };
+    return { segmentIds, positions, colors, junctionFactors, geometry: geom, line, depth: 0 };
   }
 }

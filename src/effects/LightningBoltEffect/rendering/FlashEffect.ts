@@ -85,7 +85,8 @@ export class ScreenFlashEffect {
       return false;
     }
 
-    const opacity = Math.pow(1 - progress, 2) * 0.06;
+    // Steep quartic decay: noticeable peak that complements bloom glow
+    const opacity = Math.pow(1 - progress, 4) * 0.15;
     this.overlay.style.opacity = opacity.toString();
 
     return true;
