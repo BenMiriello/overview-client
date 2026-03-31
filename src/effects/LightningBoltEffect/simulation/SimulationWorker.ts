@@ -43,7 +43,7 @@ let boltWorker: Worker | null = null;
 const pendingStrikes = new Map<string, { simTimeMs: number; position: Vec3 }>();
 let strikeIdCounter = 0;
 
-const STRIKE_COOLDOWN_MS = 1500;
+const STRIKE_COOLDOWN_MS = 3000;
 const SNAPSHOT_INTERVAL_MS = 33;  // ~30fps snapshots for smooth animation
 const SIM_STEP_MS = 16;
 const MAX_LEAD_MS = 45000;  // Don't compute more than 45 seconds ahead
