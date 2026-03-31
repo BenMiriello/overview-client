@@ -86,6 +86,8 @@ const LAYERS: LayerConfig[] = [
   { key: 'showIonization', icon: Atom, label: 'Ionization' },
 ];
 
+const SHOW_ATMOSPHERIC = import.meta.env.VITE_SHOW_ATMOSPHERIC_LAYERS === 'true';
+
 const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
   const [speed, setSpeed] = useLocalStorage('lightning-speed', DEFAULT_SETTINGS.speed);
   const [detail, setDetail] = useLocalStorage('lightning-detail', DEFAULT_SETTINGS.detail);
@@ -133,7 +135,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
 
   useEffect(() => {
     const migratedSpeed = migrateSpeed(speed);
-    onChange({ speed: migratedSpeed, detail, windSpeed, showCharge, showAtmospheric, showMoisture, showIonization, orbit });
+    onChange({
+      speed: migratedSpeed, detail, windSpeed, showCharge,
+      showAtmospheric: SHOW_ATMOSPHERIC ? showAtmospheric : false,
+      showMoisture: SHOW_ATMOSPHERIC ? showMoisture : false,
+      showIonization: SHOW_ATMOSPHERIC ? showIonization : false,
+      orbit,
+    });
   }, [speed, detail, windSpeed, showCharge, showAtmospheric, showMoisture, showIonization, orbit, onChange]);
 
   useEffect(() => {
@@ -259,41 +267,57 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
         </div>
       </div>
 
-      {/* Layers Section */}
-      <div
-        className={`settings-section layers-section ${expandedSection === 'layers' ? 'expanded' : ''}`}
-        onMouseEnter={() => handleMouseEnter('layers')}
-        onMouseLeave={handleMouseLeave}
-        onClick={() => handleSectionInteraction('layers')}
-      >
-        <div className="layers-header">
-          <div className="section-icon">
-            <Eye size={20} />
+      {/* Charge Toggle (simple) or Full Layers Section */}
+      {SHOW_ATMOSPHERIC ? (
+        <div
+          className={`settings-section layers-section ${expandedSection === 'layers' ? 'expanded' : ''}`}
+          onMouseEnter={() => handleMouseEnter('layers')}
+          onMouseLeave={handleMouseLeave}
+          onClick={() => handleSectionInteraction('layers')}
+        >
+          <div className="layers-header">
+            <div className="section-icon">
+              <Eye size={20} />
+            </div>
+            <span className="section-label">Layer Visibility</span>
           </div>
-          <span className="section-label">Layer Visibility</span>
-        </div>
-        <div className="layers-items">
-          {LAYERS.map((layer) => {
-            const enabled = layerStates[layer.key];
-            return (
-              <div
-                key={layer.key}
-                className={`layer-item ${enabled ? 'enabled' : 'disabled'}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleLayer(layer.key);
-                }}
-              >
-                <div className="layer-icon-wrapper">
-                  <layer.icon size={16} />
-                  {!enabled && <div className="slash-overlay" />}
+          <div className="layers-items">
+            {LAYERS.map((layer) => {
+              const enabled = layerStates[layer.key];
+              return (
+                <div
+                  key={layer.key}
+                  className={`layer-item ${enabled ? 'enabled' : 'disabled'}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleLayer(layer.key);
+                  }}
+                >
+                  <div className="layer-icon-wrapper">
+                    <layer.icon size={16} />
+                    {!enabled && <div className="slash-overlay" />}
+                  </div>
+                  <span className="layer-label">{layer.label}</span>
                 </div>
-                <span className="layer-label">{layer.label}</span>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div
+          className={`settings-section charge-toggle-section ${showCharge ? 'active' : ''} ${expandedSection === 'charge' ? 'expanded' : ''}`}
+          onMouseEnter={() => handleMouseEnter('charge')}
+          onMouseLeave={handleMouseLeave}
+          onClick={() => setShowCharge(!showCharge)}
+        >
+          <div className="section-icon">
+            <CloudLightning size={20} />
+          </div>
+          <div className="section-expandable">
+            <span className="section-label">{`Charge: ${showCharge ? 'on' : 'off'}`}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

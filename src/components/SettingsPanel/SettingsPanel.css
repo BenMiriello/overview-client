@@ -57,6 +57,20 @@
   width: 65px;
 }
 
+/* Charge toggle: same style as orbit */
+.charge-toggle-section.active .section-icon,
+.charge-toggle-section:not(.active) .section-icon {
+  color: #808080;
+}
+
+.charge-toggle-section:hover .section-icon {
+  color: #fff;
+}
+
+.charge-toggle-section .section-label {
+  width: 75px;
+}
+
 /* Icon container - always visible */
 .section-icon {
   width: 44px;
