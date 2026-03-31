@@ -188,27 +188,27 @@ export class AtmosphereSimulator {
       const cell = this.atmosphericCharge.cells[i];
       const dist = this.distance3D(cell.center, strikePosition);
       if (dist < dissipationRadius) {
-        const factor = 0.3 + 0.5 * (dist / dissipationRadius);
+        const factor = 0.1 + 0.4 * (dist / dissipationRadius);
         this.atmosphericCharge.setCellIntensity(i, cell.intensity * factor);
       }
     }
 
-    // Moisture responds to strikes -- evaporation/disruption near channel
+    // Moisture evaporation/disruption — dramatic near the channel
     for (let i = 0; i < this.moisture.cells.length; i++) {
       const cell = this.moisture.cells[i];
       const dist = this.distance3D(cell.center, strikePosition);
-      if (dist < dissipationRadius * 0.7) {
-        const factor = 0.5 + 0.4 * (dist / (dissipationRadius * 0.7));
+      if (dist < dissipationRadius) {
+        const factor = 0.15 + 0.6 * (dist / dissipationRadius);
         this.moisture.setCellIntensity(i, cell.intensity * factor);
       }
     }
 
-    // Ionization INCREASES along the strike channel
+    // Ionization INCREASES strongly along the strike channel
     for (let i = 0; i < this.ionizationSeeds.cells.length; i++) {
       const cell = this.ionizationSeeds.cells[i];
       const dist = this.distance3D(cell.center, strikePosition);
-      if (dist < dissipationRadius * 0.5) {
-        const boost = (1.0 - dist / (dissipationRadius * 0.5)) * 0.6;
+      if (dist < dissipationRadius * 0.8) {
+        const boost = (1.0 - dist / (dissipationRadius * 0.8)) * 0.9;
         this.ionizationSeeds.setCellIntensity(
           i, Math.min(1.0, cell.intensity + boost)
         );

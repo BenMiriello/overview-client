@@ -7,9 +7,10 @@ import { AtmosphereSnapshot } from '../simulation/SimulationTimeline';
 import {
   chargeFieldVertexShader,
   chargeFieldFragmentShader,
-  sphereImpostorVertexShader,
-  sphereImpostorFragmentShader,
+  volumetricVertexShader,
+  volumetricFragmentShader,
   MAX_CELLS,
+  MAX_VOLUMETRIC_CELLS,
 } from './shaders/chargeFieldShaders';
 
 type FieldType = VoronoiField | VoronoiFieldData;
@@ -22,6 +23,8 @@ export interface ChargeFieldRenderOptions {
   moistureColor?: THREE.Color;
   ionizationColor?: THREE.Color;
   opacity?: number;
+  /** Resolution scale for volumetric rendering (0.5 = half res, 1.0 = full) */
+  volumetricResolution?: number;
 }
 
 interface FieldPlane {
@@ -29,27 +32,44 @@ interface FieldPlane {
   material: THREE.ShaderMaterial;
 }
 
-interface SphereImpostor {
+interface VolumetricField {
   mesh: THREE.Mesh;
   material: THREE.ShaderMaterial;
 }
+
+// Simple composite shader for low-res volumetric upscaling
+const compositeVertexShader = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const compositeFragmentShader = `
+uniform sampler2D tDiffuse;
+varying vec2 vUv;
+void main() {
+  gl_FragColor = texture2D(tDiffuse, vUv);
+}
+`;
 
 export class ChargeFieldRenderer {
   private scene: THREE.Scene;
   private options: Required<ChargeFieldRenderOptions>;
   private transform: CoordinateTransform | null = null;
 
-  // Ceiling/Ground/Atmospheric: flat horizontal metaball planes
+  // Ceiling/Ground: flat horizontal metaball planes
   private ceilingPlane: FieldPlane | null = null;
   private groundPlane: FieldPlane | null = null;
-  private atmosphericPlane: FieldPlane | null = null;
 
-  // Moisture/Ionization: per-cell sphere impostors (billboard quads)
-  private moistureImpostors: SphereImpostor[] = [];
-  private ionizationImpostors: SphereImpostor[] = [];
+  // Atmospheric/Moisture/Ionization: volumetric ray-marched 3D fields
+  private atmosphericVolume: VolumetricField | null = null;
+  private moistureVolume: VolumetricField | null = null;
+  private ionizationVolume: VolumetricField | null = null;
 
-  // Light direction for sphere impostors
-  private lightDir: THREE.Vector3 = new THREE.Vector3(0.3, 0.8, 0.5).normalize();
+  // Light direction for volumetric fields
+  private lightDir: THREE.Vector3 = new THREE.Vector3(0.5, 0.8, 0.3).normalize();
 
   // Visibility states
   private visible: boolean = true;
@@ -67,9 +87,20 @@ export class ChargeFieldRenderer {
   private windDir: THREE.Vector2 = new THREE.Vector2(1, 0);
   private windSpeed: number = 0;
 
+  // Low-res volumetric rendering
+  private volumetricScene: THREE.Scene | null = null;
+  private renderTarget: THREE.WebGLRenderTarget | null = null;
+  private compositeScene: THREE.Scene | null = null;
+  private compositeCamera: THREE.OrthographicCamera | null = null;
+  private compositeQuad: THREE.Mesh | null = null;
+  private compositeMaterial: THREE.ShaderMaterial | null = null;
+  private resolutionScale: number = 1.0;
+  private lastWidth: number = 0;
+  private lastHeight: number = 0;
+
   constructor(scene: THREE.Scene, options: ChargeFieldRenderOptions = {}) {
     this.scene = scene;
-
+    this.resolutionScale = options.volumetricResolution ?? 0.5;
     this.options = {
       planeSize: options.planeSize ?? 1.0,
       ceilingColor: options.ceilingColor ?? new THREE.Color(0.7, 0.85, 1.0),
@@ -78,18 +109,34 @@ export class ChargeFieldRenderer {
       moistureColor: options.moistureColor ?? new THREE.Color(0.6, 0.8, 0.95),
       ionizationColor: options.ionizationColor ?? new THREE.Color(1.0, 1.0, 0.9),
       opacity: options.opacity ?? 0.2,
+      volumetricResolution: options.volumetricResolution ?? 0.5,
     };
+
+    // Create separate scene for volumetrics when using low-res rendering
+    if (this.resolutionScale < 1.0) {
+      this.volumetricScene = new THREE.Scene();
+    }
   }
 
   setWindParameters(direction: THREE.Vector2, speed: number): void {
     this.windDir.copy(direction).normalize();
-    this.windSpeed = speed / 60;
+    this.windSpeed = speed / 60; // Normalize to 0-1 range from 0-60 kts
 
-    const planes = [this.ceilingPlane, this.groundPlane, this.atmosphericPlane];
+    // Update flat plane materials
+    const planes = [this.ceilingPlane, this.groundPlane];
     for (const plane of planes) {
       if (plane) {
         plane.material.uniforms.windDir.value.copy(this.windDir);
         plane.material.uniforms.windSpeed.value = this.windSpeed;
+      }
+    }
+
+    // Update volumetric field materials
+    const volumes = [this.atmosphericVolume, this.moistureVolume, this.ionizationVolume];
+    for (const volume of volumes) {
+      if (volume) {
+        volume.material.uniforms.windDir.value.copy(this.windDir);
+        volume.material.uniforms.windSpeed.value = this.windSpeed;
       }
     }
   }
@@ -106,51 +153,64 @@ export class ChargeFieldRenderer {
     this.worldCeilingY = worldStart.y;
     this.worldGroundY = worldEnd.y;
 
+    // Create ceiling plane (flat, horizontal)
     this.ceilingPlane = this.createFieldPlane(
       atmosphere.ceilingCharge,
       this.options.ceilingColor,
       this.options.opacity,
-      this.worldCeilingY
+      this.worldCeilingY,
+      true
     );
 
+    // Create ground plane (flat, horizontal)
     this.groundPlane = this.createFieldPlane(
       atmosphere.groundCharge,
       this.options.groundColor,
       this.options.opacity,
-      this.worldGroundY
+      this.worldGroundY,
+      true
     );
 
-    const height = this.worldCeilingY - this.worldGroundY;
-
-    // Atmospheric charge: horizontal metaball just below cloud layer
+    // Volumetric atmospheric charge - fills most of the atmosphere
+    // Concentrated in upper half but extends through the full column
     if (atmosphere.atmosphericCharge) {
-      this.atmosphericPlane = this.createFieldPlane(
+      const height = this.worldCeilingY - this.worldGroundY;
+      const upperBound = this.worldCeilingY - height * 0.05;
+      const lowerBound = this.worldGroundY + height * 0.15;
+      this.atmosphericVolume = this.createVolumetricField(
         atmosphere.atmosphericCharge,
         this.options.atmosphericColor,
-        this.options.opacity * 1.5,
-        this.worldCeilingY - height * 0.15
+        this.options.opacity * 3.0,
+        lowerBound,
+        upperBound
       );
     }
 
-    // Moisture: 3D sphere impostors
+    // Moisture - pervades mid and lower atmosphere, overlaps with atmospheric
     if (atmosphere.moisture) {
-      this.moistureImpostors = this.createSphereImpostors(
+      const height = this.worldCeilingY - this.worldGroundY;
+      const upperBound = this.worldCeilingY - height * 0.2;
+      const lowerBound = this.worldGroundY + height * 0.05;
+      this.moistureVolume = this.createVolumetricField(
         atmosphere.moisture,
         this.options.moistureColor,
-        this.options.opacity * 4.0,
-        this.worldGroundY + height * 0.05,
-        this.worldCeilingY - height * 0.2
+        this.options.opacity * 3.5,
+        lowerBound,
+        upperBound
       );
     }
 
-    // Ionization: 3D sphere impostors (smaller, brighter)
+    // Ionization - spans the full column (ionization happens everywhere)
     if (atmosphere.ionizationSeeds) {
-      this.ionizationImpostors = this.createSphereImpostors(
+      const height = this.worldCeilingY - this.worldGroundY;
+      const upperBound = this.worldCeilingY - height * 0.1;
+      const lowerBound = this.worldGroundY + height * 0.1;
+      this.ionizationVolume = this.createVolumetricField(
         atmosphere.ionizationSeeds,
         this.options.ionizationColor,
-        this.options.opacity * 5.0,
-        this.worldGroundY + height * 0.1,
-        this.worldCeilingY - height * 0.1
+        this.options.opacity * 3.0,
+        lowerBound,
+        upperBound
       );
     }
 
@@ -168,37 +228,42 @@ export class ChargeFieldRenderer {
       simulator.ceilingCharge,
       this.options.ceilingColor,
       this.options.opacity,
-      this.worldCeilingY
+      this.worldCeilingY,
+      true
     );
 
     this.groundPlane = this.createFieldPlane(
       simulator.groundCharge,
       this.options.groundColor,
       this.options.opacity,
-      this.worldGroundY
+      this.worldGroundY,
+      true
     );
 
+    // Volumetric atmospheric field - fills most of the column
     const height = this.worldCeilingY - this.worldGroundY;
-
-    this.atmosphericPlane = this.createFieldPlane(
+    this.atmosphericVolume = this.createVolumetricField(
       simulator.atmosphericCharge,
       this.options.atmosphericColor,
-      this.options.opacity * 1.5,
-      this.worldCeilingY - height * 0.15
+      this.options.opacity * 3.0,
+      this.worldGroundY + height * 0.15,
+      this.worldCeilingY - height * 0.05
     );
 
-    this.moistureImpostors = this.createSphereImpostors(
+    // Volumetric moisture field - mid to lower, overlapping atmospheric
+    this.moistureVolume = this.createVolumetricField(
       simulator.moisture,
       this.options.moistureColor,
-      this.options.opacity * 4.0,
+      this.options.opacity * 3.5,
       this.worldGroundY + height * 0.05,
       this.worldCeilingY - height * 0.2
     );
 
-    this.ionizationImpostors = this.createSphereImpostors(
+    // Volumetric ionization field - spans full column
+    this.ionizationVolume = this.createVolumetricField(
       simulator.ionizationSeeds,
       this.options.ionizationColor,
-      this.options.opacity * 1.5,
+      this.options.opacity * 3.0,
       this.worldGroundY + height * 0.1,
       this.worldCeilingY - height * 0.1
     );
@@ -209,17 +274,17 @@ export class ChargeFieldRenderer {
   updateFromSimulator(simulator: AtmosphereSimulator): void {
     this.updateFieldPlane(this.ceilingPlane, simulator.ceilingCharge);
     this.updateFieldPlane(this.groundPlane, simulator.groundCharge);
-    this.updateFieldPlane(this.atmosphericPlane, simulator.atmosphericCharge);
-    this.updateSphereImpostors(this.moistureImpostors, simulator.moisture);
-    this.updateSphereImpostors(this.ionizationImpostors, simulator.ionizationSeeds);
+    this.updateVolumetricField(this.atmosphericVolume, simulator.atmosphericCharge);
+    this.updateVolumetricField(this.moistureVolume, simulator.moisture);
+    this.updateVolumetricField(this.ionizationVolume, simulator.ionizationSeeds);
   }
 
   updateFromSnapshot(snapshot: AtmosphereSnapshot): void {
     this.updateFieldPlane(this.ceilingPlane, snapshot.ceilingCharge);
     this.updateFieldPlane(this.groundPlane, snapshot.groundCharge);
-    this.updateFieldPlane(this.atmosphericPlane, snapshot.atmosphericCharge);
-    this.updateSphereImpostors(this.moistureImpostors, snapshot.moisture);
-    this.updateSphereImpostors(this.ionizationImpostors, snapshot.ionizationSeeds);
+    this.updateVolumetricField(this.atmosphericVolume, snapshot.atmosphericCharge);
+    this.updateVolumetricField(this.moistureVolume, snapshot.moisture);
+    this.updateVolumetricField(this.ionizationVolume, snapshot.ionizationSeeds);
   }
 
   initializeFromSnapshot(
@@ -237,37 +302,40 @@ export class ChargeFieldRenderer {
       snapshot.ceilingCharge,
       this.options.ceilingColor,
       this.options.opacity,
-      this.worldCeilingY
+      this.worldCeilingY,
+      true
     );
 
     this.groundPlane = this.createFieldPlane(
       snapshot.groundCharge,
       this.options.groundColor,
       this.options.opacity,
-      this.worldGroundY
+      this.worldGroundY,
+      true
     );
 
+    // Volumetric fields - overlapping vertical regions
     const height = this.worldCeilingY - this.worldGroundY;
-
-    this.atmosphericPlane = this.createFieldPlane(
+    this.atmosphericVolume = this.createVolumetricField(
       snapshot.atmosphericCharge,
       this.options.atmosphericColor,
-      this.options.opacity * 1.5,
-      this.worldCeilingY - height * 0.15
+      this.options.opacity * 3.0,
+      this.worldGroundY + height * 0.15,
+      this.worldCeilingY - height * 0.05
     );
 
-    this.moistureImpostors = this.createSphereImpostors(
+    this.moistureVolume = this.createVolumetricField(
       snapshot.moisture,
       this.options.moistureColor,
-      this.options.opacity * 4.0,
+      this.options.opacity * 3.5,
       this.worldGroundY + height * 0.05,
       this.worldCeilingY - height * 0.2
     );
 
-    this.ionizationImpostors = this.createSphereImpostors(
+    this.ionizationVolume = this.createVolumetricField(
       snapshot.ionizationSeeds,
       this.options.ionizationColor,
-      this.options.opacity * 1.5,
+      this.options.opacity * 3.0,
       this.worldGroundY + height * 0.1,
       this.worldCeilingY - height * 0.1
     );
@@ -275,20 +343,22 @@ export class ChargeFieldRenderer {
     this.updateVisibility();
   }
 
-  // --- Flat metaball planes (ceiling, ground, atmospheric) ---
-
   private createFieldPlane(
     field: FieldType,
     color: THREE.Color,
     opacity: number,
-    yPosition: number
+    yPosition: number,
+    flat: boolean
   ): FieldPlane {
     const worldScale = this.transform?.worldScale ?? 1;
     const planeSize = worldScale * 2.5;
 
     const geometry = new THREE.PlaneGeometry(planeSize, planeSize);
-    geometry.rotateX(-Math.PI / 2);
+    if (flat) {
+      geometry.rotateX(-Math.PI / 2);
+    }
 
+    // Prepare cell data arrays
     const cells = field.cells.slice(0, MAX_CELLS);
     const cellCenters: THREE.Vector2[] = [];
     const cellIntensities: number[] = [];
@@ -303,6 +373,7 @@ export class ChargeFieldRenderer {
       cellRadii.push(cell.falloffRadius * worldScale);
     }
 
+    // Pad arrays to MAX_CELLS
     while (cellCenters.length < MAX_CELLS) {
       cellCenters.push(new THREE.Vector2(0, 0));
       cellIntensities.push(0);
@@ -329,12 +400,15 @@ export class ChargeFieldRenderer {
     });
 
     const mesh = new THREE.Mesh(geometry, material);
+
+    // Position at the correct Y level
     const worldCenter = this.transform
       ? this.transform.toWorld({ x: 0, y: 0, z: 0 })
       : { x: 0, y: 0, z: 0 };
     mesh.position.set(worldCenter.x, yPosition, worldCenter.z);
 
     this.scene.add(mesh);
+
     return { mesh, material };
   }
 
@@ -368,94 +442,120 @@ export class ChargeFieldRenderer {
     plane.material.uniformsNeedUpdate = true;
   }
 
-  // --- Sphere impostors (moisture, ionization) ---
-
-  private createSphereImpostors(
+  private createVolumetricField(
     field: FieldType,
     color: THREE.Color,
     opacity: number,
     yMin: number,
     yMax: number
-  ): SphereImpostor[] {
+  ): VolumetricField {
     const worldScale = this.transform?.worldScale ?? 1;
-    const impostors: SphereImpostor[] = [];
-    const midY = (yMin + yMax) / 2;
-    const rangeY = yMax - yMin;
+    const planeSize = worldScale * 2.5;
 
-    for (let i = 0; i < field.cells.length && i < 8; i++) {
-      const cell = field.cells[i];
+    // Sphere geometry eliminates visible box-edge artifacts
+    const height = yMax - yMin;
+    const sphereRadius = Math.max(planeSize, height) * 0.6;
+    const geometry = new THREE.SphereGeometry(sphereRadius, 16, 12);
+
+    // Prepare cell data arrays (3D positions for volumetric)
+    const cells = field.cells.slice(0, MAX_VOLUMETRIC_CELLS);
+    const cellCenters: THREE.Vector3[] = [];
+    const cellIntensities: number[] = [];
+    const cellRadii: number[] = [];
+
+    const midY = (yMin + yMax) / 2;
+
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i];
       const worldPos = this.transform
         ? this.transform.toWorld(cell.center)
         : cell.center;
-
-      // Distribute Y positions within the layer range
-      const cellY = midY + ((i * 0.618) % 1 - 0.5) * rangeY * 0.7;
-      const radius = cell.falloffRadius * worldScale;
-
-      // Billboard quad: 2 triangles covering (-1,-1) to (1,1)
-      const geometry = new THREE.BufferGeometry();
-      const positions = new Float32Array([
-        -1, -1, 0,  1, -1, 0,  1, 1, 0,
-        -1, -1, 0,  1, 1, 0,  -1, 1, 0,
-      ]);
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-      const material = new THREE.ShaderMaterial({
-        vertexShader: sphereImpostorVertexShader,
-        fragmentShader: sphereImpostorFragmentShader,
-        uniforms: {
-          sphereCenter: { value: new THREE.Vector3(worldPos.x, cellY, worldPos.z) },
-          sphereRadius: { value: radius },
-          baseColor: { value: color.clone() },
-          opacity: { value: opacity },
-          intensity: { value: cell.intensity },
-          lightDir: { value: this.lightDir },
-        },
-        transparent: true,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      });
-
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.frustumCulled = false;
-      this.scene.add(mesh);
-      impostors.push({ mesh, material });
+      const cellY = midY + ((i * 0.618) % 1 - 0.5) * height * 0.7;
+      cellCenters.push(new THREE.Vector3(worldPos.x, cellY, worldPos.z));
+      cellIntensities.push(cell.intensity);
+      cellRadii.push(cell.falloffRadius * worldScale);
     }
 
-    return impostors;
+    while (cellCenters.length < MAX_VOLUMETRIC_CELLS) {
+      cellCenters.push(new THREE.Vector3(0, 0, 0));
+      cellIntensities.push(0);
+      cellRadii.push(0);
+    }
+
+    const worldCenter = this.transform
+      ? this.transform.toWorld({ x: 0, y: 0, z: 0 })
+      : { x: 0, y: 0, z: 0 };
+
+    const volumeCenter = new THREE.Vector3(worldCenter.x, midY, worldCenter.z);
+
+    const material = new THREE.ShaderMaterial({
+      vertexShader: volumetricVertexShader,
+      fragmentShader: volumetricFragmentShader,
+      uniforms: {
+        cellCenters: { value: cellCenters },
+        cellIntensities: { value: cellIntensities },
+        cellRadii: { value: cellRadii },
+        cellCount: { value: cells.length },
+        baseColor: { value: color },
+        opacity: { value: opacity },
+        volumeCenter: { value: volumeCenter },
+        volumeRadius: { value: sphereRadius },
+        lightDir: { value: this.lightDir },
+        windDir: { value: this.windDir.clone() },
+        windSpeed: { value: this.windSpeed },
+        radiusScale: { value: 1.0 },
+      },
+      transparent: true,
+      side: THREE.BackSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(worldCenter.x, midY, worldCenter.z);
+
+    // Add to volumetric scene if using low-res rendering, otherwise main scene
+    const targetScene = this.volumetricScene ?? this.scene;
+    targetScene.add(mesh);
+
+    return { mesh, material };
   }
 
-  private updateSphereImpostors(impostors: SphereImpostor[], field: FieldType): void {
+  private updateVolumetricField(volume: VolumetricField | null, field: FieldType): void {
+    if (!volume) return;
+
+    const cells = field.cells.slice(0, MAX_VOLUMETRIC_CELLS);
     const worldScale = this.transform?.worldScale ?? 1;
 
-    for (let i = 0; i < impostors.length; i++) {
-      const imp = impostors[i];
-      if (i < field.cells.length) {
-        const cell = field.cells[i];
+    const cellCenters = volume.material.uniforms.cellCenters.value as THREE.Vector3[];
+    const cellIntensities = volume.material.uniforms.cellIntensities.value as number[];
+    const cellRadii = volume.material.uniforms.cellRadii.value as number[];
+
+    const vc = volume.material.uniforms.volumeCenter.value as THREE.Vector3;
+    const vr = volume.material.uniforms.volumeRadius.value as number;
+    const midY = vc.y;
+    const height = vr * 2;
+
+    for (let i = 0; i < MAX_VOLUMETRIC_CELLS; i++) {
+      if (i < cells.length) {
+        const cell = cells[i];
         const worldPos = this.transform
           ? this.transform.toWorld(cell.center)
           : cell.center;
-
-        const center = imp.material.uniforms.sphereCenter.value as THREE.Vector3;
-        center.x = worldPos.x;
-        center.z = worldPos.z;
-
-        imp.material.uniforms.sphereRadius.value = cell.falloffRadius * worldScale;
-        imp.material.uniforms.intensity.value = cell.intensity;
+        // Maintain consistent Y positions (using cell index for determinism)
+        const cellY = midY + ((i * 0.618) % 1 - 0.5) * height * 0.7;
+        cellCenters[i].set(worldPos.x, cellY, worldPos.z);
+        cellIntensities[i] = cell.intensity;
+        cellRadii[i] = cell.falloffRadius * worldScale;
       } else {
-        imp.material.uniforms.intensity.value = 0;
+        cellCenters[i].set(0, 0, 0);
+        cellIntensities[i] = 0;
+        cellRadii[i] = 0;
       }
-      imp.material.uniformsNeedUpdate = true;
     }
-  }
 
-  // --- Visibility ---
-
-  private setImpostorsVisible(impostors: SphereImpostor[], vis: boolean): void {
-    for (const imp of impostors) {
-      imp.mesh.visible = vis;
-    }
+    volume.material.uniforms.cellCount.value = cells.length;
+    volume.material.uniformsNeedUpdate = true;
   }
 
   private updateVisibility(): void {
@@ -465,11 +565,15 @@ export class ChargeFieldRenderer {
     if (this.groundPlane) {
       this.groundPlane.mesh.visible = this.visible && this.groundVisible;
     }
-    if (this.atmosphericPlane) {
-      this.atmosphericPlane.mesh.visible = this.visible && this.atmosphericVisible;
+    if (this.atmosphericVolume) {
+      this.atmosphericVolume.mesh.visible = this.visible && this.atmosphericVisible;
     }
-    this.setImpostorsVisible(this.moistureImpostors, this.visible && this.moistureVisible);
-    this.setImpostorsVisible(this.ionizationImpostors, this.visible && this.ionizationVisible);
+    if (this.moistureVolume) {
+      this.moistureVolume.mesh.visible = this.visible && this.moistureVisible;
+    }
+    if (this.ionizationVolume) {
+      this.ionizationVolume.mesh.visible = this.visible && this.ionizationVisible;
+    }
   }
 
   setVisible(visible: boolean): void {
@@ -497,8 +601,8 @@ export class ChargeFieldRenderer {
 
   setAtmosphericVisible(visible: boolean): void {
     this.atmosphericVisible = visible;
-    if (this.atmosphericPlane) {
-      this.atmosphericPlane.mesh.visible = this.visible && visible;
+    if (this.atmosphericVolume) {
+      this.atmosphericVolume.mesh.visible = this.visible && visible;
     }
   }
 
@@ -508,7 +612,9 @@ export class ChargeFieldRenderer {
 
   setMoistureVisible(visible: boolean): void {
     this.moistureVisible = visible;
-    this.setImpostorsVisible(this.moistureImpostors, this.visible && visible);
+    if (this.moistureVolume) {
+      this.moistureVolume.mesh.visible = this.visible && visible;
+    }
   }
 
   isMoistureVisible(): boolean {
@@ -517,22 +623,14 @@ export class ChargeFieldRenderer {
 
   setIonizationVisible(visible: boolean): void {
     this.ionizationVisible = visible;
-    this.setImpostorsVisible(this.ionizationImpostors, this.visible && visible);
+    if (this.ionizationVolume) {
+      this.ionizationVolume.mesh.visible = this.visible && visible;
+    }
   }
 
   isIonizationVisible(): boolean {
     return this.ionizationVisible;
   }
-
-  // --- No-ops for backward compatibility ---
-
-  renderVolumetrics(_renderer: THREE.WebGLRenderer, _camera: THREE.Camera): void {}
-
-  isLowResEnabled(): boolean {
-    return false;
-  }
-
-  // --- Cleanup ---
 
   private disposeFieldPlane(plane: FieldPlane | null): void {
     if (!plane) return;
@@ -541,12 +639,116 @@ export class ChargeFieldRenderer {
     plane.material.dispose();
   }
 
-  private disposeImpostors(impostors: SphereImpostor[]): void {
-    for (const imp of impostors) {
-      this.scene.remove(imp.mesh);
-      imp.mesh.geometry.dispose();
-      imp.material.dispose();
+  private disposeVolumetricField(volume: VolumetricField | null): void {
+    if (!volume) return;
+    const targetScene = this.volumetricScene ?? this.scene;
+    targetScene.remove(volume.mesh);
+    volume.mesh.geometry.dispose();
+    volume.material.dispose();
+  }
+
+  /**
+   * Render volumetric fields to low-res target and composite.
+   * Call this each frame when using volumetricResolution < 1.0.
+   */
+  renderVolumetrics(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void {
+    if (!this.volumetricScene || this.resolutionScale >= 1.0) return;
+
+    // Check if any volumetric is visible
+    const hasVisibleVolumetric =
+      (this.visible && this.atmosphericVisible && this.atmosphericVolume) ||
+      (this.visible && this.moistureVisible && this.moistureVolume) ||
+      (this.visible && this.ionizationVisible && this.ionizationVolume);
+
+    if (!hasVisibleVolumetric) {
+      return;
     }
+
+    // Get current size and update render target if needed
+    const size = renderer.getSize(new THREE.Vector2());
+    const width = Math.floor(size.x * this.resolutionScale);
+    const height = Math.floor(size.y * this.resolutionScale);
+
+    if (width !== this.lastWidth || height !== this.lastHeight) {
+      this.initRenderTarget(width, height);
+      this.lastWidth = width;
+      this.lastHeight = height;
+    }
+
+    if (!this.renderTarget || !this.compositeScene || !this.compositeCamera) return;
+
+    // Update volumetric visibility in the separate scene
+    if (this.atmosphericVolume) {
+      this.atmosphericVolume.mesh.visible = this.visible && this.atmosphericVisible;
+    }
+    if (this.moistureVolume) {
+      this.moistureVolume.mesh.visible = this.visible && this.moistureVisible;
+    }
+    if (this.ionizationVolume) {
+      this.ionizationVolume.mesh.visible = this.visible && this.ionizationVisible;
+    }
+
+    // Render volumetric scene to low-res target
+    const currentRenderTarget = renderer.getRenderTarget();
+    const currentAutoClear = renderer.autoClear;
+
+    renderer.setRenderTarget(this.renderTarget);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear();
+    renderer.render(this.volumetricScene, camera);
+
+    // Composite to main framebuffer using orthographic camera
+    renderer.setRenderTarget(currentRenderTarget);
+    renderer.autoClear = false;
+    renderer.render(this.compositeScene!, this.compositeCamera!);
+    renderer.autoClear = currentAutoClear;
+  }
+
+  private initRenderTarget(width: number, height: number): void {
+    // Dispose old render target
+    if (this.renderTarget) {
+      this.renderTarget.dispose();
+    }
+
+    // Create new render target
+    this.renderTarget = new THREE.WebGLRenderTarget(width, height, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.HalfFloatType,
+    });
+
+    // Create composite scene and camera on first init
+    if (!this.compositeScene) {
+      this.compositeScene = new THREE.Scene();
+      this.compositeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      this.compositeMaterial = new THREE.ShaderMaterial({
+        vertexShader: compositeVertexShader,
+        fragmentShader: compositeFragmentShader,
+        uniforms: {
+          tDiffuse: { value: this.renderTarget.texture },
+        },
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      });
+
+      const geometry = new THREE.PlaneGeometry(2, 2);
+      this.compositeQuad = new THREE.Mesh(geometry, this.compositeMaterial);
+      this.compositeScene.add(this.compositeQuad);
+    } else {
+      // Update texture reference
+      this.compositeMaterial!.uniforms.tDiffuse.value = this.renderTarget.texture;
+    }
+  }
+
+  /**
+   * Check if low-res volumetric rendering is enabled.
+   */
+  isLowResEnabled(): boolean {
+    return this.resolutionScale < 1.0 && this.volumetricScene !== null;
   }
 
   dispose(): void {
@@ -556,13 +758,33 @@ export class ChargeFieldRenderer {
     this.disposeFieldPlane(this.groundPlane);
     this.groundPlane = null;
 
-    this.disposeFieldPlane(this.atmosphericPlane);
-    this.atmosphericPlane = null;
+    this.disposeVolumetricField(this.atmosphericVolume);
+    this.atmosphericVolume = null;
 
-    this.disposeImpostors(this.moistureImpostors);
-    this.moistureImpostors = [];
+    this.disposeVolumetricField(this.moistureVolume);
+    this.moistureVolume = null;
 
-    this.disposeImpostors(this.ionizationImpostors);
-    this.ionizationImpostors = [];
+    this.disposeVolumetricField(this.ionizationVolume);
+    this.ionizationVolume = null;
+
+    // Dispose low-res rendering resources
+    if (this.renderTarget) {
+      this.renderTarget.dispose();
+      this.renderTarget = null;
+    }
+
+    if (this.compositeQuad) {
+      this.compositeQuad.geometry.dispose();
+      this.compositeQuad = null;
+    }
+
+    if (this.compositeMaterial) {
+      this.compositeMaterial.dispose();
+      this.compositeMaterial = null;
+    }
+
+    this.compositeScene = null;
+    this.compositeCamera = null;
+    this.volumetricScene = null;
   }
 }
