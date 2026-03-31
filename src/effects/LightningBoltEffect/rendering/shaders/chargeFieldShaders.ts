@@ -129,7 +129,7 @@ void main() {
 }
 `;
 
-// Volumetric layered rendering - solid regions with stepped intensity
+// Volumetric field rendering — smooth, no jitter/grain
 export const volumetricFragmentShader = `
 precision highp float;
 
@@ -150,10 +150,6 @@ uniform float windSpeed;
 uniform float radiusScale;
 
 varying vec3 vWorldPosition;
-
-float hash3D(vec3 p) {
-  return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
-}
 
 float sampleField(vec3 p) {
   vec3 windDir3D = vec3(windDir.x, 0.0, windDir.y);
@@ -179,7 +175,6 @@ float sampleField(vec3 p) {
     float r = cellRadii[i] * radiusScale;
     if (dist < r) {
       float t = dist / r;
-      // Cubic approximation of cosine falloff (smoothstep-like, ~15% faster)
       float t2 = t * t;
       float falloff = 1.0 - t2 * (3.0 - 2.0 * t);
       totalField += cellIntensities[i] * falloff;
@@ -211,34 +206,33 @@ void main() {
     discard;
   }
 
+  // No jitter — deterministic steps for smooth, flicker-free output
   float stepSize = (tMax - tMin) / float(MAX_STEPS);
   vec3 accumulatedColor = vec3(0.0);
   float accumulatedAlpha = 0.0;
-
-  // Small jitter to reduce banding, but low amplitude to avoid graininess
-  float jitter = hash3D(vWorldPosition * 10.0) * stepSize * 0.3;
 
   vec3 boundCenter = (boundMin + boundMax) * 0.5;
   vec3 boundExtent = (boundMax - boundMin) * 0.5;
 
   for (int step = 0; step < MAX_STEPS; step++) {
-    float t = tMin + jitter + float(step) * stepSize;
-    if (t > tMax || accumulatedAlpha > 0.5) break;
+    // Sample at step midpoints for better coverage with fewer steps
+    float t = tMin + (float(step) + 0.5) * stepSize;
+    if (t > tMax) break;
 
     vec3 p = cameraPosition + rayDir * t;
     float field = sampleField(p);
 
-    if (field > 0.05) {
-      // Soft edge fade near bounding box boundaries
+    if (field > 0.02) {
       vec3 edgeDist = abs(p - boundCenter) / boundExtent;
-      float edgeFade = 1.0 - smoothstep(0.5, 0.95, max(max(edgeDist.x, edgeDist.y), edgeDist.z));
+      float edgeFade = 1.0 - smoothstep(0.6, 1.0, max(max(edgeDist.x, edgeDist.y), edgeDist.z));
 
-      // Density proportional to field strength and step size
-      float density = field * edgeFade * 0.5 * stepSize;
+      float density = field * edgeFade * 0.7 * stepSize;
       vec3 stepColor = baseColor * (0.5 + field * 0.5);
 
       accumulatedColor += stepColor * density * (1.0 - accumulatedAlpha);
       accumulatedAlpha += density * (1.0 - accumulatedAlpha);
+
+      if (accumulatedAlpha > 0.6) break;
     }
   }
 
