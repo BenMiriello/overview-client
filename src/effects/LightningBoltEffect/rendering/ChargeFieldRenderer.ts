@@ -143,7 +143,10 @@ export class ChargeFieldRenderer {
     this.groundPlane = this.createFieldPlane(
       ground, this.options.groundColor, this.options.opacity, this.worldGroundY
     );
-    this.unifiedVolume = this.createUnifiedVolume(atmospheric, moisture, ionization);
+
+    if (import.meta.env.VITE_SHOW_ATMOSPHERIC_LAYERS === 'true') {
+      this.unifiedVolume = this.createUnifiedVolume(atmospheric, moisture, ionization);
+    }
   }
 
   updateFromSimulator(simulator: AtmosphereSimulator): void {
