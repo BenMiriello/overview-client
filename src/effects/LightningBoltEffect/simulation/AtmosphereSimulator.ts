@@ -29,10 +29,10 @@ export interface AtmosphereSimulatorConfig {
 }
 
 export const DEFAULT_SIMULATOR_CONFIG: AtmosphereSimulatorConfig = {
-  chargeAccumulationRate: 0.15,
+  chargeAccumulationRate: 0.09,
   breakdownThreshold: 0.85,
   postStrikeChargeFactor: 0.15,
-  postStrikeNearbyFactor: 0.4,
+  postStrikeNearbyFactor: 0.25,
 
   baseWindSpeed: 0.003, // ~19 m/s in real units at cloud level
   windDirection: { x: 1, z: 0 }, // Ground-level wind direction
