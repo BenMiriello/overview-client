@@ -314,7 +314,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
             <CloudLightning size={20} />
           </div>
           <div className="section-expandable">
-            <span className="section-label">{`Charge: ${showCharge ? 'on' : 'off'}`}</span>
+            <span className="section-label">Cloud &amp; Ground Charge</span>
           </div>
         </div>
       )}
