@@ -121,7 +121,7 @@ export class ChargeFieldRenderer {
       this.atmosphericPlane = this.createFieldPlane(
         atmosphere.atmosphericCharge,
         this.options.atmosphericColor,
-        this.options.opacity * 1.5,
+        this.options.opacity * 3.0,
         this.worldGroundY + height * 0.55,
         true
       );
@@ -132,7 +132,7 @@ export class ChargeFieldRenderer {
       this.moisturePlane = this.createFieldPlane(
         atmosphere.moisture,
         this.options.moistureColor,
-        this.options.opacity * 1.8,
+        this.options.opacity * 3.5,
         this.worldGroundY + height * 0.4,
         true
       );
@@ -143,7 +143,7 @@ export class ChargeFieldRenderer {
       this.ionizationPlane = this.createFieldPlane(
         atmosphere.ionizationSeeds,
         this.options.ionizationColor,
-        this.options.opacity * 1.5,
+        this.options.opacity * 3.0,
         this.worldGroundY + height * 0.5,
         true
       );
