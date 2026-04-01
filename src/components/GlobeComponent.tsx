@@ -91,7 +91,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         if (controls) {
           // Auto-rotation will be initiated conditionally by introCameraMovement
           controls.autoRotateSpeed = 0.067; // 0.067 ISS orbital speed
-          controls.minDistance = 100.5; // Very close surface zoom for max tile detail
+          controls.minDistance = 100.1; // Very close surface zoom for max tile detail
           controls.maxDistance = 10000; // Zoom out limit
 
           const stopCameraMovement = () => {
