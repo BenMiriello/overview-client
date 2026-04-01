@@ -123,7 +123,7 @@ function handleBreakdown(breakdownPosition: Vec3): void {
   const atmosphereData = serializeAtmosphere();
 
   // 2. Apply post-strike effects IMMEDIATELY (doesn't need geometry)
-  simulator.onStrikeComplete(breakdownPosition, 0.7);
+  simulator.onStrikeComplete(breakdownPosition, 0.9);
 
   // 3. Track pending strike
   pendingStrikes.set(id, { simTimeMs, position: breakdownPosition });
