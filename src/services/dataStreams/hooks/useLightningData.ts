@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { LightningStrike } from '../../../models/LightningStrike';
-import { useWebSocket } from './useWebSocket';
+import { useWebSocket, ConnectionStatus } from './useWebSocket';
 import { DataStream } from '../interfaces';
 
 interface UseLightningDataProps {
@@ -8,7 +8,7 @@ interface UseLightningDataProps {
 }
 
 export function useLightningData({ url }: UseLightningDataProps) {
-  const { connected, lastUpdate, subscribe } = useWebSocket({ url });
+  const { connected, connectionStatus, lastUpdate, subscribe } = useWebSocket({ url });
   const subscribersRef = useRef<Set<(data: LightningStrike) => void>>(new Set());
 
   const processData = useCallback((data: any): LightningStrike | null => {
@@ -63,6 +63,7 @@ export function useLightningData({ url }: UseLightningDataProps) {
 
   return {
     connected,
+    connectionStatus,
     lastUpdate,
     dataStream: dataStreamRef.current
   };

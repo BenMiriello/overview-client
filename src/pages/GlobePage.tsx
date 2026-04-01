@@ -9,7 +9,7 @@ const GlobePage = () => {
   const globeEl = useRef<any>(null);
   const layerManagerRef = useRef<GlobeLayerManager | null>(null);
 
-  const { connected, lastUpdate, dataStream } = useLightningData({
+  const { connected, connectionStatus, lastUpdate, dataStream } = useLightningData({
     url: 'ws://localhost:3001'
   });
 
@@ -35,8 +35,9 @@ const GlobePage = () => {
         onGlobeReady={handleGlobeReady}
         onLayerManagerReady={handleLayerManagerReady}
       />
-      <StatusBar 
+      <StatusBar
         connected={connected}
+        connectionStatus={connectionStatus}
         lastUpdate={lastUpdate}
         lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
       />
