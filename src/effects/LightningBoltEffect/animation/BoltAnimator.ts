@@ -22,7 +22,8 @@ export class BoltAnimator {
   private timeline: BoltTimeline;
   private config: SimulationConfig;
   private speed: number;
-  private startTime: number = 0;
+  private virtualElapsed: number = 0;
+  private lastUpdateTime: number = 0;
   private started: boolean = false;
 
   private segmentById: Map<number, SegmentInfo>;
@@ -118,7 +119,8 @@ export class BoltAnimator {
   }
 
   start(currentTime: number): void {
-    this.startTime = currentTime;
+    this.lastUpdateTime = currentTime;
+    this.virtualElapsed = 0;
     this.started = true;
     this.peakBrightness.clear();
   }
@@ -127,9 +129,15 @@ export class BoltAnimator {
     return this.started;
   }
 
+  setSpeed(newSpeed: number): void {
+    this.speed = Math.max(0.01, newSpeed);
+  }
+
   update(currentTime: number): AnimationState {
-    const elapsed = (currentTime - this.startTime) * this.speed;
-    return this.computeState(elapsed);
+    const delta = currentTime - this.lastUpdateTime;
+    this.lastUpdateTime = currentTime;
+    this.virtualElapsed += delta * this.speed;
+    return this.computeState(this.virtualElapsed);
   }
 
   private computeState(elapsedMs: number): AnimationState {

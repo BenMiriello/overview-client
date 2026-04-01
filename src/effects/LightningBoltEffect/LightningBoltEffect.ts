@@ -143,6 +143,12 @@ export class LightningBoltEffect {
     }
   }
 
+  setSpeed(speed: number): void {
+    if (this.animator) {
+      this.animator.setSpeed(speed);
+    }
+  }
+
   updateResolution(width: number, height: number): void {
     this.renderer.updateResolution(width, height);
   }

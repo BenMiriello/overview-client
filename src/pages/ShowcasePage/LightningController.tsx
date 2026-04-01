@@ -99,6 +99,9 @@ const LightningController = ({
     if (playerRef.current) {
       playerRef.current.setConfig({ speed });
     }
+    if (strikeRef.current) {
+      strikeRef.current.setSpeed(speed);
+    }
   }, [speed]);
 
   useEffect(() => {
