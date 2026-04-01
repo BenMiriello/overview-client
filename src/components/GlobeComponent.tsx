@@ -91,7 +91,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         if (controls) {
           // Auto-rotation will be initiated conditionally by introCameraMovement
           controls.autoRotateSpeed = 0.067; // 0.067 ISS orbital speed
-          controls.minDistance = 105; // Zoom in limit
+          controls.minDistance = 100.5; // Very close surface zoom for max tile detail
           controls.maxDistance = 10000; // Zoom out limit
 
           const stopCameraMovement = () => {
@@ -113,6 +113,23 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         animationRef.current = introCameraMovement(globeEl, target);
       } catch (err) {
         console.error("Error setting up globe:", err);
+      }
+
+      // Enable progressive satellite tile loading.
+      // react-globe.gl's ref only exposes a whitelist of methods, so globeTileEngineUrl
+      // isn't on the ref directly. The underlying threeGlobe THREE.Group (from globe.gl's
+      // fromKapsule wrapper) has it — find it by traversing the scene.
+      const scene = globeEl.current.scene() as any;
+      if (scene) {
+        scene.traverse((obj: any) => {
+          if (typeof obj.globeTileEngineUrl === 'function') {
+            obj.globeTileEngineUrl(
+              (x: number, y: number, level: number) =>
+                `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`
+            );
+            obj.globeTileEngineMaxLevel(17);
+          }
+        });
       }
 
       if (!layerManagerRef.current) {
