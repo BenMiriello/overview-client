@@ -189,6 +189,10 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     });
 
     completedLightningBoltIds.forEach(id => {
+      const effect = this.lightningBoltEffects.get(id);
+      if (effect) {
+        effect.terminate();
+      }
       this.lightningBoltEffects.delete(id);
     });
 
@@ -205,6 +209,10 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     });
 
     completedMarkerIds.forEach(id => {
+      const effect = this.markerEffects.get(id);
+      if (effect) {
+        effect.terminate();
+      }
       this.markerEffects.delete(id);
     });
   }
