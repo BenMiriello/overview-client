@@ -5,11 +5,16 @@ export class LightningMaterials {
   private baseMaterial: LineMaterial;
   private glowMaterial: LineMaterial;
   private depthMaterials: Map<string, LineMaterial> = new Map();
+  private baseLineWidth: number;
+  private lineWidthScale: number = 1.0;
 
-  constructor() {
+  constructor(baseLineWidth: number = 4) {
+    this.baseLineWidth = baseLineWidth;
+    const glowWidth = baseLineWidth * 0.75;
+
     this.baseMaterial = new LineMaterial({
       color: 0xffffff,
-      linewidth: 3,
+      linewidth: glowWidth,
       transparent: true,
       opacity: 1.0,
       depthWrite: false,
@@ -20,7 +25,7 @@ export class LightningMaterials {
 
     this.glowMaterial = new LineMaterial({
       color: 0xaaccff,
-      linewidth: 3,
+      linewidth: glowWidth,
       transparent: true,
       opacity: 0.12,
       depthWrite: false,
@@ -31,7 +36,7 @@ export class LightningMaterials {
   }
 
   getMaterialForDepth(depth: number): LineMaterial {
-    const linewidth = this.getLineWidth(depth, 4);
+    const linewidth = this.getLineWidth(depth, this.baseLineWidth) * this.lineWidthScale;
     const color = this.getColor(depth);
 
     const key = `${depth.toFixed(2)}`;
@@ -84,6 +89,17 @@ export class LightningMaterials {
     this.glowMaterial.resolution.set(width, height);
     for (const mat of this.depthMaterials.values()) {
       mat.resolution.set(width, height);
+    }
+  }
+
+  setLineWidthScale(scale: number): void {
+    this.lineWidthScale = scale;
+    const glowWidth = this.baseLineWidth * 0.75 * scale;
+    this.baseMaterial.linewidth = glowWidth;
+    this.glowMaterial.linewidth = glowWidth;
+    for (const [key, mat] of this.depthMaterials) {
+      const depth = parseFloat(key);
+      mat.linewidth = this.getLineWidth(depth, this.baseLineWidth) * scale;
     }
   }
 

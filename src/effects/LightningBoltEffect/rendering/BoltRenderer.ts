@@ -35,9 +35,9 @@ export class BoltRenderer {
 
   private transform: CoordinateTransform | null = null;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, baseLineWidth?: number) {
     this.group = new THREE.Group();
-    this.materials = new LightningMaterials();
+    this.materials = new LightningMaterials(baseLineWidth);
     scene.add(this.group);
   }
 
@@ -196,6 +196,10 @@ export class BoltRenderer {
       return defaultGlow.lerp(continuingColor, t);
     }
     return defaultGlow;
+  }
+
+  setLineWidthScale(scale: number): void {
+    this.materials.setLineWidthScale(scale);
   }
 
   updateResolution(width: number, height: number): void {

@@ -171,13 +171,28 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     this.activeEffects = [];
   }
 
+  private getLineWidthScale(): number {
+    if (!this.globeEl) return 1.0;
+    try {
+      const camera = this.globeEl.camera();
+      const distance = camera.position.length();
+      const referenceDistance = 300;
+      return Math.max(0.25, Math.min(2.5, referenceDistance / distance));
+    } catch {
+      return 1.0;
+    }
+  }
+
   update(currentTime: number): void {
     if (!this.visible) return;
+
+    const lineWidthScale = this.getLineWidthScale();
 
     // Update lightning bolt effects and collect completed IDs
     const completedLightningBoltIds: string[] = [];
 
     this.lightningBoltEffects.forEach((effect, id) => {
+      effect.setLineWidthScale(lineWidthScale);
       effect.update(currentTime);
       const isActive = !effect.isComplete();
 
