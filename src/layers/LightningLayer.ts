@@ -62,8 +62,6 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   }
 
   addData(strike: LightningStrike): void {
-    console.log('LightningLayer: Adding strike', strike);
-    console.log('showLightningBolt config:', getConfig<boolean>('layers.lightning.showLightningBolt'));
     if (getConfig<boolean>('layers.lightning.showLightningBolt')) {
       this.createLightningBoltEffect(strike);
     }
@@ -171,13 +169,28 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     this.activeEffects = [];
   }
 
+  private getLineWidthScale(): number {
+    if (!this.globeEl) return 1.0;
+    try {
+      const camera = this.globeEl.camera();
+      const distance = camera.position.length();
+      const referenceDistance = 400; // matches default intro camera distance
+      return Math.max(0.2, Math.min(2.0, referenceDistance / distance));
+    } catch {
+      return 1.0;
+    }
+  }
+
   update(currentTime: number): void {
     if (!this.visible) return;
+
+    const lineWidthScale = this.getLineWidthScale();
 
     // Update lightning bolt effects and collect completed IDs
     const completedLightningBoltIds: string[] = [];
 
     this.lightningBoltEffects.forEach((effect, id) => {
+      effect.setLineWidthScale(lineWidthScale);
       effect.update(currentTime);
       const isActive = !effect.isComplete();
 
@@ -189,6 +202,10 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     });
 
     completedLightningBoltIds.forEach(id => {
+      const effect = this.lightningBoltEffects.get(id);
+      if (effect) {
+        effect.terminate();
+      }
       this.lightningBoltEffects.delete(id);
     });
 
@@ -205,6 +222,10 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     });
 
     completedMarkerIds.forEach(id => {
+      const effect = this.markerEffects.get(id);
+      if (effect) {
+        effect.terminate();
+      }
       this.markerEffects.delete(id);
     });
   }
@@ -212,33 +233,19 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   private enforceMaxDisplayedStrikes(): void {
     const maxDisplayedStrikes = getConfig<number>('layers.lightning.maxDisplayedStrikes') || 256;
 
-    if (this.markerEffects.size <= maxDisplayedStrikes) return;
-
-    // Get all markers sorted by creation time (oldest first)
-    const markers = Array.from(this.markerEffects.entries())
-      .sort((a, b) => {
-        const aTime = a[1].getObject().userData.createdAt || 0;
-        const bTime = b[1].getObject().userData.createdAt || 0;
-        return aTime - bTime;
-      });
-
-    // Remove oldest markers that exceed the limit
-    const removeCount = markers.length - maxDisplayedStrikes;
-
-    if (removeCount <= 0) return;
-
-    markers.slice(0, removeCount).forEach(([id, effect]) => {
+    // Map preserves insertion order — oldest entries are first.
+    while (this.markerEffects.size > maxDisplayedStrikes) {
+      const [id, effect] = this.markerEffects.entries().next().value;
       effect.terminate();
       this.markerEffects.delete(id);
 
-      // Also remove any associated lightning bolt effect
       const lightningBolt = this.lightningBoltEffects.get(id);
       if (lightningBolt) {
         lightningBolt.terminate();
         this.lightningBoltEffects.delete(id);
         this.activeEffects = this.activeEffects.filter(e => e.id !== id);
       }
-    });
+    }
   }
 
   getActiveLightningBoltCount(): number {

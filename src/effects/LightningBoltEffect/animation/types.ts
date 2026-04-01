@@ -8,6 +8,12 @@ export enum AnimationPhase {
   COMPLETE = 'complete',
 }
 
+export interface LeaderTipInfo {
+  position: { x: number; y: number; z: number };
+  segmentId: number;
+  isMainChannel: boolean;
+}
+
 export interface AnimationState {
   phase: AnimationPhase;
   phaseProgress: number;
@@ -15,4 +21,5 @@ export interface AnimationState {
   segmentBrightness: Map<number, number>;
   returnStrokePosition: number;
   strokeCount: number;
+  leaderTips?: LeaderTipInfo[];
 }

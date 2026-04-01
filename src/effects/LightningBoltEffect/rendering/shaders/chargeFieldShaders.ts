@@ -6,7 +6,8 @@
  * Fresnel-based edge brightness - edges appear brighter when viewed at grazing angles.
  */
 
-export const MAX_CELLS = 16;
+export const MAX_CELLS = 24;
+export const MAX_VOLUMETRIC_CELLS = 8;
 
 // Vertex shader for flat planes (ceiling/ground) - outputs world XZ for metaball computation
 export const chargeFieldVertexShader = `
@@ -24,7 +25,7 @@ void main() {
 export const chargeFieldFragmentShader = `
 precision highp float;
 
-#define MAX_CELLS 16
+#define MAX_CELLS 24
 
 uniform vec2 cellCenters[MAX_CELLS];
 uniform float cellIntensities[MAX_CELLS];
@@ -38,14 +39,34 @@ uniform float windSpeed;
 varying vec2 vWorldXZ;
 varying vec2 vUv;
 
-void main() {
-  // Compute perpendicular to wind direction
-  vec2 perpDir = vec2(-windDir.y, windDir.x);
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
 
-  // Wind stretch factor (1.0 to 2.5 based on wind speed)
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
+             mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+}
+
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.5));
+  for (int i = 0; i < 3; i++) {
+    v += a * noise(p);
+    p = rot * p * 2.0 + vec2(100.0);
+    a *= 0.5;
+  }
+  return v;
+}
+
+void main() {
+  vec2 perpDir = vec2(-windDir.y, windDir.x);
   float stretchFactor = 1.0 + windSpeed * 1.5;
 
-  // Sum field contributions from all cells (metaball technique)
   float totalField = 0.0;
 
   for (int i = 0; i < MAX_CELLS; i++) {
@@ -53,15 +74,17 @@ void main() {
 
     vec2 d = vWorldXZ - cellCenters[i];
 
-    // Wind deformation: elliptical stretch in wind direction
+    // Noise warp: distort distance for irregular organic boundaries
+    float noiseWarp = fbm(vWorldXZ * 3.5 + vec2(float(i) * 17.3, float(i) * 31.7));
+
     float alongWind = dot(d, windDir);
     float perpWind = dot(d, perpDir);
     float dist = sqrt((alongWind / stretchFactor) * (alongWind / stretchFactor) + perpWind * perpWind);
+    dist *= (1.0 - 0.35 * noiseWarp);
 
     float r = cellRadii[i];
     if (dist < r) {
       float t = dist / r;
-      // Smooth falloff for metaball merging
       float falloff = 1.0 - t * t;
       totalField += cellIntensities[i] * falloff;
     }
@@ -75,53 +98,17 @@ void main() {
   // Normalize field (max ~1.5 when cells overlap)
   float field = clamp(totalField / 1.2, 0.0, 1.0);
 
-  vec3 col = vec3(0.0);
-  float alpha = 0.0;
+  // Soft atmospheric glow - very subtle, blends into environment
+  float outerGlow = smoothstep(0.08, 0.35, field);
+  float innerGlow = smoothstep(0.35, 0.7, field);
+  float coreGlow = smoothstep(0.65, 1.0, field);
 
-  // Clean contour lines at 4 thresholds
-  float thresholds[4];
-  thresholds[0] = 0.2;
-  thresholds[1] = 0.4;
-  thresholds[2] = 0.6;
-  thresholds[3] = 0.8;
+  vec3 col = baseColor * 0.3 * outerGlow;
+  col += baseColor * 0.4 * innerGlow;
+  col += mix(baseColor, vec3(1.0), 0.2) * coreGlow * 0.3;
 
-  // Anti-aliasing width based on screen-space derivatives
-  float aa = fwidth(field) * 1.5;
-  float lineWidth = 0.015;
-  float fadeWidth = 0.06;
-
-  for (int i = 0; i < 4; i++) {
-    float t = thresholds[i];
-    float distFromLine = abs(field - t);
-
-    // Sharp anti-aliased contour line
-    float line = 1.0 - smoothstep(lineWidth - aa, lineWidth + aa, distFromLine);
-
-    // Inward fade: visible only where field > threshold, fades out further in
-    float inwardFade = smoothstep(t, t + fadeWidth, field) *
-                       (1.0 - smoothstep(t + fadeWidth, t + fadeWidth * 2.0, field));
-
-    // Combine line and fade
-    float contour = max(line, inwardFade * 0.4);
-
-    // Depth-based brightness: inner contours brighter
-    float depth = float(i) / 3.0;
-    float brightness = 0.3 + depth * 0.7;
-
-    // Color: outer contours dim, inner contours glow
-    vec3 contourColor = mix(baseColor * 0.5, baseColor * 1.3, depth);
-    contourColor = mix(contourColor, vec3(1.0), depth * 0.4);
-
-    col += contourColor * contour * brightness;
-    alpha += contour * brightness * 0.5;
-  }
-
-  // Subtle center glow for depth
-  float centerGlow = pow(field, 2.5) * 0.25;
-  col += baseColor * 1.1 * centerGlow;
-  alpha += centerGlow * 0.3;
-
-  alpha = clamp(alpha * opacity, 0.0, 0.85);
+  float alpha = outerGlow * 0.15 + innerGlow * 0.12 + coreGlow * 0.08;
+  alpha = clamp(alpha * opacity, 0.0, 0.3);
 
   if (alpha < 0.01) {
     discard;
@@ -142,138 +129,129 @@ void main() {
 }
 `;
 
-// Volumetric layered rendering - solid regions with stepped intensity
+/**
+ * Unified volumetric field shader — samples all three atmospheric fields
+ * (atmospheric charge, moisture, ionization) in a single ray-march pass.
+ * This avoids depth-test conflicts between overlapping transparent volumes.
+ */
 export const volumetricFragmentShader = `
 precision highp float;
 
-#define MAX_CELLS 16
-#define MAX_STEPS 24
-#define PI 3.14159265359
+#define MAX_CELLS 8
+#define MAX_STEPS 6
 
-uniform vec3 cellCenters[MAX_CELLS];
-uniform float cellIntensities[MAX_CELLS];
-uniform float cellRadii[MAX_CELLS];
-uniform int cellCount;
-uniform vec3 baseColor;
-uniform float opacity;
-uniform vec3 boundMin;
-uniform vec3 boundMax;
-uniform vec3 lightDir;
+// Three fields, each with up to MAX_CELLS cells
+uniform vec3 atmoCenters[MAX_CELLS];
+uniform float atmoIntensities[MAX_CELLS];
+uniform float atmoRadii[MAX_CELLS];
+uniform int atmoCount;
+uniform vec3 atmoColor;
+uniform float atmoOpacity;
+
+uniform vec3 moistCenters[MAX_CELLS];
+uniform float moistIntensities[MAX_CELLS];
+uniform float moistRadii[MAX_CELLS];
+uniform int moistCount;
+uniform vec3 moistColor;
+uniform float moistOpacity;
+
+uniform vec3 ionCenters[MAX_CELLS];
+uniform float ionIntensities[MAX_CELLS];
+uniform float ionRadii[MAX_CELLS];
+uniform int ionCount;
+uniform vec3 ionColor;
+uniform float ionOpacity;
+
+uniform vec3 volumeCenter;
+uniform float volumeRadius;
 uniform vec2 windDir;
 uniform float windSpeed;
-uniform float radiusScale;
 
 varying vec3 vWorldPosition;
 
-float hash3D(vec3 p) {
-  return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
-}
-
-float sampleField(vec3 p) {
-  vec3 windDir3D = vec3(windDir.x, 0.0, windDir.y);
-  vec3 perpDir = vec3(-windDir.y, 0.0, windDir.x);
-  float stretchFactor = 1.0 + windSpeed * 1.5;
-
-  float totalField = 0.0;
-
+float sampleCells(vec3 p, vec3 centers[MAX_CELLS], float intensities[MAX_CELLS],
+                   float radii[MAX_CELLS], int count, vec3 wind3D, vec3 perp, float stretch) {
+  float total = 0.0;
   for (int i = 0; i < MAX_CELLS; i++) {
-    if (i >= cellCount) break;
-
-    vec3 d = p - cellCenters[i];
-    float alongWind = dot(d, windDir3D);
-    float perpWind = dot(d, perpDir);
-    float verticalDist = d.y;
-
-    float dist = sqrt(
-      (alongWind / stretchFactor) * (alongWind / stretchFactor) +
-      perpWind * perpWind +
-      verticalDist * verticalDist
-    );
-
-    float r = cellRadii[i] * radiusScale;
+    if (i >= count) break;
+    vec3 d = p - centers[i];
+    float aw = dot(d, wind3D);
+    float pw = dot(d, perp);
+    float dist = sqrt((aw / stretch) * (aw / stretch) + pw * pw + d.y * d.y);
+    float r = radii[i];
     if (dist < r) {
       float t = dist / r;
-      // Cosine falloff to match VoronoiField
-      float falloff = (cos(t * PI) + 1.0) * 0.5;
-      totalField += cellIntensities[i] * falloff;
+      float t2 = t * t;
+      total += intensities[i] * (1.0 - t2 * (3.0 - 2.0 * t));
     }
   }
-
-  return totalField;
+  return total;
 }
 
-vec2 intersectBox(vec3 origin, vec3 dir, vec3 bmin, vec3 bmax) {
-  vec3 invDir = 1.0 / dir;
-  vec3 t0s = (bmin - origin) * invDir;
-  vec3 t1s = (bmax - origin) * invDir;
-  vec3 tsmaller = min(t0s, t1s);
-  vec3 tbigger = max(t0s, t1s);
-  float tmin = max(max(tsmaller.x, tsmaller.y), tsmaller.z);
-  float tmax = min(min(tbigger.x, tbigger.y), tbigger.z);
-  return vec2(max(tmin, 0.0), tmax);
+vec2 intersectSphere(vec3 origin, vec3 dir, vec3 center, float radius) {
+  vec3 oc = origin - center;
+  float b = dot(oc, dir);
+  float c = dot(oc, oc) - radius * radius;
+  float h = b * b - c;
+  if (h < 0.0) return vec2(-1.0);
+  float sq = sqrt(h);
+  return vec2(-b - sq, -b + sq);
 }
 
 void main() {
   vec3 rayDir = normalize(vWorldPosition - cameraPosition);
 
-  vec2 tBounds = intersectBox(cameraPosition, rayDir, boundMin, boundMax);
-  float tMin = tBounds.x;
+  vec2 tBounds = intersectSphere(cameraPosition, rayDir, volumeCenter, volumeRadius);
+  float tMin = max(tBounds.x, 0.0);
   float tMax = tBounds.y;
 
-  if (tMax < tMin || tMax < 0.0) {
+  if (tMax < 0.0) {
     discard;
   }
+
+  vec3 wind3D = vec3(windDir.x, 0.0, windDir.y);
+  vec3 perp = vec3(-windDir.y, 0.0, windDir.x);
+  float stretch = 1.0 + windSpeed * 1.5;
 
   float stepSize = (tMax - tMin) / float(MAX_STEPS);
   vec3 accumulatedColor = vec3(0.0);
   float accumulatedAlpha = 0.0;
 
-  float jitter = hash3D(vWorldPosition * 100.0) * stepSize;
-  float prevField = 0.0;
-
   for (int step = 0; step < MAX_STEPS; step++) {
-    float t = tMin + jitter + float(step) * stepSize;
-    if (t > tMax || accumulatedAlpha > 0.95) break;
+    float t = tMin + (float(step) + 0.5) * stepSize;
+    if (t > tMax) break;
 
     vec3 p = cameraPosition + rayDir * t;
-    float field = sampleField(p);
 
-    if (field > 0.05) {
-      // Determine layer (0-3) based on field value
-      int layer = 0;
-      if (field > 0.6) layer = 3;
-      else if (field > 0.4) layer = 2;
-      else if (field > 0.2) layer = 1;
+    // Sample all three fields at this point
+    float atmoField = sampleCells(p, atmoCenters, atmoIntensities, atmoRadii, atmoCount, wind3D, perp, stretch);
+    float moistField = sampleCells(p, moistCenters, moistIntensities, moistRadii, moistCount, wind3D, perp, stretch);
+    float ionField = sampleCells(p, ionCenters, ionIntensities, ionRadii, ionCount, wind3D, perp, stretch);
 
-      // Previous layer for boundary detection
-      int prevLayer = 0;
-      if (prevField > 0.6) prevLayer = 3;
-      else if (prevField > 0.4) prevLayer = 2;
-      else if (prevField > 0.2) prevLayer = 1;
+    // Combine fields: each contributes its own color weighted by density
+    float atmoD = sqrt(max(atmoField, 0.0)) * atmoOpacity;
+    float moistD = sqrt(max(moistField, 0.0)) * moistOpacity;
+    float ionD = sqrt(max(ionField, 0.0)) * ionOpacity;
 
-      // Layer-based brightness (inner = brighter)
-      float layerBrightness = 0.6 + float(layer) * 0.15;
-      vec3 layerColor = baseColor * layerBrightness;
-      layerColor = mix(layerColor, vec3(1.0), float(layer) * 0.1);
+    float totalDensity = (atmoD + moistD + ionD) * 0.25 * stepSize;
 
-      // Boundary emphasis when crossing layers
-      float boundaryBoost = (layer != prevLayer && step > 0) ? 2.5 : 1.0;
+    if (totalDensity > 0.001) {
+      // Weighted color blend
+      float totalWeight = atmoD + moistD + ionD + 0.001;
+      vec3 stepColor = (atmoColor * atmoD + moistColor * moistD + ionColor * ionD) / totalWeight;
 
-      // Alpha per step
-      float alpha = 0.12 * boundaryBoost * stepSize * 4.0;
+      accumulatedColor += stepColor * totalDensity * (1.0 - accumulatedAlpha);
+      accumulatedAlpha += totalDensity * (1.0 - accumulatedAlpha);
 
-      accumulatedColor += layerColor * alpha * (1.0 - accumulatedAlpha);
-      accumulatedAlpha += alpha * (1.0 - accumulatedAlpha);
+      if (accumulatedAlpha > 0.6) break;
     }
-
-    prevField = field;
   }
 
-  if (accumulatedAlpha < 0.01) {
+  if (accumulatedAlpha < 0.005) {
     discard;
   }
 
-  gl_FragColor = vec4(accumulatedColor, accumulatedAlpha * opacity);
+  gl_FragColor = vec4(accumulatedColor, accumulatedAlpha);
 }
 `;
 

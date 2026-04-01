@@ -7,11 +7,19 @@ export class LeadTimeManager {
   private strikeComputeHistory: number[] = [];
   private maxHistorySize = 20;
 
+  // Conservative estimate based on detail level BEFORE we have actual strike data
+  private defaultStrikeTimeMs: number;
+
   // Configurable thresholds (in ms)
-  // Must account for strike computation (4-6 seconds)
-  private minLeadTime = 6000;
-  private targetLeadTime = 10000;
-  private maxLeadTime = 20000;
+  // Geometry is async now - snapshots flow regardless of strike computation
+  private minLeadTime = 2000;
+  private targetLeadTime = 5000;
+  private maxLeadTime = 12000;
+
+  constructor(detail: number = 1.0) {
+    // Geometry is fully async -- only snapshot delivery matters, not bolt compute
+    this.defaultStrikeTimeMs = Math.max(1500, detail * 2000);
+  }
 
   /**
    * Record a snapshot computation time.
@@ -38,14 +46,14 @@ export class LeadTimeManager {
    * This is the minimum buffer we need to avoid underruns.
    */
   getRequiredLeadTime(): number {
-    // Worst-case strike time (or default if no data)
+    // Use conservative default until we have actual strike data
     const maxStrikeTime =
       this.strikeComputeHistory.length > 0
         ? Math.max(...this.strikeComputeHistory)
-        : 3000;
+        : this.defaultStrikeTimeMs;
 
-    // Add safety margin (2x worst case)
-    const required = Math.max(this.minLeadTime, maxStrikeTime * 2);
+    // Safety margin (1.5x worst case -- geometry is async)
+    const required = Math.max(this.minLeadTime, maxStrikeTime * 1.5);
     return Math.min(required, this.maxLeadTime);
   }
 
@@ -53,7 +61,7 @@ export class LeadTimeManager {
    * Get the target lead time we should try to maintain.
    */
   getTargetLeadTime(): number {
-    return Math.max(this.targetLeadTime, this.getRequiredLeadTime() * 1.5);
+    return Math.max(this.targetLeadTime, this.getRequiredLeadTime() * 1.2);
   }
 
   /**
@@ -65,14 +73,33 @@ export class LeadTimeManager {
 
   /**
    * Suggest a playback speed multiplier based on buffer state.
-   * Returns 1.0 (play) or 0.0 (pause) - binary decision only.
    *
-   * IMPORTANT: Variable speed (0.25x, 0.5x, etc.) causes slow-motion physics
-   * which looks wrong. We only ever play at full speed or pause completely.
+   * Uses gradual slowdown when buffer is getting low to avoid jarring pauses.
+   * This is a deliberate tradeoff: very slow playback looks slightly odd,
+   * but complete freezes for 1-2 minutes are much worse UX.
+   *
+   * The slowdown is aggressive enough that the buffer will catch up
+   * during long strike computations (25+ seconds).
    */
   suggestPlaybackSpeed(currentLeadTimeMs: number): number {
     const required = this.getRequiredLeadTime();
-    return currentLeadTimeMs >= required ? 1.0 : 0.0;
+
+    // Plenty of buffer - play at full speed
+    if (currentLeadTimeMs >= required) {
+      return 1.0;
+    }
+
+    // Critical threshold: below 500ms, pause completely
+    const criticalMs = 500;
+    if (currentLeadTimeMs < criticalMs) {
+      return 0.0;
+    }
+
+    // Gradual slowdown between critical and required
+    // At half required, play at 0.25x; at quarter required, play at 0.1x
+    const ratio = (currentLeadTimeMs - criticalMs) / (required - criticalMs);
+    const speed = 0.1 + ratio * 0.9; // Range: 0.1 to 1.0
+    return Math.min(1.0, Math.max(0.1, speed));
   }
 
   /**

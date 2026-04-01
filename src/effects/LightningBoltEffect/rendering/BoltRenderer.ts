@@ -2,9 +2,14 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { BoltGeometry, Vec3 } from '../simulation';
-import { AnimationState } from '../animation';
+import { AnimationState, AnimationPhase } from '../animation';
 import { LightningMaterials } from './LightningMaterials';
 import { CoordinateTransform } from '../CoordinateTransform';
+
+// Continuing current colors: transition from white -> orange -> red during decay
+const WHITE = new THREE.Color(1.0, 1.0, 1.0);
+const ORANGE = new THREE.Color(1.0, 0.6, 0.2);
+const DIM_RED = new THREE.Color(0.8, 0.3, 0.1);
 
 interface DepthGroup {
   segmentIds: number[];
@@ -23,15 +28,14 @@ export class BoltRenderer {
   private group: THREE.Group;
   private materials: LightningMaterials;
   private depthGroups: Map<number, DepthGroup> = new Map();
-  private glowGroup: DepthGroup | null = null;
 
   private segmentIndexMap: Map<number, { depthBucket: number; indexInGroup: number }> = new Map();
 
   private transform: CoordinateTransform | null = null;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, baseLineWidth?: number) {
     this.group = new THREE.Group();
-    this.materials = new LightningMaterials();
+    this.materials = new LightningMaterials(baseLineWidth);
     scene.add(this.group);
   }
 
@@ -60,35 +64,38 @@ export class BoltRenderer {
       depthGroup.line.renderOrder = 1000 - Math.floor(bucket * 10);
       this.group.add(depthGroup.line);
     }
-
-    const mainSegs = geometry.segments.filter(s => s.isMainChannel);
-    if (mainSegs.length > 0) {
-      this.glowGroup = this.createGlowGroup(mainSegs);
-      this.glowGroup.line.renderOrder = 999;
-      this.group.add(this.glowGroup.line);
-    }
   }
 
   render(state: AnimationState): void {
     const BRIGHTNESS_THRESHOLD = 0.05;
+    // MaxEquation blending prevents accumulation at junctions, so full brightness is safe.
+    const MAX_BRIGHTNESS = 0.9;
+
+    // Compute continuing current color based on phase
+    const continuingColor = this.getContinuingCurrentColor(state);
 
     for (const [bucket, group] of this.depthGroups) {
       const { colors, segmentIds, geometry: geom } = group;
       const mat = this.materials.getMaterialForDepth(bucket);
       const baseColor = new THREE.Color(mat.color);
 
+      // Blend base color with continuing current color during decay phases
+      const blendedColor = this.blendWithContinuingCurrent(baseColor, continuingColor, state);
+
       for (let i = 0; i < segmentIds.length; i++) {
         const segId = segmentIds[i];
         const rawBrightness = state.segmentBrightness.get(segId) ?? 0;
         const visible = state.visibleSegments.has(segId);
-        const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD) ? rawBrightness : 0;
+        const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD)
+          ? Math.min(rawBrightness, MAX_BRIGHTNESS)
+          : 0;
 
-        const r = baseColor.r * alpha;
-        const g = baseColor.g * alpha;
-        const b = baseColor.b * alpha;
+        const r = blendedColor.r * alpha;
+        const g = blendedColor.g * alpha;
+        const b = blendedColor.b * alpha;
 
         const ci = i * 6;
-        colors[ci] = r;
+        colors[ci]     = r;
         colors[ci + 1] = g;
         colors[ci + 2] = b;
         colors[ci + 3] = r;
@@ -100,29 +107,41 @@ export class BoltRenderer {
       geom.getAttribute('instanceColorStart').needsUpdate = true;
       geom.getAttribute('instanceColorEnd').needsUpdate = true;
     }
+  }
 
-    if (this.glowGroup) {
-      const { colors, segmentIds, geometry: geom } = this.glowGroup;
-
-      for (let i = 0; i < segmentIds.length; i++) {
-        const segId = segmentIds[i];
-        const rawBrightness = state.segmentBrightness.get(segId) ?? 0;
-        const visible = state.visibleSegments.has(segId);
-        const alpha = (visible && rawBrightness >= BRIGHTNESS_THRESHOLD) ? rawBrightness * 0.4 : 0;
-
-        const ci = i * 6;
-        colors[ci] = 0.67 * alpha;
-        colors[ci + 1] = 0.8 * alpha;
-        colors[ci + 2] = 1.0 * alpha;
-        colors[ci + 3] = 0.67 * alpha;
-        colors[ci + 4] = 0.8 * alpha;
-        colors[ci + 5] = 1.0 * alpha;
-      }
-
-      geom.setColors(colors);
-      geom.getAttribute('instanceColorStart').needsUpdate = true;
-      geom.getAttribute('instanceColorEnd').needsUpdate = true;
+  private getContinuingCurrentColor(state: AnimationState): THREE.Color {
+    // Only apply continuing current color during stroke hold and fading
+    if (state.phase === AnimationPhase.STROKE_HOLD) {
+      // During hold: transition white -> orange
+      const t = state.phaseProgress;
+      return WHITE.clone().lerp(ORANGE, t * 0.7);
+    } else if (state.phase === AnimationPhase.FADING) {
+      // During fade: transition orange -> dim red
+      const t = state.phaseProgress;
+      return ORANGE.clone().lerp(DIM_RED, t);
     }
+    return WHITE;
+  }
+
+  private blendWithContinuingCurrent(
+    baseColor: THREE.Color,
+    continuingColor: THREE.Color,
+    state: AnimationState
+  ): THREE.Color {
+    // Only blend during post-stroke phases
+    if (state.phase === AnimationPhase.STROKE_HOLD ||
+        state.phase === AnimationPhase.FADING) {
+      // Stronger blend as we progress through decay
+      const blendAmount = state.phase === AnimationPhase.FADING
+        ? 0.5 + state.phaseProgress * 0.5
+        : state.phaseProgress * 0.4;
+      return baseColor.clone().lerp(continuingColor, blendAmount);
+    }
+    return baseColor;
+  }
+
+  setLineWidthScale(scale: number): void {
+    this.materials.setLineWidthScale(scale);
   }
 
   updateResolution(width: number, height: number): void {
@@ -147,13 +166,6 @@ export class BoltRenderer {
       this.group.remove(group.line);
     }
     this.depthGroups.clear();
-
-    if (this.glowGroup) {
-      this.glowGroup.geometry.dispose();
-      this.group.remove(this.glowGroup.line);
-      this.glowGroup = null;
-    }
-
     this.segmentIndexMap.clear();
   }
 
@@ -196,37 +208,5 @@ export class BoltRenderer {
     line.computeLineDistances();
 
     return { segmentIds, positions, colors, geometry: geom, line, depth: depthBucket };
-  }
-
-  private createGlowGroup(segments: BoltGeometry['segments']): DepthGroup {
-    const n = segments.length;
-    const positions = new Float32Array(n * 6);
-    const colors = new Float32Array(n * 6);
-    const segmentIds: number[] = [];
-
-    for (let i = 0; i < n; i++) {
-      const seg = segments[i];
-      segmentIds.push(seg.id);
-
-      const ws = this.toWorld(seg.start);
-      const we = this.toWorld(seg.end);
-
-      positions[i * 6] = ws.x;
-      positions[i * 6 + 1] = ws.y;
-      positions[i * 6 + 2] = ws.z;
-      positions[i * 6 + 3] = we.x;
-      positions[i * 6 + 4] = we.y;
-      positions[i * 6 + 5] = we.z;
-    }
-
-    const geom = new LineSegmentsGeometry();
-    geom.setPositions(positions);
-    geom.setColors(colors);
-
-    const mat = this.materials.getGlowMaterial();
-    const line = new LineSegments2(geom, mat);
-    line.computeLineDistances();
-
-    return { segmentIds, positions, colors, geometry: geom, line, depth: 0 };
   }
 }

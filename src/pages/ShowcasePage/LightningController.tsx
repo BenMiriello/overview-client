@@ -55,7 +55,7 @@ const LightningController = ({
   showMoisture = true,
   showIonization = true,
 }: LightningControllerProps) => {
-  const { scene, size } = useThree();
+  const { scene, size, gl, camera } = useThree();
 
   // Timeline-based simulation (runs in worker, plays back pre-computed data)
   const playerRef = useRef<TimelinePlayer | null>(null);
@@ -98,6 +98,9 @@ const LightningController = ({
     speedRef.current = speed;
     if (playerRef.current) {
       playerRef.current.setConfig({ speed });
+    }
+    if (strikeRef.current) {
+      strikeRef.current.setSpeed(speed);
     }
   }, [speed]);
 
@@ -211,16 +214,10 @@ const LightningController = ({
       );
       rendererInitializedRef.current = true;
 
-      // Apply initial visibility settings
-      atmosphereRendererRef.current.setCeilingVisible(showChargeRef.current);
-      atmosphereRendererRef.current.setGroundVisible(showChargeRef.current);
-      atmosphereRendererRef.current.setAtmosphericVisible(
-        showAtmosphericRef.current
-      );
-      atmosphereRendererRef.current.setMoistureVisible(showMoistureRef.current);
-      atmosphereRendererRef.current.setIonizationVisible(
-        showIonizationRef.current
-      );
+      // Visibility is managed by the useEffect hooks for each layer.
+      // The ChargeFieldRenderer defaults all layers to visible=true.
+      // useEffects will apply the correct localStorage-driven state
+      // after the next React render cycle.
     } else {
       atmosphereRendererRef.current.updateFromSnapshot(snapshot);
     }
@@ -246,7 +243,7 @@ const LightningController = ({
     // Create atmosphere renderer (sprites will be created on first snapshot)
     atmosphereRendererRef.current = new ChargeFieldRenderer(scene, {
       planeSize: 1.0,
-      opacity: 0.2,
+      opacity: 0.15,
     });
 
     // Create timeline player with callbacks
@@ -261,8 +258,8 @@ const LightningController = ({
       speed: speedRef.current,
       detail: detailRef.current,
       baseWindSpeed: windSpeedRef.current * KTS_TO_SIM,
-      chargeAccumulationRate: 0.18,
-      breakdownThreshold: 0.80,
+      chargeAccumulationRate: 0.15,
+      breakdownThreshold: 0.75,
     };
     playerRef.current.start(initialConfig);
 
@@ -300,6 +297,11 @@ const LightningController = ({
     // Update timeline player (fetches snapshots/events, calls callbacks)
     if (playerRef.current) {
       playerRef.current.update();
+    }
+
+    // Render low-res volumetrics
+    if (atmosphereRendererRef.current?.isLowResEnabled()) {
+      atmosphereRendererRef.current.renderVolumetrics(gl, camera);
     }
 
     // Update active strike and dispatch glow updates

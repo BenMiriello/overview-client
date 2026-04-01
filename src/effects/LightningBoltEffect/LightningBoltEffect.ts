@@ -42,9 +42,9 @@ export class LightningBoltEffect {
   constructor(scene: THREE.Scene, globeEl: any, config: LightningBoltEffectConfig) {
     this.config = config;
 
-    this.renderer = new BoltRenderer(scene);
-
     const detailLevel = config.detailLevel ?? DetailLevel.GLOBE;
+    const baseLineWidth = 4;
+    this.renderer = new BoltRenderer(scene, baseLineWidth);
     const resolution = config.resolution ?? 1.0;
 
     // Scale simulation parameters based on resolution
@@ -143,6 +143,16 @@ export class LightningBoltEffect {
     }
   }
 
+  setSpeed(speed: number): void {
+    if (this.animator) {
+      this.animator.setSpeed(speed);
+    }
+  }
+
+  setLineWidthScale(scale: number): void {
+    this.renderer.setLineWidthScale(scale);
+  }
+
   updateResolution(width: number, height: number): void {
     this.renderer.updateResolution(width, height);
   }
@@ -166,6 +176,12 @@ export class LightningBoltEffect {
       this.screenFlash.dispose();
       this.screenFlash = null;
     }
+
+    // Release simulation data (large Maps/Sets) so GC can reclaim JS memory
+    this.animator = null;
+    this.transform = null;
+    this.mainChannelPath = [];
+    this.mainChannelIds = new Set();
   }
 
   setChargeVisualization(visible: boolean): void {

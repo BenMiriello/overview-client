@@ -3,29 +3,40 @@ import Globe from 'react-globe.gl';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
 
+interface TargetPosition {
+  lat: number;
+  lng: number;
+}
+
 interface GlobeComponentProps {
   onGlobeReady: (globeEl: any) => void;
   onLayerManagerReady: (layerManager: GlobeLayerManager) => void;
+  targetPosition?: TargetPosition | null;
 }
 
-const introCameraMovement = (globeEl: React.RefObject<any>): { cancel: () => void } => {
+const DEFAULT_TARGET = { lat: 20, lng: -55 };
+
+const introCameraMovement = (
+  globeEl: React.RefObject<any>,
+  target: TargetPosition,
+): { cancel: () => void } => {
   let startTime: number | null = null;
   let animationFrameId: number | null = null;
   let isCanceled = false;
 
-  const initialLat = 10;
-  const initialLng = -22;
+  // Start offset from target so the swoop lands on it
   const initialAltitude = 4;
+  const initialLat = target.lat - 10;
+  const initialLng = target.lng + 33;
 
   globeEl.current.pointOfView({ lat: initialLat, lng: initialLng, altitude: initialAltitude }, 0);
 
-  // Wrapped in a timeout to prevent conflicts with built-in animations
   setTimeout(() => {
     if (isCanceled) return;
 
     const duration = 5000;
-    const longitudinalRotation = 33; // degrees
-    const lateralRotation = 10; // degrees
+    const latDelta = target.lat - initialLat;
+    const lngDelta = target.lng - initialLng;
     const altShift = -1;
 
     const animate = (timestamp: number) => {
@@ -37,20 +48,13 @@ const introCameraMovement = (globeEl: React.RefObject<any>): { cancel: () => voi
         const t = elapsed / duration;
         const progress = easeInOutCubicShifted(t, 1/4);
 
-        const newLng = initialLng - (longitudinalRotation * progress);
-        const newLat = initialLat + (lateralRotation * progress);
-        const newAlt = initialAltitude + (altShift * progress);
-
-        globeEl.current.pointOfView({ lat: newLat, lng: newLng, altitude: newAlt }, 0);
+        globeEl.current.pointOfView({
+          lat: initialLat + latDelta * progress,
+          lng: initialLng + lngDelta * progress,
+          altitude: initialAltitude + altShift * progress,
+        }, 0);
 
         animationFrameId = requestAnimationFrame(animate);
-
-      // } else {
-      //   // Note: Auto-rotate is disabled for now since I can't get a smooth transition to it coming
-      //   //   ... out of the zoom in camera movement. So for now we can only have one or the other.
-
-      //   const controls = globeEl.current.controls();
-      //   controls.autoRotate = true;
       }
     };
 
@@ -72,7 +76,8 @@ const introCameraMovement = (globeEl: React.RefObject<any>): { cancel: () => voi
 
 export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   onGlobeReady,
-  onLayerManagerReady
+  onLayerManagerReady,
+  targetPosition,
 }) => {
   const globeEl = useRef<any>(null);
   const layerManagerRef = useRef<GlobeLayerManager | null>(null);
@@ -86,7 +91,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         if (controls) {
           // Auto-rotation will be initiated conditionally by introCameraMovement
           controls.autoRotateSpeed = 0.067; // 0.067 ISS orbital speed
-          controls.minDistance = 105; // Zoom in limit
+          controls.minDistance = 100.1; // Very close surface zoom for max tile detail
           controls.maxDistance = 10000; // Zoom out limit
 
           const stopCameraMovement = () => {
@@ -103,10 +108,28 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           controls.domElement.addEventListener('touchstart', stopCameraMovement);
         }
 
-        // Start the intro animation and store the cancellation function
-        animationRef.current = introCameraMovement(globeEl);
+        // Start the intro animation targeting the hotspot or default position
+        const target = targetPosition ?? DEFAULT_TARGET;
+        animationRef.current = introCameraMovement(globeEl, target);
       } catch (err) {
         console.error("Error setting up globe:", err);
+      }
+
+      // Enable progressive satellite tile loading.
+      // react-globe.gl's ref only exposes a whitelist of methods, so globeTileEngineUrl
+      // isn't on the ref directly. The underlying threeGlobe THREE.Group (from globe.gl's
+      // fromKapsule wrapper) has it — find it by traversing the scene.
+      const scene = globeEl.current.scene() as any;
+      if (scene) {
+        scene.traverse((obj: any) => {
+          if (typeof obj.globeTileEngineUrl === 'function') {
+            obj.globeTileEngineUrl(
+              (x: number, y: number, level: number) =>
+                `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`
+            );
+            obj.globeTileEngineMaxLevel(17);
+          }
+        });
       }
 
       if (!layerManagerRef.current) {

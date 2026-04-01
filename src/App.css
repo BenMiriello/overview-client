@@ -10,6 +10,10 @@
   z-index: 10;
 }
 
+.status-bar.warning {
+  background-color: rgba(200, 150, 0, 0.7);
+}
+
 .status-bar.error {
   background-color: rgba(255, 0, 0, 0.7);
 }

@@ -38,19 +38,58 @@ const GroundPlane = () => {
 
         varying vec2 vUv;
 
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+
+        float noise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
+                     mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+        }
+
+        float fbm(vec2 p) {
+          float v = 0.0;
+          float a = 0.5;
+          for (int i = 0; i < 4; i++) {
+            v += a * noise(p);
+            p = p * 2.0 + vec2(100.0);
+            a *= 0.5;
+          }
+          return v;
+        }
+
         void main() {
-          // Distance from glow center (in UV space)
+          float edgeDist = length((vUv - 0.5) * 2.0);
+          float edgeFade = 1.0 - smoothstep(0.35, 0.9, edgeDist);
+
+          // Multi-scale terrain noise
+          float terrain = fbm(vUv * 6.0);
+          float detail = noise(vUv * 24.0) * 0.15;
+
+          // Dark earth tones with subtle variation
+          vec3 darkEarth = vec3(0.025, 0.025, 0.03);
+          vec3 lightEarth = vec3(0.045, 0.04, 0.035);
+          vec3 groundColor = mix(darkEarth, lightEarth, terrain * 0.6 + detail);
+
+          float groundAlpha = edgeFade * 0.7;
+
+          // Lightning flash illumination
           float dist = distance(vUv, flashPosition);
-          float glow = 1.0 - smoothstep(0.0, 0.15, dist);
+          float glow = 1.0 - smoothstep(0.0, 0.25, dist);
+          float scatter = (1.0 - smoothstep(0.0, 0.5, dist)) * 0.3;
+          vec3 glowColor = vec3(0.8, 0.85, 1.0);
+          float glowStrength = flashIntensity * (glow + scatter) * 0.8;
 
-          vec3 glowColor = vec3(0.9, 0.95, 1.0);
-          float glowStrength = flashIntensity * glow * 0.8;
+          // Flash also reveals ground terrain
+          vec3 terrainReveal = groundColor * 3.0 * flashIntensity * (1.0 - smoothstep(0.0, 0.6, dist));
 
-          // Fade out at plane edges
-          float edgeFade = 1.0 - smoothstep(0.4, 0.95, length((vUv - 0.5) * 2.0));
-
-          vec3 finalColor = glowColor * glowStrength * edgeFade;
-          float alpha = glowStrength * edgeFade;
+          vec3 finalColor = groundColor + glowColor * glowStrength * edgeFade + terrainReveal * edgeFade;
+          // Cap brightness so ground flash doesn't trigger bloom
+          finalColor = min(finalColor, vec3(0.7));
+          float alpha = max(groundAlpha, glowStrength * edgeFade);
 
           gl_FragColor = vec4(finalColor, alpha);
         }

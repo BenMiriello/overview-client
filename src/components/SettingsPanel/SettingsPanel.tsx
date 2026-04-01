@@ -31,14 +31,46 @@ interface SettingsPanelProps {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  speed: 1.0,
-  detail: 2.0,
+  speed: 1.0,  // Strike animation speed: 0.01x to 1.0x (log scale)
+  detail: 1.0,
   windSpeed: 12,
   showCharge: true,
   showAtmospheric: false,
   showMoisture: false,
   showIonization: false,
   orbit: false,
+};
+
+// Convert linear slider value (0-1) to log scale speed (0.01-1.0)
+const sliderToSpeed = (sliderValue: number): number => {
+  // Map 0-1 linear to 0.01-1.0 logarithmic (2 decades, not 3)
+  const clamped = Math.max(0, Math.min(1, sliderValue));
+  return Math.pow(10, clamped * 2 - 2);
+};
+
+// Convert log scale speed to linear slider value
+const speedToSlider = (speed: number): number => {
+  // Handle edge cases and migration from old 0.1-2.0 range
+  const clamped = Math.max(0.01, Math.min(1, speed));
+  return (Math.log10(clamped) + 2) / 2;
+};
+
+// Format speed for display
+const formatSpeed = (speed: number): string => {
+  if (speed >= 0.995) return '1.0x';
+  if (speed >= 0.1) return `${speed.toFixed(1)}x`;
+  return `${speed.toFixed(2)}x`;
+};
+
+// Migrate old speed values (0.1-2.0 range) to new range (0.01-1.0)
+const migrateSpeed = (stored: number): number => {
+  // Old range was 0.1-2.0, new range is 0.01-1.0
+  // If value > 1.0, it's from old system, clamp to 1.0
+  if (stored > 1.0) return 1.0;
+  // If value is valid in new range, keep it
+  if (stored >= 0.01 && stored <= 1.0) return stored;
+  // Default to 1.0x (real-time)
+  return 1.0;
 };
 
 interface LayerConfig {
@@ -53,6 +85,8 @@ const LAYERS: LayerConfig[] = [
   { key: 'showMoisture', icon: Droplet, label: 'Moisture' },
   { key: 'showIonization', icon: Atom, label: 'Ionization' },
 ];
+
+const SHOW_ATMOSPHERIC = import.meta.env.VITE_SHOW_ATMOSPHERIC_LAYERS === 'true';
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
   const [speed, setSpeed] = useLocalStorage('lightning-speed', DEFAULT_SETTINGS.speed);
@@ -91,8 +125,23 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // Migrate old speed values on mount
   useEffect(() => {
-    onChange({ speed, detail, windSpeed, showCharge, showAtmospheric, showMoisture, showIonization, orbit });
+    const migrated = migrateSpeed(speed);
+    if (migrated !== speed) {
+      setSpeed(migrated);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const migratedSpeed = migrateSpeed(speed);
+    onChange({
+      speed: migratedSpeed, detail, windSpeed, showCharge,
+      showAtmospheric: SHOW_ATMOSPHERIC ? showAtmospheric : false,
+      showMoisture: SHOW_ATMOSPHERIC ? showMoisture : false,
+      showIonization: SHOW_ATMOSPHERIC ? showIonization : false,
+      orbit,
+    });
   }, [speed, detail, windSpeed, showCharge, showAtmospheric, showMoisture, showIonization, orbit, onChange]);
 
   useEffect(() => {
@@ -122,7 +171,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
 
   return (
     <div className="settings-panel" ref={panelRef}>
-      {/* Speed Section */}
+      {/* Strike Speed Section */}
       <div
         className={`settings-section speed-section ${expandedSection === 'speed' ? 'expanded' : ''}`}
         onMouseEnter={() => handleMouseEnter('speed')}
@@ -130,19 +179,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
         onClick={() => handleSectionInteraction('speed')}
       >
         <div className="section-icon">
-          {speed >= 1.0 ? <Rabbit size={20} /> : <Turtle size={20} />}
+          {speed >= 0.5 ? <Rabbit size={20} /> : <Turtle size={20} />}
         </div>
         <div className="section-expandable">
-          <span className="section-label">Speed</span>
+          <span className="section-label">Strike {formatSpeed(speed)}</span>
           <div className="slider-row">
             <Turtle size={14} className="slider-icon" />
             <input
               type="range"
-              min="0.1"
-              max="2"
-              step="0.1"
-              value={speed}
-              onChange={(e) => setSpeed(parseFloat(e.target.value))}
+              min="0"
+              max="1"
+              step="0.01"
+              value={speedToSlider(speed)}
+              onChange={(e) => setSpeed(sliderToSpeed(parseFloat(e.target.value)))}
             />
             <Rabbit size={14} className="slider-icon" />
           </div>
@@ -218,41 +267,57 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onChange }) => {
         </div>
       </div>
 
-      {/* Layers Section */}
-      <div
-        className={`settings-section layers-section ${expandedSection === 'layers' ? 'expanded' : ''}`}
-        onMouseEnter={() => handleMouseEnter('layers')}
-        onMouseLeave={handleMouseLeave}
-        onClick={() => handleSectionInteraction('layers')}
-      >
-        <div className="layers-header">
-          <div className="section-icon">
-            <Eye size={20} />
+      {/* Charge Toggle (simple) or Full Layers Section */}
+      {SHOW_ATMOSPHERIC ? (
+        <div
+          className={`settings-section layers-section ${expandedSection === 'layers' ? 'expanded' : ''}`}
+          onMouseEnter={() => handleMouseEnter('layers')}
+          onMouseLeave={handleMouseLeave}
+          onClick={() => handleSectionInteraction('layers')}
+        >
+          <div className="layers-header">
+            <div className="section-icon">
+              <Eye size={20} />
+            </div>
+            <span className="section-label">Layer Visibility</span>
           </div>
-          <span className="section-label">Layer Visibility</span>
-        </div>
-        <div className="layers-items">
-          {LAYERS.map((layer) => {
-            const enabled = layerStates[layer.key];
-            return (
-              <div
-                key={layer.key}
-                className={`layer-item ${enabled ? 'enabled' : 'disabled'}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleLayer(layer.key);
-                }}
-              >
-                <div className="layer-icon-wrapper">
-                  <layer.icon size={16} />
-                  {!enabled && <div className="slash-overlay" />}
+          <div className="layers-items">
+            {LAYERS.map((layer) => {
+              const enabled = layerStates[layer.key];
+              return (
+                <div
+                  key={layer.key}
+                  className={`layer-item ${enabled ? 'enabled' : 'disabled'}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleLayer(layer.key);
+                  }}
+                >
+                  <div className="layer-icon-wrapper">
+                    <layer.icon size={16} />
+                    {!enabled && <div className="slash-overlay" />}
+                  </div>
+                  <span className="layer-label">{layer.label}</span>
                 </div>
-                <span className="layer-label">{layer.label}</span>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div
+          className={`settings-section charge-toggle-section ${showCharge ? 'active' : ''} ${expandedSection === 'charge' ? 'expanded' : ''}`}
+          onMouseEnter={() => handleMouseEnter('charge')}
+          onMouseLeave={handleMouseLeave}
+          onClick={() => setShowCharge(!showCharge)}
+        >
+          <div className="section-icon">
+            <CloudLightning size={20} />
+          </div>
+          <div className="section-expandable">
+            <span className="section-label">Cloud &amp; Ground Charge</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

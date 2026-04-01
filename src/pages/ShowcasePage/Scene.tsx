@@ -3,6 +3,9 @@ import { OrbitControls } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import GroundPlane from './GroundPlane';
 import LightningController from './LightningController';
+import SkyDome from './SkyDome';
+import CloudLayer from './CloudLayer';
+import BloomEffect from './BloomEffect';
 
 interface SceneProps {
   detail?: number;
@@ -38,15 +41,17 @@ const Scene = ({ detail = 1.0, speed = 1.0, windSpeed = 25, showCharge = true, s
 
   return (
     <>
+      <SkyDome />
       <ambientLight intensity={0.15} />
 
       {/* Rotated by 20 degrees around Y axis */}
       <group rotation={[0, Math.PI * 20 / 180, 0]}>
+        <CloudLayer />
         <GroundPlane />
         <LightningController detail={detail} speed={speed} windSpeed={windSpeed} showCharge={showCharge} showAtmospheric={showAtmospheric} showMoisture={showMoisture} showIonization={showIonization} />
       </group>
 
-      <OrbitControls 
+      <OrbitControls
         ref={controlsRef}
         enableZoom={false}
         enablePan={false}
@@ -55,6 +60,8 @@ const Scene = ({ detail = 1.0, speed = 1.0, windSpeed = 25, showCharge = true, s
         dampingFactor={0.05}
         rotateSpeed={0.5}
       />
+
+      <BloomEffect />
     </>
   );
 };

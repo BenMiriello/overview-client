@@ -18,8 +18,8 @@ export class FlashEffect {
 
     this.light = new THREE.PointLight(
       config.color,
-      config.intensity * 100,
-      50,
+      config.intensity * 5,
+      10,
       2
     );
 
@@ -36,7 +36,7 @@ export class FlashEffect {
     }
 
     const flashCurve = Math.pow(1 - progress, 3);
-    this.light.intensity = this.config.intensity * 100 * flashCurve;
+    this.light.intensity = this.config.intensity * 5 * flashCurve;
 
     return true;
   }
@@ -85,7 +85,8 @@ export class ScreenFlashEffect {
       return false;
     }
 
-    const opacity = Math.pow(1 - progress, 2);
+    // Steep quartic decay: noticeable peak that complements bloom glow
+    const opacity = Math.pow(1 - progress, 4) * 0.15;
     this.overlay.style.opacity = opacity.toString();
 
     return true;

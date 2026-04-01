@@ -14,6 +14,4 @@ export interface DataStream<T> {
  */
 export interface WebSocketConfig {
   url: string;
-  reconnectInterval?: number;
-  maxReconnectAttempts?: number;
 }

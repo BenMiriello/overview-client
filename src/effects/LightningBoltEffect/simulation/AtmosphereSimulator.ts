@@ -29,10 +29,10 @@ export interface AtmosphereSimulatorConfig {
 }
 
 export const DEFAULT_SIMULATOR_CONFIG: AtmosphereSimulatorConfig = {
-  chargeAccumulationRate: 0.15,
+  chargeAccumulationRate: 0.09,
   breakdownThreshold: 0.85,
   postStrikeChargeFactor: 0.15,
-  postStrikeNearbyFactor: 0.4,
+  postStrikeNearbyFactor: 0.25,
 
   baseWindSpeed: 0.003, // ~19 m/s in real units at cloud level
   windDirection: { x: 1, z: 0 }, // Ground-level wind direction
@@ -43,7 +43,7 @@ export const DEFAULT_SIMULATOR_CONFIG: AtmosphereSimulatorConfig = {
   ceilingY: 0.5,
   groundY: -0.5,
 
-  initialChargeRange: [0.2, 0.5],
+  initialChargeRange: [0.05, 0.5],
 
   atmosphericConfig: DEFAULT_ATMOSPHERIC_CONFIG,
 };
@@ -68,6 +68,9 @@ export class AtmosphereSimulator {
 
   // Track which ceiling cells correspond to which ground cells
   private ceilingToGroundMap: Map<number, number> = new Map();
+
+  // Per-cell charge rate multipliers (0.5 to 1.5) to spread out breakdown timing
+  private ceilingChargeRateMultipliers: number[] = [];
 
   constructor(seed: number, config: Partial<AtmosphereSimulatorConfig> = {}) {
     this.config = { ...DEFAULT_SIMULATOR_CONFIG, ...config };
@@ -116,8 +119,46 @@ export class AtmosphereSimulator {
     // 3. Update ground charge to follow ceiling
     this.updateGroundCharge();
 
-    // 4. Check for breakdown
+    // 4. Recover 3D field intensities (fields replenish over time)
+    this.recover3DFields(dt);
+
+    // 5. Check for breakdown
     return this.checkBreakdown();
+  }
+
+  private recover3DFields(dt: number): void {
+    const recoveryRate = 0.08;
+    const ionizationDecayRate = 0.15;
+
+    // Atmospheric charge recovers toward a baseline
+    for (let i = 0; i < this.atmosphericCharge.cells.length; i++) {
+      const cell = this.atmosphericCharge.cells[i];
+      const baseline = 0.4;
+      if (cell.intensity < baseline) {
+        const newI = cell.intensity + recoveryRate * (baseline - cell.intensity) * dt;
+        this.atmosphericCharge.setCellIntensity(i, Math.min(baseline, newI));
+      }
+    }
+
+    // Moisture recovers toward baseline
+    for (let i = 0; i < this.moisture.cells.length; i++) {
+      const cell = this.moisture.cells[i];
+      const baseline = 0.5;
+      if (cell.intensity < baseline) {
+        const newI = cell.intensity + recoveryRate * (baseline - cell.intensity) * dt;
+        this.moisture.setCellIntensity(i, Math.min(baseline, newI));
+      }
+    }
+
+    // Ionization decays after being boosted by strikes
+    for (let i = 0; i < this.ionizationSeeds.cells.length; i++) {
+      const cell = this.ionizationSeeds.cells[i];
+      const baseline = 0.3;
+      if (cell.intensity > baseline) {
+        const newI = cell.intensity - ionizationDecayRate * (cell.intensity - baseline) * dt;
+        this.ionizationSeeds.setCellIntensity(i, Math.max(baseline, newI));
+      }
+    }
   }
 
   /**
@@ -126,29 +167,63 @@ export class AtmosphereSimulator {
   onStrikeComplete(strikePosition: Vec3, dissipationRadius: number = 0.15): void {
     const { postStrikeChargeFactor, postStrikeNearbyFactor } = this.config;
 
-    // Find cells near the strike and reduce their intensity
+    // Ceiling charge dissipation
     for (let i = 0; i < this.ceilingCharge.cells.length; i++) {
       const cell = this.ceilingCharge.cells[i];
       const dist = this.distance2D(cell.center, strikePosition);
 
       if (dist < dissipationRadius * 0.5) {
-        // Struck cell - heavy dissipation
         this.ceilingCharge.setCellIntensity(i, cell.intensity * postStrikeChargeFactor);
       } else if (dist < dissipationRadius) {
-        // Nearby cell - partial dissipation
         const t = (dist - dissipationRadius * 0.5) / (dissipationRadius * 0.5);
         const factor = postStrikeChargeFactor + t * (postStrikeNearbyFactor - postStrikeChargeFactor);
         this.ceilingCharge.setCellIntensity(i, cell.intensity * factor);
       }
     }
 
-    // Also reduce 3D atmospheric charge near the strike path
+    // Ground charge dissipation (mirrored from ceiling)
+    for (let i = 0; i < this.groundCharge.cells.length; i++) {
+      const cell = this.groundCharge.cells[i];
+      const dist = this.distance2D(cell.center, strikePosition);
+
+      if (dist < dissipationRadius * 0.5) {
+        this.groundCharge.setCellIntensity(i, cell.intensity * postStrikeChargeFactor);
+      } else if (dist < dissipationRadius) {
+        const t = (dist - dissipationRadius * 0.5) / (dissipationRadius * 0.5);
+        const factor = postStrikeChargeFactor + t * (postStrikeNearbyFactor - postStrikeChargeFactor);
+        this.groundCharge.setCellIntensity(i, cell.intensity * factor);
+      }
+    }
+
+    // Atmospheric charge — near-total collapse at strike center
     for (let i = 0; i < this.atmosphericCharge.cells.length; i++) {
       const cell = this.atmosphericCharge.cells[i];
       const dist = this.distance3D(cell.center, strikePosition);
       if (dist < dissipationRadius) {
-        const factor = 0.3 + 0.5 * (dist / dissipationRadius);
+        const factor = 0.02 + 0.25 * (dist / dissipationRadius);
         this.atmosphericCharge.setCellIntensity(i, cell.intensity * factor);
+      }
+    }
+
+    // Moisture evaporation — very strong near channel
+    for (let i = 0; i < this.moisture.cells.length; i++) {
+      const cell = this.moisture.cells[i];
+      const dist = this.distance3D(cell.center, strikePosition);
+      if (dist < dissipationRadius) {
+        const factor = 0.05 + 0.45 * (dist / dissipationRadius);
+        this.moisture.setCellIntensity(i, cell.intensity * factor);
+      }
+    }
+
+    // Ionization surge along the strike channel
+    for (let i = 0; i < this.ionizationSeeds.cells.length; i++) {
+      const cell = this.ionizationSeeds.cells[i];
+      const dist = this.distance3D(cell.center, strikePosition);
+      if (dist < dissipationRadius) {
+        const boost = (1.0 - dist / dissipationRadius) * 1.5;
+        this.ionizationSeeds.setCellIntensity(
+          i, Math.min(1.0, cell.intensity + boost)
+        );
       }
     }
   }
@@ -305,6 +380,9 @@ export class AtmosphereSimulator {
     this.ceilingCharge.setCellIntensity(index, newIntensity);
     this.ceilingCharge.setCellRadius(index, newRadius);
 
+    // Assign new rate multiplier for varied breakdown timing
+    this.ceilingChargeRateMultipliers[index] = 0.5 + this.rng.next() * 1.0;
+
     // Also update the correlated ground cell
     const groundIndex = this.ceilingToGroundMap.get(index);
     if (groundIndex !== undefined) {
@@ -336,8 +414,11 @@ export class AtmosphereSimulator {
 
     for (let i = 0; i < this.ceilingCharge.cells.length; i++) {
       const cell = this.ceilingCharge.cells[i];
+      // Per-cell rate variation (0.5x to 1.5x) spreads out breakdown timing
+      const rateMultiplier = this.ceilingChargeRateMultipliers[i] ?? 1.0;
+      const cellRate = chargeAccumulationRate * rateMultiplier;
       // Asymptotic growth: dI/dt = rate * (1 - I)
-      const newIntensity = cell.intensity + chargeAccumulationRate * (1 - cell.intensity) * dt;
+      const newIntensity = cell.intensity + cellRate * (1 - cell.intensity) * dt;
       this.ceilingCharge.setCellIntensity(i, Math.min(1.0, newIntensity));
     }
   }
@@ -408,6 +489,7 @@ export class AtmosphereSimulator {
   private createInitialCeilingCharge(): VoronoiField {
     const { ceilingY, boundsRadius, initialChargeRange, atmosphericConfig } = this.config;
     const cells: VoronoiCell[] = [];
+    this.ceilingChargeRateMultipliers = [];
 
     for (let i = 0; i < atmosphericConfig.ceilingChargeCellCount; i++) {
       const angle = this.rng.next() * Math.PI * 2;
@@ -425,6 +507,9 @@ export class AtmosphereSimulator {
           this.rng.next() *
             (atmosphericConfig.ceilingChargeRadiusRange[1] - atmosphericConfig.ceilingChargeRadiusRange[0]),
       });
+
+      // Per-cell charge rate: 0.5x to 1.5x creates ~16s spread in breakdown timing
+      this.ceilingChargeRateMultipliers.push(0.5 + this.rng.next() * 1.0);
     }
 
     return new VoronoiField(cells, { is2D: true, fixedY: ceilingY });

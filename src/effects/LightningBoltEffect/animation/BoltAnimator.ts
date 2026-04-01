@@ -1,6 +1,6 @@
 import { BoltGeometry, BoltSegment, SimulationConfig } from '../simulation';
 import { BoltTimeline } from './BoltTimeline';
-import { AnimationPhase, AnimationState } from './types';
+import { AnimationPhase, AnimationState, LeaderTipInfo } from './types';
 
 interface SegmentInfo {
   depth: number;
@@ -22,7 +22,8 @@ export class BoltAnimator {
   private timeline: BoltTimeline;
   private config: SimulationConfig;
   private speed: number;
-  private startTime: number = 0;
+  private virtualElapsed: number = 0;
+  private lastUpdateTime: number = 0;
   private started: boolean = false;
 
   private segmentById: Map<number, SegmentInfo>;
@@ -118,7 +119,8 @@ export class BoltAnimator {
   }
 
   start(currentTime: number): void {
-    this.startTime = currentTime;
+    this.lastUpdateTime = currentTime;
+    this.virtualElapsed = 0;
     this.started = true;
     this.peakBrightness.clear();
   }
@@ -127,9 +129,15 @@ export class BoltAnimator {
     return this.started;
   }
 
+  setSpeed(newSpeed: number): void {
+    this.speed = Math.max(0.01, newSpeed);
+  }
+
   update(currentTime: number): AnimationState {
-    const elapsed = (currentTime - this.startTime) * this.speed;
-    return this.computeState(elapsed);
+    const delta = currentTime - this.lastUpdateTime;
+    this.lastUpdateTime = currentTime;
+    this.virtualElapsed += delta * this.speed;
+    return this.computeState(this.virtualElapsed);
   }
 
   private computeState(elapsedMs: number): AnimationState {
@@ -176,8 +184,11 @@ export class BoltAnimator {
   }
 
   private getDepthFactor(depth: number): number {
-    const minFactor = 0.3;
-    const decay = Math.exp(-depth * 0.7);
+    // Softer decay (0.4 instead of 0.7) for less aggressive falloff
+    // Main channel (depth=0) gets factor 1.0
+    // Depth 1 branches get ~0.67, depth 2 gets ~0.53
+    const minFactor = 0.35;
+    const decay = Math.exp(-depth * 0.4);
     return minFactor + (1 - minFactor) * decay;
   }
 
@@ -185,6 +196,7 @@ export class BoltAnimator {
     const targetStep = Math.floor(progress * this.timeline.totalSteps);
     const visible = new Set<number>();
     const brightness = new Map<number, number>();
+    const leaderTips: LeaderTipInfo[] = [];
 
     const TIP_DISTANCE = 5;
     const BRIGHTNESS_CUTOFF = 0.03;
@@ -268,6 +280,15 @@ export class BoltAnimator {
 
       visible.add(seg.id);
       brightness.set(seg.id, b * info.intensity);
+
+      // Track leader tips - segments at current step that are actively growing
+      if (age <= 1 && !info.isDeadEnd) {
+        leaderTips.push({
+          position: seg.end,
+          segmentId: seg.id,
+          isMainChannel: seg.isMainChannel,
+        });
+      }
     }
 
     return {
@@ -277,6 +298,7 @@ export class BoltAnimator {
       segmentBrightness: brightness,
       returnStrokePosition: 0,
       strokeCount: 0,
+      leaderTips,
     };
   }
 

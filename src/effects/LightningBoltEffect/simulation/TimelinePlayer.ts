@@ -43,7 +43,7 @@ export class TimelinePlayer {
 
   // Playback state
   private effectiveSpeed: number = 1.0;
-  private minBufferBeforePlay: number = 12000; // Wait for 12s of buffer before starting (2x max strike compute time)
+  private minBufferBeforePlay: number = 1000; // Geometry is async, start quickly
 
   constructor(callbacks: TimelinePlayerCallbacks) {
     this.callbacks = callbacks;
@@ -62,7 +62,8 @@ export class TimelinePlayer {
 
     this.config = { ...DEFAULT_TIMELINE_CONFIG, ...config };
     this.buffer.reset();
-    this.leadTimeManager.reset();
+    // Pass detail level for conservative compute time estimate
+    this.leadTimeManager = new LeadTimeManager(this.config.detail);
     this.visualTimeMs = 0;
     this.lastUpdateTime = performance.now();
 
@@ -123,10 +124,11 @@ export class TimelinePlayer {
     const dtReal = Math.min(now - this.lastUpdateTime, 100);
     this.lastUpdateTime = now;
 
-    // Check if we have enough buffer to start playing
-    if (!this.isPlaying && this.buffer.leadTimeMs >= this.minBufferBeforePlay) {
+    // Start playing once buffer has enough snapshots - don't wait for strikes
+    // With async geometry, snapshots flow continuously regardless of strike computation
+    if (!this.isPlaying &&
+        this.buffer.leadTimeMs >= this.minBufferBeforePlay) {
       this.isPlaying = true;
-      // CRITICAL: Reset lastUpdateTime so first frame doesn't have huge delta
       this.lastUpdateTime = now;
       console.log('[TimelinePlayer] Buffer ready, starting playback');
     }
@@ -242,10 +244,16 @@ export class TimelinePlayer {
         break;
 
       case 'strike':
-        console.log(`[TimelinePlayer] Strike received: simTime=${msg.event.simTimeMs.toFixed(0)}, playhead=${this.buffer.playheadMs.toFixed(0)}, bufferEnd=${this.buffer.bufferEndMs.toFixed(0)}`);
+        // If geometry arrived late (playhead already passed strike time),
+        // reschedule the strike slightly ahead of the playhead so it renders now
+        if (msg.event.simTimeMs <= this.visualTimeMs) {
+          console.log(`[TimelinePlayer] Strike late (sim=${msg.event.simTimeMs.toFixed(0)}, playhead=${this.visualTimeMs.toFixed(0)}), rescheduling`);
+          msg.event.simTimeMs = this.visualTimeMs + 50;
+        } else {
+          console.log(`[TimelinePlayer] Strike received: simTime=${msg.event.simTimeMs.toFixed(0)}, playhead=${this.visualTimeMs.toFixed(0)}, computeTime=${msg.computeTimeMs.toFixed(0)}ms`);
+        }
         this.buffer.addEvent(msg.event);
-        // Record strike compute time from the event
-        this.leadTimeManager.recordStrikeCompute(500);
+        this.leadTimeManager.recordStrikeCompute(msg.computeTimeMs);
         break;
 
       case 'status':
@@ -272,8 +280,9 @@ export class TimelinePlayer {
     // Log status periodically for debugging
     const now = performance.now();
     if (now - this.lastStatusLogTime > 2000) {
+      const leadStats = this.leadTimeManager.getStats();
       console.log(
-        `[TimelinePlayer] lead=${status.leadTimeMs.toFixed(0)}ms, speed=${status.playbackSpeed.toFixed(2)}x, visual=${status.visualTimeMs.toFixed(0)}ms`
+        `[TimelinePlayer] lead=${status.leadTimeMs.toFixed(0)}ms, speed=${status.playbackSpeed.toFixed(2)}x, visual=${status.visualTimeMs.toFixed(0)}ms, requiredLead=${leadStats.requiredLeadTime.toFixed(0)}ms, maxStrikeTime=${leadStats.maxStrikeTime.toFixed(0)}ms`
       );
       this.lastStatusLogTime = now;
     }
