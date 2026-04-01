@@ -43,7 +43,7 @@ export class LightningBoltEffect {
     this.config = config;
 
     const detailLevel = config.detailLevel ?? DetailLevel.GLOBE;
-    const baseLineWidth = detailLevel === DetailLevel.GLOBE ? 1.5 : 4;
+    const baseLineWidth = 4;
     this.renderer = new BoltRenderer(scene, baseLineWidth);
     const resolution = config.resolution ?? 1.0;
 
@@ -176,6 +176,12 @@ export class LightningBoltEffect {
       this.screenFlash.dispose();
       this.screenFlash = null;
     }
+
+    // Release simulation data (large Maps/Sets) so GC can reclaim JS memory
+    this.animator = null;
+    this.transform = null;
+    this.mainChannelPath = [];
+    this.mainChannelIds = new Set();
   }
 
   setChargeVisualization(visible: boolean): void {

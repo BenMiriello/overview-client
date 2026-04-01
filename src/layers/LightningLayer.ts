@@ -62,8 +62,6 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   }
 
   addData(strike: LightningStrike): void {
-    console.log('LightningLayer: Adding strike', strike);
-    console.log('showLightningBolt config:', getConfig<boolean>('layers.lightning.showLightningBolt'));
     if (getConfig<boolean>('layers.lightning.showLightningBolt')) {
       this.createLightningBoltEffect(strike);
     }
@@ -176,8 +174,8 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     try {
       const camera = this.globeEl.camera();
       const distance = camera.position.length();
-      const referenceDistance = 300;
-      return Math.max(0.25, Math.min(2.5, referenceDistance / distance));
+      const referenceDistance = 400; // matches default intro camera distance
+      return Math.max(0.2, Math.min(2.0, referenceDistance / distance));
     } catch {
       return 1.0;
     }
@@ -235,33 +233,19 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   private enforceMaxDisplayedStrikes(): void {
     const maxDisplayedStrikes = getConfig<number>('layers.lightning.maxDisplayedStrikes') || 256;
 
-    if (this.markerEffects.size <= maxDisplayedStrikes) return;
-
-    // Get all markers sorted by creation time (oldest first)
-    const markers = Array.from(this.markerEffects.entries())
-      .sort((a, b) => {
-        const aTime = a[1].getObject().userData.createdAt || 0;
-        const bTime = b[1].getObject().userData.createdAt || 0;
-        return aTime - bTime;
-      });
-
-    // Remove oldest markers that exceed the limit
-    const removeCount = markers.length - maxDisplayedStrikes;
-
-    if (removeCount <= 0) return;
-
-    markers.slice(0, removeCount).forEach(([id, effect]) => {
+    // Map preserves insertion order — oldest entries are first.
+    while (this.markerEffects.size > maxDisplayedStrikes) {
+      const [id, effect] = this.markerEffects.entries().next().value;
       effect.terminate();
       this.markerEffects.delete(id);
 
-      // Also remove any associated lightning bolt effect
       const lightningBolt = this.lightningBoltEffects.get(id);
       if (lightningBolt) {
         lightningBolt.terminate();
         this.lightningBoltEffects.delete(id);
         this.activeEffects = this.activeEffects.filter(e => e.id !== id);
       }
-    });
+    }
   }
 
   getActiveLightningBoltCount(): number {

@@ -1,9 +1,17 @@
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import * as THREE from 'three';
 
+// MaxEquation prevents junction accumulation: max(a, b) = a when segments have equal brightness,
+// rather than additive a + b which doubles brightness at every branch point.
+const MAX_BLENDING_PARAMS = {
+  blending: THREE.CustomBlending,
+  blendEquation: THREE.MaxEquation,
+  blendSrc: THREE.OneFactor,
+  blendDst: THREE.OneFactor,
+} as const;
+
 export class LightningMaterials {
   private baseMaterial: LineMaterial;
-  private glowMaterial: LineMaterial;
   private depthMaterials: Map<string, LineMaterial> = new Map();
   private baseLineWidth: number;
   private lineWidthScale: number = 1.0;
@@ -18,21 +26,10 @@ export class LightningMaterials {
       transparent: true,
       opacity: 1.0,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      ...MAX_BLENDING_PARAMS,
       vertexColors: true,
     });
     this.baseMaterial.resolution.set(window.innerWidth, window.innerHeight);
-
-    this.glowMaterial = new LineMaterial({
-      color: 0xaaccff,
-      linewidth: glowWidth,
-      transparent: true,
-      opacity: 0.12,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      vertexColors: true,
-    });
-    this.glowMaterial.resolution.set(window.innerWidth, window.innerHeight);
   }
 
   getMaterialForDepth(depth: number): LineMaterial {
@@ -50,7 +47,7 @@ export class LightningMaterials {
       transparent: true,
       opacity: 1.0,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      ...MAX_BLENDING_PARAMS,
       vertexColors: true,
     });
     mat.resolution.set(window.innerWidth, window.innerHeight);
@@ -80,13 +77,8 @@ export class LightningMaterials {
     return (r << 16) | (g << 8) | b;
   }
 
-  getGlowMaterial(): LineMaterial {
-    return this.glowMaterial;
-  }
-
   updateResolution(width: number, height: number): void {
     this.baseMaterial.resolution.set(width, height);
-    this.glowMaterial.resolution.set(width, height);
     for (const mat of this.depthMaterials.values()) {
       mat.resolution.set(width, height);
     }
@@ -96,7 +88,6 @@ export class LightningMaterials {
     this.lineWidthScale = scale;
     const glowWidth = this.baseLineWidth * 0.75 * scale;
     this.baseMaterial.linewidth = glowWidth;
-    this.glowMaterial.linewidth = glowWidth;
     for (const [key, mat] of this.depthMaterials) {
       const depth = parseFloat(key);
       mat.linewidth = this.getLineWidth(depth, this.baseLineWidth) * scale;
@@ -105,7 +96,6 @@ export class LightningMaterials {
 
   updateOpacity(multiplier: number): void {
     this.baseMaterial.opacity = multiplier;
-    this.glowMaterial.opacity = 0.3 * multiplier;
     for (const mat of this.depthMaterials.values()) {
       mat.opacity = multiplier;
     }
@@ -113,7 +103,6 @@ export class LightningMaterials {
 
   dispose(): void {
     this.baseMaterial.dispose();
-    this.glowMaterial.dispose();
     for (const mat of this.depthMaterials.values()) {
       mat.dispose();
     }
