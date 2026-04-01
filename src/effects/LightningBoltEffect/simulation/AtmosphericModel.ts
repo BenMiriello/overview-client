@@ -39,9 +39,9 @@ export const DEFAULT_ATMOSPHERIC_CONFIG: AtmosphericConfig = {
   ceilingChargeIntensityRange: [0.5, 1.0],
   ceilingChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN, SCALE.CHARGE_POCKET_RADIUS.MAX],
 
-  groundChargeCellCount: 14,
+  groundChargeCellCount: 22,
   groundChargeIntensityRange: [0.3, 0.8],
-  groundChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN * 1.5, SCALE.CHARGE_POCKET_RADIUS.MAX * 1.3],
+  groundChargeRadiusRange: [SCALE.CHARGE_POCKET_RADIUS.MIN * 2.0, SCALE.CHARGE_POCKET_RADIUS.MAX * 1.8],
 
   atmosphericChargeCellCount: 32,
   atmosphericChargeIntensityRange: [0.3, 0.7],

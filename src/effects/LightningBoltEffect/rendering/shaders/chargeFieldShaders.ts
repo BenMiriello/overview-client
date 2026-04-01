@@ -6,7 +6,7 @@
  * Fresnel-based edge brightness - edges appear brighter when viewed at grazing angles.
  */
 
-export const MAX_CELLS = 16;
+export const MAX_CELLS = 24;
 export const MAX_VOLUMETRIC_CELLS = 8;
 
 // Vertex shader for flat planes (ceiling/ground) - outputs world XZ for metaball computation
@@ -25,7 +25,7 @@ void main() {
 export const chargeFieldFragmentShader = `
 precision highp float;
 
-#define MAX_CELLS 16
+#define MAX_CELLS 24
 
 uniform vec2 cellCenters[MAX_CELLS];
 uniform float cellIntensities[MAX_CELLS];
