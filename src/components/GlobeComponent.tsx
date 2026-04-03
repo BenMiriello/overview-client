@@ -4,26 +4,16 @@ import * as THREE from 'three';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
 
-// Altitudes for close/far mode hysteresis — enter close below ENTER, exit above EXIT.
-// The gap prevents rapid toggling when hovering near the boundary.
 const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
+const MIN_ALTITUDE         = 0.01;
 
-// Minimum practical altitude (matches minDistance / earthRadius)
-const MIN_ALTITUDE = 0.15;
+const PITCH_NEAR_THRESHOLD = 0;
+const PITCH_MAX_ZOOM       = Math.PI / 4;
 
-// controls.target shift as a fraction of the distance to the surface point:
-// 0 = globe center, 1 = full surface. These create 30°–60° tilt from top-down.
-const TILT_FRACTION_CLOSE = 0.45; // tilt at threshold entry  (~30° from top-down)
-const TILT_FRACTION_MAX   = 0.80; // tilt at max zoom-in     (~60° from top-down)
+const ORBIT_SPEED_PLANET      = 0.067;
+const ORBIT_SPEED_SURFACE_DPS = 360 / 90;
 
-// autoRotateSpeed units are internal to OrbitControls.
-// PLANET: existing ISS-speed planet rotation (~92 min period)
-// SURFACE: 90-second orbit around the surface point
-const ORBIT_SPEED_PLANET  = 0.067;
-const ORBIT_SPEED_SURFACE = 4.1;
-
-// Duration (ms) for the ease-to-north animation when orbit is turned off
 const NORTH_SNAP_DURATION = 1200;
 
 interface TargetPosition {
@@ -35,19 +25,23 @@ interface GlobeComponentProps {
   onGlobeReady: (globeEl: any) => void;
   onLayerManagerReady: (layerManager: GlobeLayerManager) => void;
   targetPosition?: TargetPosition | null;
-  /** true once the hotspot fetch has settled (success or failure); animation waits for this */
   targetPositionReady?: boolean;
   is3D: boolean;
   isOrbiting: boolean;
-  onIs3DChange: (val: boolean) => void;
   onIsOrbitingChange: (val: boolean) => void;
-  onCloseModeChange: (isClose: boolean) => void;
 }
 
-const DEFAULT_TARGET = { lat: 20, lng: -55 };
+// Target-primary state: the ground point (targetLat/targetLng) is the invariant.
+// Camera position is always derived from this — never stored, never round-tripped.
+interface CloseModeState {
+  targetLat: number;
+  targetLng: number;
+  altitude: number;
+  heading: number;  // radians clockwise from north
+  pitch: number;    // radians from vertical: 0=nadir, PI/2=horizon
+}
 
-/** Converts lat/lng to a point on the globe surface in THREE.js world space. */
-function getSurfacePoint(lat: number, lng: number, radius: number): THREE.Vector3 {
+function latLngToCartesian(lat: number, lng: number, radius: number): THREE.Vector3 {
   const phi   = (90 - lat) * Math.PI / 180;
   const theta = (lng + 180) * Math.PI / 180;
   return new THREE.Vector3(
@@ -55,6 +49,105 @@ function getSurfacePoint(lat: number, lng: number, radius: number): THREE.Vector
       radius * Math.cos(phi),
       radius * Math.sin(phi) * Math.sin(theta)
   );
+}
+
+function cartesianToLatLng(v: THREE.Vector3): { lat: number; lng: number } {
+  const r   = v.length();
+  const lat = 90 - Math.acos(v.y / r) * 180 / Math.PI;
+  const lng = Math.atan2(v.z, -v.x) * 180 / Math.PI - 180;
+  return { lat, lng: ((lng + 540) % 360) - 180 };
+}
+
+function pitchFromAltitude(altitude: number): number {
+  const t = Math.max(0, Math.min(1,
+    (TILT_THRESHOLD_ENTER - altitude) / (TILT_THRESHOLD_ENTER - MIN_ALTITUDE)
+  ));
+  const tEased = t * t * t;
+  return PITCH_NEAR_THRESHOLD + (PITCH_MAX_ZOOM - PITCH_NEAR_THRESHOLD) * tEased;
+}
+
+function raySphereIntersect(
+  origin: THREE.Vector3,
+  direction: THREE.Vector3,
+  radius: number
+): THREE.Vector3 | null {
+  const b = 2 * direction.dot(origin);
+  const c = origin.dot(origin) - radius * radius;
+  const disc = b * b - 4 * c;
+  if (disc < 0) return null;
+  const t = (-b - Math.sqrt(disc)) / 2;
+  if (t < 0) return null;
+  return origin.clone().addScaledVector(direction, t);
+}
+
+/**
+ * Derives camera world position from target-primary state.
+ *
+ * pitch=0: camera directly above T.
+ * pitch>0: camera offset from T by angleO on the sphere, opposite the heading direction.
+ */
+function cameraPositionFromTarget(state: CloseModeState, earthR: number): THREE.Vector3 {
+  const T = latLngToCartesian(state.targetLat, state.targetLng, earthR);
+  const T_unit = T.clone().normalize();
+  const r = earthR * (1 + state.altitude);
+
+  if (state.pitch < 0.001) {
+    return T_unit.clone().multiplyScalar(r);
+  }
+
+  const sinAngleT = Math.min(1, r * Math.sin(state.pitch) / earthR);
+  const angleO = Math.asin(sinAngleT) - state.pitch;
+
+  if (angleO < 0.001) {
+    return T_unit.clone().multiplyScalar(r);
+  }
+
+  // Surface tangent at T: build local frame, apply heading, negate to get "behind" direction
+  const worldNorth = new THREE.Vector3(0, 1, 0);
+  let eastAtT = new THREE.Vector3().crossVectors(worldNorth, T_unit);
+  if (eastAtT.lengthSq() < 1e-6) eastAtT.set(1, 0, 0);
+  eastAtT.normalize();
+  const northAtT = new THREE.Vector3().crossVectors(T_unit, eastAtT).normalize();
+
+  const headingQuat = new THREE.Quaternion().setFromAxisAngle(T_unit, -state.heading);
+  const lookNorth = northAtT.clone().applyQuaternion(headingQuat);
+  // Camera is behind the look direction
+  const tangent = lookNorth.clone().negate();
+
+  return T_unit.clone()
+    .multiplyScalar(Math.cos(angleO))
+    .addScaledVector(tangent, Math.sin(angleO))
+    .normalize()
+    .multiplyScalar(r);
+}
+
+/**
+ * Sets the Three.js camera position and orientation from target-primary state.
+ * Uses camera.lookAt(T) directly — no dual-frame orientation math.
+ */
+function applyCameraState(
+  camera: THREE.Camera,
+  state: CloseModeState,
+  earthR: number
+): void {
+  const camPos = cameraPositionFromTarget(state, earthR);
+  camera.position.copy(camPos);
+
+  const T_world = latLngToCartesian(state.targetLat, state.targetLng, earthR);
+
+  // camera.up encodes heading: target's local north rotated by heading around T's normal
+  const T_unit = T_world.clone().normalize();
+  const worldNorth = new THREE.Vector3(0, 1, 0);
+  let eastAtT = new THREE.Vector3().crossVectors(worldNorth, T_unit);
+  if (eastAtT.lengthSq() < 1e-6) eastAtT.set(1, 0, 0);
+  eastAtT.normalize();
+  const northAtT = new THREE.Vector3().crossVectors(T_unit, eastAtT).normalize();
+
+  const headingQuat = new THREE.Quaternion().setFromAxisAngle(T_unit, -state.heading);
+  const upDir = northAtT.clone().applyQuaternion(headingQuat);
+
+  camera.up.copy(upDir);
+  camera.lookAt(T_world);
 }
 
 const introCameraMovement = (
@@ -87,13 +180,11 @@ const introCameraMovement = (
       if (elapsed < duration) {
         const t = elapsed / duration;
         const progress = easeInOutCubicShifted(t, 1/4);
-
         globeEl.current.pointOfView({
           lat: initialLat + latDelta * progress,
           lng: initialLng + lngDelta * progress,
           altitude: initialAltitude + altShift * progress,
         }, 0);
-
         animationFrameId = requestAnimationFrame(animate);
       }
     };
@@ -120,23 +211,31 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   targetPositionReady = true,
   is3D,
   isOrbiting,
-  onIs3DChange,
   onIsOrbitingChange,
-  onCloseModeChange,
 }) => {
-  const globeEl = useRef<any>(null);
-  const layerManagerRef = useRef<GlobeLayerManager | null>(null);
+  const globeEl          = useRef<any>(null);
+  const layerManagerRef  = useRef<GlobeLayerManager | null>(null);
   const [isGlobeReady, setIsGlobeReady] = useState(false);
-  const animationRef = useRef<{ cancel: () => void } | null>(null);
+  const animationRef     = useRef<{ cancel: () => void } | null>(null);
 
-  // Refs so event listeners always read latest prop values without stale closures
-  const is3DRef         = useRef(is3D);
-  const isOrbitingRef   = useRef(isOrbiting);
-  const tiltPausedRef   = useRef(false);
-  const inCloseModeRef  = useRef(false);
-  const globeOrigin     = useRef(new THREE.Vector3(0, 0, 0));
+  const closeModeState   = useRef<CloseModeState | null>(null);
+  const closeModeRafRef  = useRef<number | null>(null);
+  const inCloseModeRef   = useRef(false);
+  const isOrbitingRef    = useRef(isOrbiting);
+  const tiltPausedRef    = useRef(false);
 
-  // Main controls setup — runs once when the globe is ready
+  const origControlsUpdateRef = useRef<(() => boolean) | null>(null);
+
+  const prefer3DRef            = useRef(is3D);
+  const exitAnimatingRef       = useRef(false);
+  const preventReentryRef      = useRef(false);
+  const justExitedCloseModeRef = useRef(false);
+  useEffect(() => { prefer3DRef.current = is3D; }, [is3D]);
+
+  const dragGrabLatLng   = useRef<{ lat: number; lng: number } | null>(null);
+  const dragVelocityRef  = useRef<{ dlat: number; dlng: number } | null>(null);
+
+  // ── Main controls setup ──────────────────────────────────────────────────
   useEffect(() => {
     if (!isGlobeReady || !globeEl.current) return;
 
@@ -151,77 +250,34 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.autoRotateSpeed = ORBIT_SPEED_PLANET;
     controls.minDistance = 100.1;
     controls.maxDistance = 10000;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.1;
 
-    // ── Tilt updater ──────────────────────────────────────────────────────────
-    const updateTilt = () => {
+    const checkThreshold = () => {
+      if (inCloseModeRef.current) return;
       if (!globeEl.current) return;
-      const pov = globeEl.current.pointOfView();
-      const { lat, lng, altitude } = pov;
-      // Hysteresis: enter close mode below ENTER threshold, exit above EXIT threshold
-      const enteringClose = altitude < TILT_THRESHOLD_ENTER && !inCloseModeRef.current;
-      const exitingClose  = altitude > TILT_THRESHOLD_EXIT  &&  inCloseModeRef.current;
-      const isClose = inCloseModeRef.current
-        ? altitude < TILT_THRESHOLD_EXIT
-        : altitude < TILT_THRESHOLD_ENTER;
-
-      // Auto-trigger 3D + orbit when crossing the threshold inward
-      if (enteringClose) {
-        inCloseModeRef.current = true;
-        onCloseModeChange(true);
-        onIs3DChange(true);
-        onIsOrbitingChange(true);
+      const { altitude } = globeEl.current.pointOfView();
+      if (altitude >= TILT_THRESHOLD_EXIT) {
+        preventReentryRef.current = false;
       }
-
-      // Auto-disable 3D when crossing the threshold outward
-      if (exitingClose) {
-        inCloseModeRef.current = false;
-        onCloseModeChange(false);
-        onIs3DChange(false);
+      if (altitude < TILT_THRESHOLD_ENTER && prefer3DRef.current && !preventReentryRef.current) {
+        enterCloseMode(controls);
       }
-
-      // Update orbit speed when the close/far boundary is crossed while orbiting
-      if (isOrbitingRef.current) {
-        controls.autoRotateSpeed = isClose ? ORBIT_SPEED_SURFACE : ORBIT_SPEED_PLANET;
-      }
-
-      // Apply tilt if 3D is active and we're not mid-north-snap
-      if (tiltPausedRef.current || !is3DRef.current) return;
-
-      const t = Math.max(0, Math.min(1,
-        (TILT_THRESHOLD_ENTER - altitude) / (TILT_THRESHOLD_ENTER - MIN_ALTITUDE)
-      ));
-      const tiltFraction = TILT_FRACTION_CLOSE + (TILT_FRACTION_MAX - TILT_FRACTION_CLOSE) * t;
-      const earthR = globeEl.current.getGlobeRadius();
-      const surface = getSurfacePoint(lat, lng, earthR);
-
-      // Set target without calling controls.update() — calling update() inside a
-      // change listener causes a synchronous infinite event loop. OrbitControls
-      // picks up the new target on its next internal frame.
-      controls.target.lerpVectors(globeOrigin.current, surface, tiltFraction);
     };
 
-    controls.addEventListener('change', updateTilt);
+    controls.addEventListener('change', checkThreshold);
 
-    // ── User-interaction stop ─────────────────────────────────────────────────
-    const stopCameraMovement = () => {
+    const stopIntroAnimation = () => {
       if (animationRef.current) {
         animationRef.current.cancel();
         animationRef.current = null;
       }
-      controls.autoRotate = false;
-      if (isOrbitingRef.current) {
-        onIsOrbitingChange(false);
-      }
     };
 
-    controls.domElement.addEventListener('mousedown', stopCameraMovement);
-    controls.domElement.addEventListener('wheel', stopCameraMovement);
-    controls.domElement.addEventListener('touchstart', stopCameraMovement);
+    controls.domElement.addEventListener('mousedown', stopIntroAnimation);
+    controls.domElement.addEventListener('wheel', stopIntroAnimation, { passive: true });
+    controls.domElement.addEventListener('touchstart', stopIntroAnimation);
 
-    // ── Satellite tile engine ─────────────────────────────────────────────────
-    // react-globe.gl's ref only exposes a whitelist of methods, so globeTileEngineUrl
-    // isn't on the ref directly. The underlying threeGlobe THREE.Group (from globe.gl's
-    // fromKapsule wrapper) has it — find it by traversing the scene.
     const scene = globeEl.current.scene() as any;
     if (scene) {
       scene.traverse((obj: any) => {
@@ -235,7 +291,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       });
     }
 
-    // ── Layer manager ─────────────────────────────────────────────────────────
     if (!layerManagerRef.current) {
       const manager = new GlobeLayerManager();
       manager.initialize(globeEl.current);
@@ -246,29 +301,379 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     onGlobeReady(globeEl.current);
 
     return () => {
-      controls.removeEventListener('change', updateTilt);
+      controls.removeEventListener('change', checkThreshold);
       try {
         if (controls.domElement) {
-          const clone = controls.domElement.cloneNode(true);
-          if (controls.domElement.parentNode) {
-            controls.domElement.parentNode.replaceChild(clone, controls.domElement);
-          }
+          controls.domElement.removeEventListener('mousedown', stopIntroAnimation);
+          controls.domElement.removeEventListener('wheel', stopIntroAnimation);
+          controls.domElement.removeEventListener('touchstart', stopIntroAnimation);
         }
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     };
   }, [isGlobeReady, onGlobeReady, onLayerManagerReady]);
 
-  // ── Intro animation — starts once targetPosition is resolved ─────────────
-  // Separated from the main setup effect so targetPosition is a tracked dep.
-  // targetPositionReady prevents starting with the fallback before the fetch settles.
+  // ── Close-mode enter/exit ────────────────────────────────────────────────
+
+  function enterCloseMode(controls: any) {
+    if (inCloseModeRef.current || !globeEl.current) return;
+
+    const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+    const earthR = globeEl.current.getGlobeRadius();
+    const camPos = camera.position;
+    const dist   = camPos.length();
+    const altitude = (dist - earthR) / earthR;
+
+    // OrbitControls targets origin → camera looks along -camPos direction.
+    // Raycast from camera center to find the surface point we're looking at.
+    const lookDir = camPos.clone().normalize().negate();
+    const hit = raySphereIntersect(camPos, lookDir, earthR);
+    let targetLat: number, targetLng: number;
+    if (hit) {
+      const ll = cartesianToLatLng(hit);
+      targetLat = ll.lat;
+      targetLng = ll.lng;
+    } else {
+      const ll = cartesianToLatLng(camPos);
+      targetLat = ll.lat;
+      targetLng = ll.lng;
+    }
+
+    closeModeState.current = {
+      targetLat,
+      targetLng,
+      altitude,
+      heading: 0,
+      pitch: pitchFromAltitude(altitude),
+    };
+
+    origControlsUpdateRef.current = controls.update.bind(controls);
+    controls.update   = () => false;
+    controls.enabled  = false;
+    controls.autoRotate = false;
+
+    dragVelocityRef.current = null;
+    inCloseModeRef.current = true;
+    onIsOrbitingChange(true);
+    isOrbitingRef.current = true;
+
+    startCloseModeLoop(controls);
+
+    const el = controls.domElement;
+    el.addEventListener('mousedown', onCloseMouseDown);
+    el.addEventListener('wheel', onCloseWheel, { passive: false });
+    el.addEventListener('touchstart', onCloseTouchStart, { passive: false });
+  }
+
+  function animateExitCloseMode(controls: any) {
+    if (!closeModeState.current || !globeEl.current) return;
+
+    const startPitch = closeModeState.current.pitch;
+    if (startPitch < 0.01) {
+      exitCloseMode(controls);
+      return;
+    }
+
+    isOrbitingRef.current = false;
+    dragVelocityRef.current = null;
+    exitAnimatingRef.current = true;
+
+    const startTime = performance.now();
+    const DURATION = 500;
+
+    const animTick = (now: number) => {
+      if (!closeModeState.current) return;
+      const t = Math.min((now - startTime) / DURATION, 1);
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+
+      // Just animate pitch to 0. Target stays fixed. Camera position derived automatically.
+      closeModeState.current.pitch = startPitch * (1 - ease);
+
+      if (t < 1) {
+        requestAnimationFrame(animTick);
+      } else {
+        closeModeState.current.pitch = 0;
+        exitAnimatingRef.current = false;
+        exitCloseMode(controls);
+      }
+    };
+    requestAnimationFrame(animTick);
+  }
+
+  function exitCloseMode(controls: any) {
+    if (!inCloseModeRef.current) return;
+
+    stopCloseModeLoop();
+
+    if (origControlsUpdateRef.current) {
+      controls.update = origControlsUpdateRef.current;
+      origControlsUpdateRef.current = null;
+    }
+    controls.enabled    = true;
+    controls.autoRotate = false;
+    controls.target.set(0, 0, 0);
+
+    // Position camera directly above the target point
+    if (closeModeState.current && globeEl.current) {
+      const camera = globeEl.current.camera() as THREE.Camera;
+      const earthR = globeEl.current.getGlobeRadius();
+      const { targetLat, targetLng, altitude } = closeModeState.current;
+      const dist = earthR * (1 + altitude);
+      camera.position.copy(latLngToCartesian(targetLat, targetLng, dist));
+      camera.up.set(0, 1, 0);
+      camera.lookAt(0, 0, 0);
+    }
+
+    const el = controls.domElement;
+    el.removeEventListener('mousedown', onCloseMouseDown);
+    el.removeEventListener('wheel', onCloseWheel);
+    el.removeEventListener('touchstart', onCloseTouchStart);
+
+    closeModeState.current = null;
+    inCloseModeRef.current = false;
+    preventReentryRef.current = true;
+    justExitedCloseModeRef.current = true;
+    onIsOrbitingChange(false);
+    isOrbitingRef.current = false;
+  }
+
+  // ── Close-mode RAF loop ──────────────────────────────────────────────────
+
+  function startCloseModeLoop(controls: any) {
+    let lastTime: number | null = null;
+
+    const tick = (now: number) => {
+      if (!inCloseModeRef.current || !closeModeState.current || !globeEl.current) return;
+
+      const dt = lastTime !== null ? Math.min((now - lastTime) / 1000, 0.1) : 0;
+      lastTime = now;
+
+      if (!exitAnimatingRef.current) {
+        if (isOrbitingRef.current) {
+          closeModeState.current.targetLng += ORBIT_SPEED_SURFACE_DPS * dt;
+          if (closeModeState.current.targetLng > 180) closeModeState.current.targetLng -= 360;
+        }
+
+        if (dragVelocityRef.current && dt > 0) {
+          closeModeState.current.targetLat += dragVelocityRef.current.dlat * dt;
+          closeModeState.current.targetLng += dragVelocityRef.current.dlng * dt;
+          closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
+          const decay = Math.exp(-5 * dt);
+          dragVelocityRef.current.dlat *= decay;
+          dragVelocityRef.current.dlng *= decay;
+          if (Math.abs(dragVelocityRef.current.dlat) + Math.abs(dragVelocityRef.current.dlng) < 0.01) {
+            dragVelocityRef.current = null;
+          }
+        }
+      }
+
+      const camera = globeEl.current.camera() as THREE.Camera;
+      const earthR = globeEl.current.getGlobeRadius();
+      applyCameraState(camera, closeModeState.current, earthR);
+      controls.dispatchEvent({ type: 'change' });
+
+      closeModeRafRef.current = requestAnimationFrame(tick);
+    };
+
+    closeModeRafRef.current = requestAnimationFrame(tick);
+  }
+
+  function stopCloseModeLoop() {
+    if (closeModeRafRef.current !== null) {
+      cancelAnimationFrame(closeModeRafRef.current);
+      closeModeRafRef.current = null;
+    }
+  }
+
+  // ── Close-mode event handlers ────────────────────────────────────────────
+
+  const onCloseMouseDown = (e: MouseEvent) => {
+    if (!globeEl.current || !closeModeState.current) return;
+
+    if (isOrbitingRef.current) {
+      isOrbitingRef.current = false;
+      onIsOrbitingChange(false);
+    }
+
+    const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+    const canvas = globeEl.current.renderer().domElement as HTMLCanvasElement;
+    const earthR = globeEl.current.getGlobeRadius();
+
+    const getNdcHit = (clientX: number, clientY: number) => {
+      const rect = canvas.getBoundingClientRect();
+      const ndc  = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width)  *  2 - 1,
+        ((clientY - rect.top)  / rect.height) * -2 + 1,
+      );
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(ndc, camera);
+      return raySphereIntersect(raycaster.ray.origin, raycaster.ray.direction, earthR);
+    };
+
+    const hit = getNdcHit(e.clientX, e.clientY);
+    if (!hit) return;
+    dragGrabLatLng.current = cartesianToLatLng(hit);
+    dragVelocityRef.current = null;
+
+    let lastMoveTime = performance.now();
+    let lastDlat = 0;
+    let lastDlng = 0;
+
+    const onMouseMove = (me: MouseEvent) => {
+      if (!dragGrabLatLng.current || !closeModeState.current) return;
+      const newHit = getNdcHit(me.clientX, me.clientY);
+      if (!newHit) return;
+      const newLL = cartesianToLatLng(newHit);
+      const dlat = dragGrabLatLng.current.lat - newLL.lat;
+      const dlng = dragGrabLatLng.current.lng - newLL.lng;
+      closeModeState.current.targetLat += dlat;
+      closeModeState.current.targetLng += dlng;
+      closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
+
+      const now = performance.now();
+      const dt = (now - lastMoveTime) / 1000;
+      if (dt > 0 && dt < 0.1) {
+        lastDlat = dlat / dt;
+        lastDlng = dlng / dt;
+      }
+      lastMoveTime = now;
+    };
+
+    const onMouseUp = () => {
+      dragGrabLatLng.current = null;
+      dragVelocityRef.current = { dlat: lastDlat, dlng: lastDlng };
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  const onCloseWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    if (!closeModeState.current || !globeEl.current) return;
+
+    if (isOrbitingRef.current) {
+      isOrbitingRef.current = false;
+      onIsOrbitingChange(false);
+    }
+
+    const zoomFactor = Math.pow(0.999, -e.deltaY);
+    const newAlt = Math.max(MIN_ALTITUDE, closeModeState.current.altitude * zoomFactor);
+
+    if (newAlt > TILT_THRESHOLD_EXIT) {
+      let controls: any;
+      try { controls = globeEl.current.controls(); } catch { return; }
+      exitCloseMode(controls);
+      return;
+    }
+
+    // Just update altitude and pitch. Target unchanged. Camera position derived on next frame.
+    closeModeState.current.altitude = newAlt;
+    closeModeState.current.pitch = pitchFromAltitude(newAlt);
+  };
+
+  const touchStartRef = useRef<{ x: number; y: number; dist: number | null } | null>(null);
+
+  const onCloseTouchStart = (e: TouchEvent) => {
+    e.preventDefault();
+    if (!globeEl.current || !closeModeState.current) return;
+
+    if (isOrbitingRef.current) {
+      isOrbitingRef.current = false;
+      onIsOrbitingChange(false);
+    }
+
+    const t0 = e.touches[0];
+    const dist = e.touches.length === 2
+      ? Math.hypot(e.touches[1].clientX - t0.clientX, e.touches[1].clientY - t0.clientY)
+      : null;
+    touchStartRef.current = { x: t0.clientX, y: t0.clientY, dist };
+    dragVelocityRef.current = null;
+
+    if (e.touches.length === 1) {
+      const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+      const canvas = globeEl.current.renderer().domElement as HTMLCanvasElement;
+      const earthR = globeEl.current.getGlobeRadius();
+      const rect   = canvas.getBoundingClientRect();
+      const ndc    = new THREE.Vector2(
+        ((t0.clientX - rect.left) / rect.width)  *  2 - 1,
+        ((t0.clientY - rect.top)  / rect.height) * -2 + 1,
+      );
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(ndc, camera);
+      const hit = raySphereIntersect(raycaster.ray.origin, raycaster.ray.direction, earthR);
+      dragGrabLatLng.current = hit ? cartesianToLatLng(hit) : null;
+    }
+
+    let lastTouchMoveTime = performance.now();
+    let lastTouchDlat = 0;
+    let lastTouchDlng = 0;
+
+    const onTouchMove = (te: TouchEvent) => {
+      if (!closeModeState.current || !touchStartRef.current) return;
+      const t = te.touches[0];
+
+      if (te.touches.length === 2 && touchStartRef.current.dist !== null) {
+        const newDist = Math.hypot(te.touches[1].clientX - t.clientX, te.touches[1].clientY - t.clientY);
+        const scale   = touchStartRef.current.dist / newDist;
+        const newAlt  = Math.max(MIN_ALTITUDE, closeModeState.current.altitude * scale);
+        if (newAlt > TILT_THRESHOLD_EXIT) {
+          let controls: any;
+          try { controls = globeEl.current?.controls(); } catch { return; }
+          if (controls) exitCloseMode(controls);
+          return;
+        }
+        closeModeState.current.altitude = newAlt;
+        closeModeState.current.pitch = pitchFromAltitude(newAlt);
+        touchStartRef.current.dist = newDist;
+      } else if (te.touches.length === 1 && dragGrabLatLng.current && globeEl.current) {
+        const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+        const canvas = globeEl.current.renderer().domElement as HTMLCanvasElement;
+        const earthR = globeEl.current.getGlobeRadius();
+        const rect   = canvas.getBoundingClientRect();
+        const ndc    = new THREE.Vector2(
+          ((t.clientX - rect.left) / rect.width)  *  2 - 1,
+          ((t.clientY - rect.top)  / rect.height) * -2 + 1,
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(ndc, camera);
+        const hit = raySphereIntersect(raycaster.ray.origin, raycaster.ray.direction, earthR);
+        if (hit) {
+          const newLL = cartesianToLatLng(hit);
+          const dlat = dragGrabLatLng.current.lat - newLL.lat;
+          const dlng = dragGrabLatLng.current.lng - newLL.lng;
+          closeModeState.current.targetLat += dlat;
+          closeModeState.current.targetLng += dlng;
+          closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
+
+          const now = performance.now();
+          const dt = (now - lastTouchMoveTime) / 1000;
+          if (dt > 0 && dt < 0.1) { lastTouchDlat = dlat / dt; lastTouchDlng = dlng / dt; }
+          lastTouchMoveTime = now;
+        }
+      }
+    };
+
+    const onTouchEnd = () => {
+      touchStartRef.current = null;
+      dragGrabLatLng.current = null;
+      dragVelocityRef.current = { dlat: lastTouchDlat, dlng: lastTouchDlng };
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+    };
+
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
+  };
+
+  // ── Intro animation ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!isGlobeReady || !globeEl.current || !targetPositionReady) return;
-    const target = targetPosition ?? DEFAULT_TARGET;
+    if (!targetPosition) return;
+    const target = targetPosition;
     console.log(
-      `[GlobeComponent] intro animation → lat=${target.lat.toFixed(2)}, lng=${target.lng.toFixed(2)}` +
-      (targetPosition ? ' (hotspot)' : ' (default fallback)')
+      `[GlobeComponent] intro animation → lat=${target.lat.toFixed(2)}, lng=${target.lng.toFixed(2)} (hotspot)`
     );
     if (animationRef.current) {
       animationRef.current.cancel();
@@ -282,55 +687,86 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     };
   }, [isGlobeReady, targetPosition, targetPositionReady]);
 
-  // ── React to is3D prop changes ────────────────────────────────────────────
+  // ── React to is3D preference changes ─────────────────────────────────────
   useEffect(() => {
-    is3DRef.current = is3D;
     if (!isGlobeReady || !globeEl.current) return;
-    let controls: any;
-    try { controls = globeEl.current.controls(); } catch { return; }
-    if (!controls) return;
+    prefer3DRef.current = is3D;
 
-    if (!is3D) {
-      controls.target.copy(globeOrigin.current);
+    if (!is3D && inCloseModeRef.current) {
+      try {
+        animateExitCloseMode(globeEl.current.controls());
+      } catch { /* ignore */ }
     }
-    // If is3D just turned on, the controls.change listener re-applies tilt on the next frame
+
+    if (is3D) {
+      preventReentryRef.current = false;
+      if (!inCloseModeRef.current) {
+        const { altitude } = globeEl.current.pointOfView();
+        if (altitude < TILT_THRESHOLD_ENTER) {
+          try {
+            enterCloseMode(globeEl.current.controls());
+          } catch { /* ignore */ }
+        }
+      }
+    }
   }, [is3D, isGlobeReady]);
 
   // ── React to isOrbiting prop changes ─────────────────────────────────────
   useEffect(() => {
     isOrbitingRef.current = isOrbiting;
+
     if (!isGlobeReady || !globeEl.current) return;
+
+    if (inCloseModeRef.current) {
+      if (!isOrbiting && !tiltPausedRef.current && closeModeState.current) {
+        const targetHeading = 0;
+        const startHeading  = closeModeState.current.heading % (2 * Math.PI);
+        const startTime     = performance.now();
+        tiltPausedRef.current = true;
+
+        const snapTick = (now: number) => {
+          if (!closeModeState.current) return;
+          const elapsed = now - startTime;
+          const t = Math.min(elapsed / NORTH_SNAP_DURATION, 1);
+          const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+          closeModeState.current.heading = startHeading * (1 - ease) + targetHeading * ease;
+          if (t < 1) {
+            requestAnimationFrame(snapTick);
+          } else {
+            closeModeState.current.heading = targetHeading;
+            tiltPausedRef.current = false;
+          }
+        };
+        requestAnimationFrame(snapTick);
+      }
+      return;
+    }
+
+    // Far mode
     let controls: any;
     try { controls = globeEl.current.controls(); } catch { return; }
     if (!controls) return;
 
     if (isOrbiting) {
-      const pov = globeEl.current.pointOfView();
-      const isClose = pov.altitude < TILT_THRESHOLD_ENTER;
-      controls.autoRotateSpeed = isClose ? ORBIT_SPEED_SURFACE : ORBIT_SPEED_PLANET;
+      controls.autoRotateSpeed = ORBIT_SPEED_PLANET;
       controls.autoRotate = true;
     } else {
       controls.autoRotate = false;
-
-      // Ease back to north-at-top by re-pointing camera at current lat/lng/altitude.
-      // globe.gl's pointOfView always places the camera in the canonical north-up
-      // orientation for the given coordinates.
+      if (justExitedCloseModeRef.current) {
+        justExitedCloseModeRef.current = false;
+        return;
+      }
       const pov = globeEl.current.pointOfView();
       tiltPausedRef.current = true;
       globeEl.current.pointOfView(
         { lat: pov.lat, lng: pov.lng, altitude: pov.altitude },
         NORTH_SNAP_DURATION
       );
-
-      // Re-engage tilt after the north-snap animation completes
-      // (functional delay tied to the animation duration, not a race-condition workaround)
-      setTimeout(() => {
-        tiltPausedRef.current = false;
-      }, NORTH_SNAP_DURATION + 100);
+      setTimeout(() => { tiltPausedRef.current = false; }, NORTH_SNAP_DURATION + 100);
     }
   }, [isOrbiting, isGlobeReady]);
 
-  // ── Layer manager cleanup ─────────────────────────────────────────────────
+  // ── Layer manager cleanup ────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       if (layerManagerRef.current) {

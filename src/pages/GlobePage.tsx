@@ -16,9 +16,8 @@ const GlobePage = () => {
   const layerManagerRef = useRef<GlobeLayerManager | null>(null);
   const [hotspot, setHotspot] = useState<Hotspot | null>(null);
   const [hotspotReady, setHotspotReady] = useState(false);
-  const [is3D, setIs3D] = useState(false);
+  const [is3D, setIs3D] = useState(() => localStorage.getItem('globe_prefer3D') !== 'false');
   const [isOrbiting, setIsOrbiting] = useState(false);
-  const [isCloseMode, setIsCloseMode] = useState(false);
 
   useEffect(() => {
     fetch('http://localhost:3001/api/hotspot')
@@ -52,7 +51,13 @@ const GlobePage = () => {
     }
   }, [dataStream]);
 
-  const handleToggle3D = useCallback(() => setIs3D(v => !v), []);
+  const handleToggle3D = useCallback(() => {
+    setIs3D(v => {
+      const next = !v;
+      localStorage.setItem('globe_prefer3D', String(next));
+      return next;
+    });
+  }, []);
   const handleToggleOrbit = useCallback(() => setIsOrbiting(v => !v), []);
 
   return (
@@ -64,9 +69,7 @@ const GlobePage = () => {
         targetPositionReady={hotspotReady}
         is3D={is3D}
         isOrbiting={isOrbiting}
-        onIs3DChange={setIs3D}
         onIsOrbitingChange={setIsOrbiting}
-        onCloseModeChange={setIsCloseMode}
       />
       <StatusBar
         connected={connected}
@@ -77,7 +80,6 @@ const GlobePage = () => {
       <GlobeControls
         is3D={is3D}
         isOrbiting={isOrbiting}
-        isCloseMode={isCloseMode}
         onToggle3D={handleToggle3D}
         onToggleOrbit={handleToggleOrbit}
       />
