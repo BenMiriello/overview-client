@@ -338,12 +338,13 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       targetLng = ll.lng;
     }
 
+    const targetPitch = pitchFromAltitude(altitude);
     closeModeState.current = {
       targetLat,
       targetLng,
       altitude,
       heading: 0,
-      pitch: pitchFromAltitude(altitude),
+      pitch: 0,
     };
 
     origControlsUpdateRef.current = controls.update.bind(controls);
@@ -353,8 +354,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     dragVelocityRef.current = null;
     inCloseModeRef.current = true;
-    onIsOrbitingChange(true);
-    isOrbitingRef.current = true;
+    exitAnimatingRef.current = true;
 
     startCloseModeLoop(controls);
 
@@ -362,6 +362,22 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     el.addEventListener('mousedown', onCloseMouseDown);
     el.addEventListener('wheel', onCloseWheel, { passive: false });
     el.addEventListener('touchstart', onCloseTouchStart, { passive: false });
+
+    // Animate pitch from 0 to target (2D→3D transition)
+    const startTime = performance.now();
+    const DURATION = 500;
+    const animateEntry = (now: number) => {
+      if (!closeModeState.current || !inCloseModeRef.current) return;
+      const t = Math.min((now - startTime) / DURATION, 1);
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      closeModeState.current.pitch = targetPitch * ease;
+      if (t < 1) {
+        requestAnimationFrame(animateEntry);
+      } else {
+        exitAnimatingRef.current = false;
+      }
+    };
+    requestAnimationFrame(animateEntry);
   }
 
   function animateExitCloseMode(controls: any) {
@@ -487,7 +503,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   // ── Close-mode event handlers ────────────────────────────────────────────
 
   const onCloseMouseDown = (e: MouseEvent) => {
-    if (!globeEl.current || !closeModeState.current) return;
+    if (!globeEl.current || !closeModeState.current || exitAnimatingRef.current) return;
 
     if (isOrbitingRef.current) {
       isOrbitingRef.current = false;
@@ -528,6 +544,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       closeModeState.current.targetLat += dlat;
       closeModeState.current.targetLng += dlng;
       closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
+      dragGrabLatLng.current = newLL;
 
       const now = performance.now();
       const dt = (now - lastMoveTime) / 1000;
@@ -551,7 +568,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   const onCloseWheel = (e: WheelEvent) => {
     e.preventDefault();
-    if (!closeModeState.current || !globeEl.current) return;
+    if (!closeModeState.current || !globeEl.current || exitAnimatingRef.current) return;
 
     if (isOrbitingRef.current) {
       isOrbitingRef.current = false;
@@ -577,7 +594,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   const onCloseTouchStart = (e: TouchEvent) => {
     e.preventDefault();
-    if (!globeEl.current || !closeModeState.current) return;
+    if (!globeEl.current || !closeModeState.current || exitAnimatingRef.current) return;
 
     if (isOrbitingRef.current) {
       isOrbitingRef.current = false;
@@ -646,6 +663,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           closeModeState.current.targetLat += dlat;
           closeModeState.current.targetLng += dlng;
           closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
+          dragGrabLatLng.current = newLL;
 
           const now = performance.now();
           const dt = (now - lastTouchMoveTime) / 1000;
