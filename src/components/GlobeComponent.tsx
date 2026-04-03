@@ -12,7 +12,7 @@ const PITCH_NEAR_THRESHOLD = 0;
 const PITCH_MAX_ZOOM       = Math.PI / 4;
 
 const ORBIT_SPEED_PLANET      = 0.067;
-const ORBIT_SPEED_SURFACE_DPS = 360 / 90;
+const ORBIT_HEADING_SPEED = 2 * Math.PI / 60; // rad/s — one full revolution per 60 seconds
 
 const NORTH_SNAP_DURATION = 1200;
 
@@ -351,6 +351,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.enabled  = false;
     controls.autoRotate = false;
 
+    if (isOrbitingRef.current) {
+      isOrbitingRef.current = false;
+      onIsOrbitingChange(false);
+    }
+
     dragVelocityRef.current = null;
     inCloseModeRef.current = true;
     exitAnimatingRef.current = true;
@@ -464,8 +469,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
       if (!exitAnimatingRef.current) {
         if (isOrbitingRef.current) {
-          closeModeState.current.targetLng += ORBIT_SPEED_SURFACE_DPS * dt;
-          if (closeModeState.current.targetLng > 180) closeModeState.current.targetLng -= 360;
+          closeModeState.current.heading += ORBIT_HEADING_SPEED * dt;
+          if (closeModeState.current.heading > 2 * Math.PI) closeModeState.current.heading -= 2 * Math.PI;
         }
 
         if (dragVelocityRef.current && dt > 0) {
@@ -723,7 +728,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (inCloseModeRef.current) {
       if (!isOrbiting && !tiltPausedRef.current && closeModeState.current
           && Math.abs(closeModeState.current.heading) > 0.01) {
-        const startHeading  = closeModeState.current.heading % (2 * Math.PI);
+        const raw = closeModeState.current.heading % (2 * Math.PI);
+        const startHeading = raw > Math.PI ? raw - 2 * Math.PI : raw < -Math.PI ? raw + 2 * Math.PI : raw;
         const startTime     = performance.now();
         tiltPausedRef.current = true;
 
