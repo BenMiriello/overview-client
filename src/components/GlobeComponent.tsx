@@ -232,7 +232,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   const justExitedCloseModeRef = useRef(false);
   useEffect(() => { prefer3DRef.current = is3D; }, [is3D]);
 
-  const dragGrabLatLng   = useRef<{ lat: number; lng: number } | null>(null);
   const dragVelocityRef  = useRef<{ dlat: number; dlng: number } | null>(null);
 
   // ── Main controls setup ──────────────────────────────────────────────────
@@ -473,10 +472,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           closeModeState.current.targetLat += dragVelocityRef.current.dlat * dt;
           closeModeState.current.targetLng += dragVelocityRef.current.dlng * dt;
           closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
-          const decay = Math.exp(-5 * dt);
+          const decay = Math.exp(-2.5 * dt);
           dragVelocityRef.current.dlat *= decay;
           dragVelocityRef.current.dlng *= decay;
-          if (Math.abs(dragVelocityRef.current.dlat) + Math.abs(dragVelocityRef.current.dlng) < 0.01) {
+          if (Math.abs(dragVelocityRef.current.dlat) + Math.abs(dragVelocityRef.current.dlng) < 0.001) {
             dragVelocityRef.current = null;
           }
         }
@@ -510,54 +509,50 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       onIsOrbitingChange(false);
     }
 
-    const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
-    const canvas = globeEl.current.renderer().domElement as HTMLCanvasElement;
-    const earthR = globeEl.current.getGlobeRadius();
-
-    const getNdcHit = (clientX: number, clientY: number) => {
-      const rect = canvas.getBoundingClientRect();
-      const ndc  = new THREE.Vector2(
-        ((clientX - rect.left) / rect.width)  *  2 - 1,
-        ((clientY - rect.top)  / rect.height) * -2 + 1,
-      );
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(ndc, camera);
-      return raySphereIntersect(raycaster.ray.origin, raycaster.ray.direction, earthR);
-    };
-
-    const hit = getNdcHit(e.clientX, e.clientY);
-    if (!hit) return;
-    dragGrabLatLng.current = cartesianToLatLng(hit);
     dragVelocityRef.current = null;
 
+    let lastX = e.clientX;
+    let lastY = e.clientY;
     let lastMoveTime = performance.now();
-    let lastDlat = 0;
-    let lastDlng = 0;
+    let smoothDlat = 0;
+    let smoothDlng = 0;
 
     const onMouseMove = (me: MouseEvent) => {
-      if (!dragGrabLatLng.current || !closeModeState.current) return;
-      const newHit = getNdcHit(me.clientX, me.clientY);
-      if (!newHit) return;
-      const newLL = cartesianToLatLng(newHit);
-      const dlat = dragGrabLatLng.current.lat - newLL.lat;
-      const dlng = dragGrabLatLng.current.lng - newLL.lng;
+      if (!closeModeState.current || !globeEl.current) return;
+
+      const dx = me.clientX - lastX;
+      const dy = me.clientY - lastY;
+      lastX = me.clientX;
+      lastY = me.clientY;
+      if (dx === 0 && dy === 0) return;
+
+      const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+      const viewH = globeEl.current.renderer().domElement.clientHeight;
+      const fovRad = camera.fov * Math.PI / 180;
+      const alt = closeModeState.current.altitude;
+
+      const degPerPx = (2 * alt * Math.tan(fovRad / 2) * (180 / Math.PI)) / viewH;
+      const cosLat = Math.cos(closeModeState.current.targetLat * Math.PI / 180);
+
+      const dlat = dy * degPerPx;
+      const dlng = -dx * degPerPx / Math.max(cosLat, 0.1);
+
       closeModeState.current.targetLat += dlat;
       closeModeState.current.targetLng += dlng;
       closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
-      dragGrabLatLng.current = newLL;
 
       const now = performance.now();
       const dt = (now - lastMoveTime) / 1000;
       if (dt > 0 && dt < 0.1) {
-        lastDlat = dlat / dt;
-        lastDlng = dlng / dt;
+        const alpha = 0.3;
+        smoothDlat = smoothDlat * (1 - alpha) + (dlat / dt) * alpha;
+        smoothDlng = smoothDlng * (1 - alpha) + (dlng / dt) * alpha;
       }
       lastMoveTime = now;
     };
 
     const onMouseUp = () => {
-      dragGrabLatLng.current = null;
-      dragVelocityRef.current = { dlat: lastDlat, dlng: lastDlng };
+      dragVelocityRef.current = { dlat: smoothDlat, dlng: smoothDlng };
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
@@ -608,27 +603,14 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     touchStartRef.current = { x: t0.clientX, y: t0.clientY, dist };
     dragVelocityRef.current = null;
 
-    if (e.touches.length === 1) {
-      const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
-      const canvas = globeEl.current.renderer().domElement as HTMLCanvasElement;
-      const earthR = globeEl.current.getGlobeRadius();
-      const rect   = canvas.getBoundingClientRect();
-      const ndc    = new THREE.Vector2(
-        ((t0.clientX - rect.left) / rect.width)  *  2 - 1,
-        ((t0.clientY - rect.top)  / rect.height) * -2 + 1,
-      );
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(ndc, camera);
-      const hit = raySphereIntersect(raycaster.ray.origin, raycaster.ray.direction, earthR);
-      dragGrabLatLng.current = hit ? cartesianToLatLng(hit) : null;
-    }
-
+    let lastTouchX = t0.clientX;
+    let lastTouchY = t0.clientY;
     let lastTouchMoveTime = performance.now();
-    let lastTouchDlat = 0;
-    let lastTouchDlng = 0;
+    let smoothTouchDlat = 0;
+    let smoothTouchDlng = 0;
 
     const onTouchMove = (te: TouchEvent) => {
-      if (!closeModeState.current || !touchStartRef.current) return;
+      if (!closeModeState.current || !touchStartRef.current || !globeEl.current) return;
       const t = te.touches[0];
 
       if (te.touches.length === 2 && touchStartRef.current.dist !== null) {
@@ -644,39 +626,42 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         closeModeState.current.altitude = newAlt;
         closeModeState.current.pitch = pitchFromAltitude(newAlt);
         touchStartRef.current.dist = newDist;
-      } else if (te.touches.length === 1 && dragGrabLatLng.current && globeEl.current) {
-        const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
-        const canvas = globeEl.current.renderer().domElement as HTMLCanvasElement;
-        const earthR = globeEl.current.getGlobeRadius();
-        const rect   = canvas.getBoundingClientRect();
-        const ndc    = new THREE.Vector2(
-          ((t.clientX - rect.left) / rect.width)  *  2 - 1,
-          ((t.clientY - rect.top)  / rect.height) * -2 + 1,
-        );
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(ndc, camera);
-        const hit = raySphereIntersect(raycaster.ray.origin, raycaster.ray.direction, earthR);
-        if (hit) {
-          const newLL = cartesianToLatLng(hit);
-          const dlat = dragGrabLatLng.current.lat - newLL.lat;
-          const dlng = dragGrabLatLng.current.lng - newLL.lng;
-          closeModeState.current.targetLat += dlat;
-          closeModeState.current.targetLng += dlng;
-          closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
-          dragGrabLatLng.current = newLL;
+      } else if (te.touches.length === 1) {
+        const dx = t.clientX - lastTouchX;
+        const dy = t.clientY - lastTouchY;
+        lastTouchX = t.clientX;
+        lastTouchY = t.clientY;
+        if (dx === 0 && dy === 0) return;
 
-          const now = performance.now();
-          const dt = (now - lastTouchMoveTime) / 1000;
-          if (dt > 0 && dt < 0.1) { lastTouchDlat = dlat / dt; lastTouchDlng = dlng / dt; }
-          lastTouchMoveTime = now;
+        const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+        const viewH = globeEl.current.renderer().domElement.clientHeight;
+        const fovRad = camera.fov * Math.PI / 180;
+        const alt = closeModeState.current.altitude;
+
+        const degPerPx = (2 * alt * Math.tan(fovRad / 2) * (180 / Math.PI)) / viewH;
+        const cosLat = Math.cos(closeModeState.current.targetLat * Math.PI / 180);
+
+        const dlat = dy * degPerPx;
+        const dlng = -dx * degPerPx / Math.max(cosLat, 0.1);
+
+        closeModeState.current.targetLat += dlat;
+        closeModeState.current.targetLng += dlng;
+        closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
+
+        const now = performance.now();
+        const dt = (now - lastTouchMoveTime) / 1000;
+        if (dt > 0 && dt < 0.1) {
+          const alpha = 0.3;
+          smoothTouchDlat = smoothTouchDlat * (1 - alpha) + (dlat / dt) * alpha;
+          smoothTouchDlng = smoothTouchDlng * (1 - alpha) + (dlng / dt) * alpha;
         }
+        lastTouchMoveTime = now;
       }
     };
 
     const onTouchEnd = () => {
       touchStartRef.current = null;
-      dragGrabLatLng.current = null;
-      dragVelocityRef.current = { dlat: lastTouchDlat, dlng: lastTouchDlng };
+      dragVelocityRef.current = { dlat: smoothTouchDlat, dlng: smoothTouchDlng };
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onTouchEnd);
     };
@@ -736,8 +721,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (!isGlobeReady || !globeEl.current) return;
 
     if (inCloseModeRef.current) {
-      if (!isOrbiting && !tiltPausedRef.current && closeModeState.current) {
-        const targetHeading = 0;
+      if (!isOrbiting && !tiltPausedRef.current && closeModeState.current
+          && Math.abs(closeModeState.current.heading) > 0.01) {
         const startHeading  = closeModeState.current.heading % (2 * Math.PI);
         const startTime     = performance.now();
         tiltPausedRef.current = true;
@@ -747,11 +732,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           const elapsed = now - startTime;
           const t = Math.min(elapsed / NORTH_SNAP_DURATION, 1);
           const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-          closeModeState.current.heading = startHeading * (1 - ease) + targetHeading * ease;
+          closeModeState.current.heading = startHeading * (1 - ease);
           if (t < 1) {
             requestAnimationFrame(snapTick);
           } else {
-            closeModeState.current.heading = targetHeading;
+            closeModeState.current.heading = 0;
             tiltPausedRef.current = false;
           }
         };
@@ -780,7 +765,15 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         { lat: pov.lat, lng: pov.lng, altitude: pov.altitude },
         NORTH_SNAP_DURATION
       );
-      setTimeout(() => { tiltPausedRef.current = false; }, NORTH_SNAP_DURATION + 100);
+      const snapStart = performance.now();
+      const checkSnapDone = () => {
+        if (performance.now() - snapStart >= NORTH_SNAP_DURATION) {
+          tiltPausedRef.current = false;
+        } else {
+          requestAnimationFrame(checkSnapDone);
+        }
+      };
+      requestAnimationFrame(checkSnapDone);
     }
   }, [isOrbiting, isGlobeReady]);
 
