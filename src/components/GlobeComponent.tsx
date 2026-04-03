@@ -228,6 +228,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   const prefer3DRef            = useRef(is3D);
   const exitAnimatingRef       = useRef(false);
+  const entryAnimatingRef      = useRef(false);
   const preventReentryRef      = useRef(false);
   const justExitedCloseModeRef = useRef(false);
   useEffect(() => { prefer3DRef.current = is3D; }, [is3D]);
@@ -358,7 +359,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     dragVelocityRef.current = null;
     inCloseModeRef.current = true;
-    exitAnimatingRef.current = true;
+    entryAnimatingRef.current = true;
 
     startCloseModeLoop(controls);
 
@@ -367,18 +368,18 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     el.addEventListener('wheel', onCloseWheel, { passive: false });
     el.addEventListener('touchstart', onCloseTouchStart, { passive: false });
 
-    // Animate pitch from 0 to target (2D→3D transition)
+    // Animate pitch from 0 to target (2D→3D transition), using dynamic pitch so zoom can continue
     const startTime = performance.now();
     const DURATION = 500;
     const animateEntry = (now: number) => {
       if (!closeModeState.current || !inCloseModeRef.current) return;
       const t = Math.min((now - startTime) / DURATION, 1);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-      closeModeState.current.pitch = targetPitch * ease;
+      closeModeState.current.pitch = pitchFromAltitude(closeModeState.current.altitude) * ease;
       if (t < 1) {
         requestAnimationFrame(animateEntry);
       } else {
-        exitAnimatingRef.current = false;
+        entryAnimatingRef.current = false;
       }
     };
     requestAnimationFrame(animateEntry);
@@ -388,7 +389,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (!closeModeState.current || !globeEl.current) return;
 
     const startPitch = closeModeState.current.pitch;
-    if (startPitch < 0.01) {
+    const rawH = closeModeState.current.heading % (2 * Math.PI);
+    const startHeading = rawH > Math.PI ? rawH - 2 * Math.PI : rawH < -Math.PI ? rawH + 2 * Math.PI : rawH;
+
+    if (startPitch < 0.01 && Math.abs(startHeading) < 0.01) {
       exitCloseMode(controls);
       return;
     }
@@ -405,13 +409,14 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const t = Math.min((now - startTime) / DURATION, 1);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 
-      // Just animate pitch to 0. Target stays fixed. Camera position derived automatically.
       closeModeState.current.pitch = startPitch * (1 - ease);
+      closeModeState.current.heading = startHeading * (1 - ease);
 
       if (t < 1) {
         requestAnimationFrame(animTick);
       } else {
         closeModeState.current.pitch = 0;
+        closeModeState.current.heading = 0;
         exitAnimatingRef.current = false;
         exitCloseMode(controls);
       }
@@ -467,7 +472,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const dt = lastTime !== null ? Math.min((now - lastTime) / 1000, 0.1) : 0;
       lastTime = now;
 
-      if (!exitAnimatingRef.current) {
+      if (!exitAnimatingRef.current && !entryAnimatingRef.current) {
         if (isOrbitingRef.current) {
           closeModeState.current.heading += ORBIT_HEADING_SPEED * dt;
           if (closeModeState.current.heading > 2 * Math.PI) closeModeState.current.heading -= 2 * Math.PI;
@@ -507,12 +512,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   // ── Close-mode event handlers ────────────────────────────────────────────
 
   const onCloseMouseDown = (e: MouseEvent) => {
-    if (!globeEl.current || !closeModeState.current || exitAnimatingRef.current) return;
-
-    if (isOrbitingRef.current) {
-      isOrbitingRef.current = false;
-      onIsOrbitingChange(false);
-    }
+    if (!globeEl.current || !closeModeState.current || exitAnimatingRef.current || entryAnimatingRef.current) return;
 
     dragVelocityRef.current = null;
 
@@ -539,8 +539,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const degPerPx = (2 * alt * Math.tan(fovRad / 2) * (180 / Math.PI)) / viewH;
       const cosLat = Math.cos(closeModeState.current.targetLat * Math.PI / 180);
 
-      const dlat = dy * degPerPx;
-      const dlng = -dx * degPerPx / Math.max(cosLat, 0.1);
+      const h = closeModeState.current.heading;
+      const cosH = Math.cos(h);
+      const sinH = Math.sin(h);
+      const dlat = degPerPx * (dy * cosH + dx * sinH);
+      const dlng = degPerPx * (dy * sinH - dx * cosH) / Math.max(cosLat, 0.1);
 
       closeModeState.current.targetLat += dlat;
       closeModeState.current.targetLng += dlng;
@@ -570,24 +573,20 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     e.preventDefault();
     if (!closeModeState.current || !globeEl.current || exitAnimatingRef.current) return;
 
-    if (isOrbitingRef.current) {
-      isOrbitingRef.current = false;
-      onIsOrbitingChange(false);
-    }
-
     const zoomFactor = Math.pow(0.999, -e.deltaY);
     const newAlt = Math.max(MIN_ALTITUDE, closeModeState.current.altitude * zoomFactor);
 
     if (newAlt > TILT_THRESHOLD_EXIT) {
       let controls: any;
       try { controls = globeEl.current.controls(); } catch { return; }
-      exitCloseMode(controls);
+      animateExitCloseMode(controls);
       return;
     }
 
-    // Just update altitude and pitch. Target unchanged. Camera position derived on next frame.
     closeModeState.current.altitude = newAlt;
-    closeModeState.current.pitch = pitchFromAltitude(newAlt);
+    if (!entryAnimatingRef.current) {
+      closeModeState.current.pitch = pitchFromAltitude(newAlt);
+    }
   };
 
   const touchStartRef = useRef<{ x: number; y: number; dist: number | null } | null>(null);
@@ -596,10 +595,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     e.preventDefault();
     if (!globeEl.current || !closeModeState.current || exitAnimatingRef.current) return;
 
-    if (isOrbitingRef.current) {
-      isOrbitingRef.current = false;
-      onIsOrbitingChange(false);
-    }
+    if (entryAnimatingRef.current && e.touches.length < 2) return;
 
     const t0 = e.touches[0];
     const dist = e.touches.length === 2
@@ -625,13 +621,15 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         if (newAlt > TILT_THRESHOLD_EXIT) {
           let controls: any;
           try { controls = globeEl.current?.controls(); } catch { return; }
-          if (controls) exitCloseMode(controls);
+          if (controls) animateExitCloseMode(controls);
           return;
         }
         closeModeState.current.altitude = newAlt;
-        closeModeState.current.pitch = pitchFromAltitude(newAlt);
+        if (!entryAnimatingRef.current) {
+          closeModeState.current.pitch = pitchFromAltitude(newAlt);
+        }
         touchStartRef.current.dist = newDist;
-      } else if (te.touches.length === 1) {
+      } else if (te.touches.length === 1 && !entryAnimatingRef.current) {
         const dx = t.clientX - lastTouchX;
         const dy = t.clientY - lastTouchY;
         lastTouchX = t.clientX;
@@ -646,8 +644,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         const degPerPx = (2 * alt * Math.tan(fovRad / 2) * (180 / Math.PI)) / viewH;
         const cosLat = Math.cos(closeModeState.current.targetLat * Math.PI / 180);
 
-        const dlat = dy * degPerPx;
-        const dlng = -dx * degPerPx / Math.max(cosLat, 0.1);
+        const h = closeModeState.current.heading;
+        const cosH = Math.cos(h);
+        const sinH = Math.sin(h);
+        const dlat = degPerPx * (dy * cosH + dx * sinH);
+        const dlng = degPerPx * (dy * sinH - dx * cosH) / Math.max(cosLat, 0.1);
 
         closeModeState.current.targetLat += dlat;
         closeModeState.current.targetLng += dlng;
