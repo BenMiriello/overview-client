@@ -9,7 +9,7 @@ const TILT_THRESHOLD_EXIT  = 1.15;
 const MIN_ALTITUDE         = 0.01;
 
 const PITCH_NEAR_THRESHOLD = 0;
-const PITCH_MAX_ZOOM       = Math.PI / 4;
+const PITCH_MAX_ZOOM       = Math.PI / 3; // 60° from vertical = 30° elevation at max zoom
 
 const ORBIT_SPEED_PLANET      = 0.067;
 const ORBIT_HEADING_SPEED = 2 * Math.PI / 60; // rad/s — one full revolution per 60 seconds
@@ -70,7 +70,7 @@ function pitchFromAltitude(altitude: number): number {
   const t = Math.max(0, Math.min(1,
     (TILT_THRESHOLD_ENTER - altitude) / (TILT_THRESHOLD_ENTER - MIN_ALTITUDE)
   ));
-  const tEased = t * t * t;
+  const tEased = t * t; // quadratic: slow to tilt near threshold, progressively steeper close to ground
   return PITCH_NEAR_THRESHOLD + (PITCH_MAX_ZOOM - PITCH_NEAR_THRESHOLD) * tEased;
 }
 
@@ -759,6 +759,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         raf = requestAnimationFrame(animate);
       } else {
         flyToActiveRef.current = false;
+        // Land in 3D: re-engage close-mode at the hotspot
+        preventReentryRef.current = false;
+        onIs3DChange(true);
+        try { enterCloseMode(globeEl.current.controls()); } catch { /* ignore */ }
       }
     };
 

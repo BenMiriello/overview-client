@@ -1,12 +1,19 @@
 import * as THREE from 'three';
 import { BaseLayer } from './LayerInterface';
-import { getConfig } from '../config';
+import { getConfig, setConfig } from '../config';
 
 /**
  * Creates a cloud layer around the globe
  */
+const EARTH_RADIUS = 100; // Base globe radius in react-globe.gl
+const CLOUD_ALT_FAR  = 0.01;  // Altitude when zoomed out (globe scale)
+const CLOUD_ALT_NEAR = 0.003; // Altitude when zoomed in (realistic storm cloud scale)
+const ALT_FAR_POINT  = 1.0;   // Camera altitude where far scale applies (close-mode entry threshold)
+const ALT_NEAR_POINT = 0.25;  // Camera altitude where near (realistic) scale is fully reached
+
 export class CloudLayer extends BaseLayer<void> {
   private cloudMesh: THREE.Mesh | null = null;
+  private lastCloudAlt = -1;
 
   constructor() {
     super();
@@ -31,11 +38,12 @@ export class CloudLayer extends BaseLayer<void> {
         alphaTest: 0.1         // Discard pixels with low alpha values
       });
 
-      const EARTH_RADIUS = 100; // Base globe radius in react-globe.gl
-      const cloudRadius = EARTH_RADIUS * (1 + (getConfig<number>('layers.clouds.altitude') || 0.02));
-      const cloudGeometry = new THREE.SphereGeometry(cloudRadius, 48, 48);
+      const initialAlt = CLOUD_ALT_FAR;
+      const cloudGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 48, 48);
 
       this.cloudMesh = new THREE.Mesh(cloudGeometry, material);
+      this.cloudMesh.scale.setScalar(1 + initialAlt);
+      this.lastCloudAlt = initialAlt;
 
       // Set rendering order (lower numbers render first)
       // IMPORTANT: Make sure this is a value that renders after the globe but before lightning
@@ -55,11 +63,29 @@ export class CloudLayer extends BaseLayer<void> {
     if (this.cloudMesh) {
       this.cloudMesh.visible = this.visible;
 
-      // Rotate clouds counter-clockwise (when viewed from above)
       if (this.visible) {
         const rotationSpeed = getConfig<number>('layers.clouds.rotationSpeed') || 0.002;
         if (rotationSpeed !== 0) {
           this.cloudMesh.rotation.y += rotationSpeed * Math.PI / 180;
+        }
+
+        // Dynamically scale cloud altitude based on camera distance
+        if (this.globeEl) {
+          try {
+            const camera = this.globeEl.camera();
+            const globeRadius = (this.globeEl.getGlobeRadius?.() as number | undefined) ?? EARTH_RADIUS;
+            const cameraAlt = camera.position.length() / globeRadius - 1;
+            const t = Math.max(0, Math.min(1,
+              (ALT_FAR_POINT - cameraAlt) / (ALT_FAR_POINT - ALT_NEAR_POINT)
+            ));
+            const cloudAlt = CLOUD_ALT_FAR + (CLOUD_ALT_NEAR - CLOUD_ALT_FAR) * t;
+
+            if (Math.abs(cloudAlt - this.lastCloudAlt) > 0.0001) {
+              this.cloudMesh.scale.setScalar(1 + cloudAlt);
+              setConfig('layers.clouds.altitude', cloudAlt);
+              this.lastCloudAlt = cloudAlt;
+            }
+          } catch { /* globeEl not ready */ }
         }
       }
     }

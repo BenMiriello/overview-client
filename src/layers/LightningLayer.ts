@@ -14,9 +14,6 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   private markerEffects: Map<string, PointMarkerEffect> = new Map();
   private pendingMarkers: Map<string, LightningStrike> = new Map();
   private activeEffects: { id: string, timestamp: number }[] = [];
-  private startAltitude: number = getConfig<number>('layers.clouds.altitude') ?? 
-                                  getConfig<number>('layers.lightning.lightningBoltConfig.startAltitude') ?? 
-                                  0.02;
 
   private dataStream: DataStream<LightningStrike> | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -90,7 +87,9 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     const config: LightningBoltEffectConfig = {
       lat: strike.lat,
       lng: strike.lng,
-      startAltitude: this.startAltitude,
+      startAltitude: getConfig<number>('layers.clouds.altitude') ??
+                     getConfig<number>('layers.lightning.lightningBoltConfig.startAltitude') ??
+                     0.02,
       groundAltitude: 0,
       resolution: getConfig<number>('layers.lightning.lightningBoltConfig.resolution') || 0.7,
       seed: Math.random() * 10000,
