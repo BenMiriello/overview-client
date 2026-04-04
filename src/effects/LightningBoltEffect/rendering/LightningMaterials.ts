@@ -13,6 +13,7 @@ const MAX_BLENDING_PARAMS = {
 export class LightningMaterials {
   private baseMaterial: LineMaterial;
   private depthMaterials: Map<string, LineMaterial> = new Map();
+  private glowMaterials: Map<string, LineMaterial> = new Map();
   private baseLineWidth: number;
   private lineWidthScale: number = 1.0;
 
@@ -55,6 +56,29 @@ export class LightningMaterials {
     return mat;
   }
 
+  getGlowMaterialForDepth(depth: number): LineMaterial {
+    const key = `glow_${depth.toFixed(2)}`;
+    if (this.glowMaterials.has(key)) {
+      return this.glowMaterials.get(key)!;
+    }
+
+    const coreWidth = this.getLineWidth(depth, this.baseLineWidth) * this.lineWidthScale;
+    const glowWidth = coreWidth * 3;
+
+    const mat = new LineMaterial({
+      color: 0xaaccff,
+      linewidth: glowWidth,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexColors: true,
+    });
+    mat.resolution.set(window.innerWidth, window.innerHeight);
+    this.glowMaterials.set(key, mat);
+    return mat;
+  }
+
   private getLineWidth(depth: number, baseWidth: number): number {
     const minWidth = baseWidth * 0.25;
     const decay = Math.exp(-depth * 0.6);
@@ -82,6 +106,9 @@ export class LightningMaterials {
     for (const mat of this.depthMaterials.values()) {
       mat.resolution.set(width, height);
     }
+    for (const mat of this.glowMaterials.values()) {
+      mat.resolution.set(width, height);
+    }
   }
 
   setLineWidthScale(scale: number): void {
@@ -91,6 +118,11 @@ export class LightningMaterials {
     for (const [key, mat] of this.depthMaterials) {
       const depth = parseFloat(key);
       mat.linewidth = this.getLineWidth(depth, this.baseLineWidth) * scale;
+    }
+    for (const [key, mat] of this.glowMaterials) {
+      const rawKey = key.replace('glow_', '');
+      const depth = parseFloat(rawKey);
+      mat.linewidth = this.getLineWidth(depth, this.baseLineWidth) * scale * 3;
     }
   }
 
@@ -107,5 +139,9 @@ export class LightningMaterials {
       mat.dispose();
     }
     this.depthMaterials.clear();
+    for (const mat of this.glowMaterials.values()) {
+      mat.dispose();
+    }
+    this.glowMaterials.clear();
   }
 }

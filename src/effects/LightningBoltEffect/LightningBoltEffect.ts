@@ -43,7 +43,7 @@ export class LightningBoltEffect {
     this.config = config;
 
     const detailLevel = config.detailLevel ?? DetailLevel.GLOBE;
-    const baseLineWidth = 2;
+    const baseLineWidth = 1.0;
     this.renderer = new BoltRenderer(scene, baseLineWidth);
     const resolution = config.resolution ?? 1.0;
 
@@ -105,6 +105,18 @@ export class LightningBoltEffect {
       }
     }
 
+    // Translate bolt so the main channel's ground-strike point aligns with worldEnd
+    if (this.mainChannelPath.length > 0 && this.transform) {
+      const landingNormalized = this.mainChannelPath[this.mainChannelPath.length - 1];
+      const landingWorld = this.transform.toWorld(landingNormalized);
+      const group = this.renderer.getGroup();
+      group.position.set(
+        worldEnd.x - landingWorld.x,
+        worldEnd.y - landingWorld.y,
+        worldEnd.z - landingWorld.z,
+      );
+    }
+
     // Create charge field visualization for SHOWCASE mode (unless skipped)
     if (detailLevel === DetailLevel.SHOWCASE && result.atmosphere && !config.skipChargeRendering) {
       this.chargeRenderer = new ChargeFieldRenderer(scene, { planeSize: 1.0 });
@@ -136,6 +148,7 @@ export class LightningBoltEffect {
     ) {
       this.screenFlashFired = true;
       this.screenFlash = new ScreenFlashEffect(0.15);
+      window.dispatchEvent(new Event('lightning-flash'));
     }
 
     if (this.screenFlash && !this.screenFlash.update()) {

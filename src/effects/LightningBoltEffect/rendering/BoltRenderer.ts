@@ -17,6 +17,9 @@ interface DepthGroup {
   colors: Float32Array;
   geometry: LineSegmentsGeometry;
   line: LineSegments2;
+  glowColors: Float32Array;
+  glowGeometry: LineSegmentsGeometry;
+  glowLine: LineSegments2;
   depth: number;
 }
 
@@ -61,7 +64,10 @@ export class BoltRenderer {
       const segs = byDepthBucket.get(bucket)!;
       const depthGroup = this.createDepthGroup(segs, bucket);
       this.depthGroups.set(bucket, depthGroup);
+      // Glow renders behind the core bolt
+      depthGroup.glowLine.renderOrder = 999 - Math.floor(bucket * 10);
       depthGroup.line.renderOrder = 1000 - Math.floor(bucket * 10);
+      this.group.add(depthGroup.glowLine);
       this.group.add(depthGroup.line);
     }
   }
@@ -75,7 +81,7 @@ export class BoltRenderer {
     const continuingColor = this.getContinuingCurrentColor(state);
 
     for (const [bucket, group] of this.depthGroups) {
-      const { colors, segmentIds, geometry: geom } = group;
+      const { colors, glowColors, segmentIds, geometry: geom, glowGeometry: glowGeom } = group;
       const mat = this.materials.getMaterialForDepth(bucket);
       const baseColor = new THREE.Color(mat.color);
 
@@ -101,11 +107,27 @@ export class BoltRenderer {
         colors[ci + 3] = r;
         colors[ci + 4] = g;
         colors[ci + 5] = b;
+
+        // Glow: softer, attenuated version of main color
+        const glowAlpha = alpha * 0.5;
+        const gr = blendedColor.r * glowAlpha;
+        const gg = blendedColor.g * glowAlpha;
+        const gb = blendedColor.b * glowAlpha;
+        glowColors[ci]     = gr;
+        glowColors[ci + 1] = gg;
+        glowColors[ci + 2] = gb;
+        glowColors[ci + 3] = gr;
+        glowColors[ci + 4] = gg;
+        glowColors[ci + 5] = gb;
       }
 
       geom.setColors(colors);
       geom.getAttribute('instanceColorStart').needsUpdate = true;
       geom.getAttribute('instanceColorEnd').needsUpdate = true;
+
+      glowGeom.setColors(glowColors);
+      glowGeom.getAttribute('instanceColorStart').needsUpdate = true;
+      glowGeom.getAttribute('instanceColorEnd').needsUpdate = true;
     }
   }
 
@@ -163,7 +185,9 @@ export class BoltRenderer {
   private clear(): void {
     for (const [, group] of this.depthGroups) {
       group.geometry.dispose();
+      group.glowGeometry.dispose();
       this.group.remove(group.line);
+      this.group.remove(group.glowLine);
     }
     this.depthGroups.clear();
     this.segmentIndexMap.clear();
@@ -207,6 +231,16 @@ export class BoltRenderer {
     const line = new LineSegments2(geom, mat);
     line.computeLineDistances();
 
-    return { segmentIds, positions, colors, geometry: geom, line, depth: depthBucket };
+    // Glow layer: wider, additively blended duplicate
+    const glowColors = new Float32Array(n * 6);
+    const glowGeom = new LineSegmentsGeometry();
+    glowGeom.setPositions(positions);
+    glowGeom.setColors(glowColors);
+
+    const glowMat = this.materials.getGlowMaterialForDepth(depthBucket);
+    const glowLine = new LineSegments2(glowGeom, glowMat);
+    glowLine.computeLineDistances();
+
+    return { segmentIds, positions, colors, geometry: geom, line, glowColors, glowGeometry: glowGeom, glowLine, depth: depthBucket };
   }
 }
