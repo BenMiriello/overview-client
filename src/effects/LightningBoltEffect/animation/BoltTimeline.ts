@@ -17,7 +17,7 @@ export interface BoltTimeline {
 const TIMELINE_PRESETS: Record<DetailLevel, Omit<BoltTimeline, 'totalSteps' | 'connectionStep' | 'mainChannelLength'>> = {
   [DetailLevel.GLOBE]: {
     leaderDuration: 250,
-    connectionPause: 20,
+    connectionPause: 10,
     returnStrokeDuration: 40,
     strokeHoldDuration: 60,
     fadeDuration: 300,
@@ -26,7 +26,7 @@ const TIMELINE_PRESETS: Record<DetailLevel, Omit<BoltTimeline, 'totalSteps' | 'c
   },
   [DetailLevel.SHOWCASE]: {
     leaderDuration: 800,
-    connectionPause: 30,
+    connectionPause: 15,
     returnStrokeDuration: 60,
     strokeHoldDuration: 100,
     fadeDuration: 500,

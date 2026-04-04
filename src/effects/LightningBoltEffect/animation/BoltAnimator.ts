@@ -306,10 +306,16 @@ export class BoltAnimator {
     const visible = new Set<number>();
     const brightness = new Map<number, number>();
 
-    const tipSegments = this.mainChannelReversed.slice(0, 5);
-    for (const segId of tipSegments) {
-      visible.add(segId);
-      brightness.set(segId, 0.3);
+    for (const seg of this.geometry.segments) {
+      const info = this.segmentById.get(seg.id)!;
+      if (seg.isMainChannel) {
+        visible.add(seg.id);
+        brightness.set(seg.id, 0.3);
+      } else if (this.connectedSegments.has(seg.id) && !info.isDeadEnd) {
+        visible.add(seg.id);
+        const depthFactor = this.getDepthFactor(info.depth);
+        brightness.set(seg.id, 0.15 * depthFactor);
+      }
     }
 
     return {
@@ -347,12 +353,19 @@ export class BoltAnimator {
     }
 
     for (const seg of this.geometry.segments) {
-      if (!seg.isMainChannel && !seg.isDeadEnd) {
-        if (this.connectedSegments.has(seg.id) && litSet.has(seg.parentSegmentId!)) {
+      if (seg.isMainChannel || !this.connectedSegments.has(seg.id)) continue;
+
+      const depthFactor = this.getDepthFactor(seg.depth);
+
+      if (!seg.isDeadEnd && litSet.has(seg.parentSegmentId!)) {
+        visible.add(seg.id);
+        const parentBrightness = brightness.get(seg.parentSegmentId!) ?? 0;
+        brightness.set(seg.id, parentBrightness * 0.6 * depthFactor);
+      } else {
+        const residual = 0.15 * depthFactor * (1 - progress);
+        if (residual > 0.02) {
           visible.add(seg.id);
-          const parentBrightness = brightness.get(seg.parentSegmentId!) ?? 0;
-          const depthFactor = this.getDepthFactor(seg.depth);
-          brightness.set(seg.id, parentBrightness * 0.6 * depthFactor);
+          brightness.set(seg.id, residual);
         }
       }
     }
