@@ -42,14 +42,79 @@
     background: rgba(255, 255, 255, 0.22);
 }
 
-/* ── Hotspot button ─────────────────────────────────────────────────────── */
+/* ── Tooltip wrapper (shared by all control buttons) ────────────────────── */
 
-.hotspot-btn-wrap {
+.ctrl-btn-wrap {
     position: relative;
 }
 
+.ctrl-tooltip {
+    pointer-events: none;
+    position: absolute;
+    bottom: calc(100% + 12px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 15, 20, 0.88);
+    backdrop-filter: blur(6px);
+    color: #e8e8e8;
+    font-size: 12px;
+    font-family: 'Roboto', sans-serif;
+    font-weight: 400;
+    line-height: 1.4;
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    width: max-content;
+    max-width: 200px;
+    white-space: normal;
+    text-align: left;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+/* Flame button sits at left viewport edge — left-align to avoid clipping */
+.ctrl-tooltip.left-align {
+    left: 0;
+    transform: none;
+}
+
+.ctrl-btn-wrap:hover .ctrl-tooltip {
+    opacity: 1;
+}
+
+/* Speech-bubble arrow: outer (border) + inner (fill) pseudo-elements */
+.ctrl-tooltip::before,
+.ctrl-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+    border-style: solid;
+    border-color: transparent;
+}
+
+.ctrl-tooltip::before {
+    border-width: 6px;
+    border-top-color: rgba(255, 255, 255, 0.12);
+}
+
+.ctrl-tooltip::after {
+    margin-top: 1px;
+    border-width: 5px;
+    border-top-color: rgba(15, 15, 20, 0.88);
+}
+
+/* Left-aligned tooltip: pin arrow to center of the 40px button */
+.ctrl-tooltip.left-align::before,
+.ctrl-tooltip.left-align::after {
+    left: 20px;
+}
+
+/* ── Hotspot button ─────────────────────────────────────────────────────── */
+
 .globe-ctrl-btn.hotspot-btn {
-    /* Clickable (default): same visual weight as other active buttons */
     color: #fff;
     background: rgba(255, 255, 255, 0.15);
     border-color: rgba(255, 255, 255, 0.5);
@@ -73,47 +138,4 @@
 
 .globe-ctrl-btn.hotspot-btn.new-hotspot:hover {
     transform: scale(1.15);
-}
-
-/* ── Tooltip ────────────────────────────────────────────────────────────── */
-
-.hotspot-tooltip {
-    pointer-events: none;
-    position: absolute;
-    bottom: calc(100% + 10px);
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(15, 15, 20, 0.88);
-    backdrop-filter: blur(6px);
-    color: #e8e8e8;
-    font-size: 12px;
-    font-family: 'Roboto', sans-serif;
-    font-weight: 400;
-    line-height: 1.4;
-    padding: 7px 10px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    width: max-content;
-    max-width: 200px;
-    white-space: normal;
-    text-align: center;
-    opacity: 0;
-    transition: opacity 0.15s ease;
-}
-
-.hotspot-btn-wrap:hover .hotspot-tooltip {
-    opacity: 1;
-}
-
-/* Triangle pointer pointing down toward the button */
-.hotspot-tooltip-arrow {
-    position: absolute;
-    bottom: -5px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 0;
-    height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid rgba(15, 15, 20, 0.88);
 }

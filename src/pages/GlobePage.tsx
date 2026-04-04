@@ -116,7 +116,7 @@ const GlobePage = () => {
     if (!spot) return;
     setHasNewHotspot(false);
     // New object reference each call so GlobeComponent's useEffect re-fires
-    setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 2 });
+    setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 1.5 });
   }, [liveHotspot, hotspot]);
 
   return (
@@ -128,6 +128,7 @@ const GlobePage = () => {
         targetPositionReady={hotspotReady}
         flyTo={flyTo}
         is3D={is3D}
+        onIs3DChange={setIs3D}
         isOrbiting={isOrbiting}
         onIsOrbitingChange={setIsOrbiting}
       />

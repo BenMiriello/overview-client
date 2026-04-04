@@ -34,6 +34,7 @@ interface GlobeComponentProps {
   targetPositionReady?: boolean;
   flyTo?: FlyToTarget | null;
   is3D: boolean;
+  onIs3DChange: (val: boolean) => void;
   isOrbiting: boolean;
   onIsOrbitingChange: (val: boolean) => void;
 }
@@ -218,6 +219,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   targetPositionReady = true,
   flyTo,
   is3D,
+  onIs3DChange,
   isOrbiting,
   onIsOrbitingChange,
 }) => {
@@ -239,6 +241,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   const entryAnimatingRef      = useRef(false);
   const preventReentryRef      = useRef(false);
   const justExitedCloseModeRef = useRef(false);
+  const flyToActiveRef         = useRef(false);
   useEffect(() => { prefer3DRef.current = is3D; }, [is3D]);
 
   const dragVelocityRef  = useRef<{ dlat: number; dlng: number } | null>(null);
@@ -467,6 +470,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     justExitedCloseModeRef.current = true;
     onIsOrbitingChange(false);
     isOrbitingRef.current = false;
+    // Sync parent — skip when flyTo triggered the exit so we don't switch to 2D mid-navigation
+    if (!flyToActiveRef.current) {
+      onIs3DChange(false);
+    }
   }
 
   // ── Close-mode RAF loop ──────────────────────────────────────────────────
@@ -712,12 +719,27 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       animationRef.current.cancel();
     }
 
+    flyToActiveRef.current = true;
+
+    // If close-mode is active its RAF loop fights the animation; exit it first.
+    // flyToActiveRef prevents exitCloseMode from switching the globe to 2D.
+    if (inCloseModeRef.current) {
+      try { exitCloseMode(globeEl.current.controls()); } catch { /* ignore */ }
+    }
+
+    // Re-read after potential exitCloseMode (which repositions the camera)
     const start = globeEl.current.pointOfView();
     let lngDelta = flyTo.lng - start.lng;
     if (lngDelta > 180) lngDelta -= 360;
     if (lngDelta < -180) lngDelta += 360;
 
-    const targetAlt = flyTo.altitude ?? 2;
+    // Never zoom out — if already closer than the target altitude, keep current distance
+    const targetAlt = Math.min(flyTo.altitude ?? 2, start.altitude);
+
+    // Explicitly set camera to current position — same pattern as introCameraMovement.
+    // This resets OrbitControls' internal damping velocity so it doesn't fight the animation.
+    globeEl.current.pointOfView(start, 0);
+
     const duration = 1500;
     let startTime: number | null = null;
     let raf: number | null = null;
@@ -733,13 +755,24 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         lng:      start.lng      + lngDelta                * p,
         altitude: start.altitude + (targetAlt - start.altitude) * p,
       }, 0);
-      if (t < 1) raf = requestAnimationFrame(animate);
+      if (t < 1) {
+        raf = requestAnimationFrame(animate);
+      } else {
+        flyToActiveRef.current = false;
+      }
     };
-    raf = requestAnimationFrame(animate);
+
+    // Delay one event-loop tick before starting — same as introCameraMovement —
+    // so OrbitControls processes the pointOfView(start) call above before we begin.
+    const tid = setTimeout(() => {
+      if (!canceled) raf = requestAnimationFrame(animate);
+    }, 0);
 
     animationRef.current = {
       cancel: () => {
         canceled = true;
+        flyToActiveRef.current = false;
+        clearTimeout(tid);
         if (raf !== null) { cancelAnimationFrame(raf); raf = null; }
       },
     };
