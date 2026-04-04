@@ -6,7 +6,7 @@ import { easeInOutCubicShifted } from '../utils';
 
 const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
-const MIN_ALTITUDE         = 0.01;
+const MIN_ALTITUDE         = 0.001;
 
 const PITCH_NEAR_THRESHOLD = 0;
 const PITCH_MAX_ZOOM       = Math.PI / 3; // 60° from vertical = 30° elevation at max zoom
@@ -715,30 +715,34 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   useEffect(() => {
     if (!isGlobeReady || !globeEl.current || !flyTo) return;
 
-    if (animationRef.current) {
-      animationRef.current.cancel();
-    }
+    if (animationRef.current) animationRef.current.cancel();
 
     flyToActiveRef.current = true;
 
-    // If close-mode is active its RAF loop fights the animation; exit it first.
-    // flyToActiveRef prevents exitCloseMode from switching the globe to 2D.
-    if (inCloseModeRef.current) {
-      try { exitCloseMode(globeEl.current.controls()); } catch { /* ignore */ }
+    let controls: any;
+    try { controls = globeEl.current.controls(); } catch { flyToActiveRef.current = false; return; }
+
+    // Enter close-mode (3D) immediately if not already in it — we animate closeModeState
+    // directly so the close-mode RAF loop renders everything without exit/re-enter flicker.
+    if (!inCloseModeRef.current) {
+      preventReentryRef.current = false;
+      prefer3DRef.current = true;
+      onIs3DChange(true);
+      enterCloseMode(controls);
     }
 
-    // Re-read after potential exitCloseMode (which repositions the camera)
-    const start = globeEl.current.pointOfView();
-    let lngDelta = flyTo.lng - start.lng;
+    if (!closeModeState.current) { flyToActiveRef.current = false; return; }
+
+    const startLat = closeModeState.current.targetLat;
+    const startLng = closeModeState.current.targetLng;
+    const startAlt = closeModeState.current.altitude;
+
+    let lngDelta = flyTo.lng - startLng;
     if (lngDelta > 180) lngDelta -= 360;
     if (lngDelta < -180) lngDelta += 360;
 
-    // Never zoom out — if already closer than the target altitude, keep current distance
-    const targetAlt = Math.min(flyTo.altitude ?? 2, start.altitude);
-
-    // Explicitly set camera to current position — same pattern as introCameraMovement.
-    // This resets OrbitControls' internal damping velocity so it doesn't fight the animation.
-    globeEl.current.pointOfView(start, 0);
+    // Never zoom out
+    const targetAlt = Math.min(flyTo.altitude ?? 0.5, startAlt);
 
     const duration = 1500;
     let startTime: number | null = null;
@@ -746,28 +750,24 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     let canceled = false;
 
     const animate = (ts: number) => {
-      if (canceled) return;
+      if (canceled || !closeModeState.current) return;
       startTime ??= ts;
       const t = Math.min((ts - startTime) / duration, 1);
       const p = easeInOutCubicShifted(t, 0);
-      globeEl.current.pointOfView({
-        lat:      start.lat      + (flyTo.lat - start.lat) * p,
-        lng:      start.lng      + lngDelta                * p,
-        altitude: start.altitude + (targetAlt - start.altitude) * p,
-      }, 0);
+      closeModeState.current.targetLat = startLat + (flyTo.lat - startLat) * p;
+      closeModeState.current.targetLng = startLng + lngDelta * p;
+      closeModeState.current.altitude  = startAlt + (targetAlt - startAlt) * p;
+      if (!entryAnimatingRef.current) {
+        closeModeState.current.pitch = pitchFromAltitude(closeModeState.current.altitude);
+      }
       if (t < 1) {
         raf = requestAnimationFrame(animate);
       } else {
         flyToActiveRef.current = false;
-        // Land in 3D: re-engage close-mode at the hotspot
-        preventReentryRef.current = false;
-        onIs3DChange(true);
-        try { enterCloseMode(globeEl.current.controls()); } catch { /* ignore */ }
       }
     };
 
-    // Delay one event-loop tick before starting — same as introCameraMovement —
-    // so OrbitControls processes the pointOfView(start) call above before we begin.
+    // One tick so enterCloseMode's first RAF frame runs before we start overwriting state
     const tid = setTimeout(() => {
       if (!canceled) raf = requestAnimationFrame(animate);
     }, 0);

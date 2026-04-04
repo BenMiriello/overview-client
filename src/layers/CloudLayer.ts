@@ -34,7 +34,7 @@ export class CloudLayer extends BaseLayer<void> {
         transparent: true,
         opacity: getConfig<number>('layers.clouds.opacity') || 0.6,
         depthWrite: false, // Don't write to depth buffer to allow objects behind to render
-        side: THREE.DoubleSide, // Render both sides of the geometry
+        side: THREE.FrontSide,
         alphaTest: 0.1         // Discard pixels with low alpha values
       });
 
