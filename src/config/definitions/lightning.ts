@@ -15,8 +15,8 @@ export const LightningBoltConfig = {
 
 export const MarkerConfig = {
   radius: 0.08,
-  color: 0xffffff,
-  opacity: 1,
+  color: 0xffdd00,
+  opacity: 0.9,
 };
 
 // Key config options that will have UI controls

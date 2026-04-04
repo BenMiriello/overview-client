@@ -43,7 +43,7 @@ export class LightningBoltEffect {
     this.config = config;
 
     const detailLevel = config.detailLevel ?? DetailLevel.GLOBE;
-    const baseLineWidth = 4;
+    const baseLineWidth = 2;
     this.renderer = new BoltRenderer(scene, baseLineWidth);
     const resolution = config.resolution ?? 1.0;
 

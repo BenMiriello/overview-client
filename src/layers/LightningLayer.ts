@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { BaseLayer } from './LayerInterface';
 import { LightningStrike } from '../models/LightningStrike';
 import { LightningBoltEffect, LightningBoltEffectConfig } from '../effects/LightningBoltEffect';
@@ -11,6 +12,7 @@ import { DataStream } from '../services/dataStreams/interfaces';
 export class LightningLayer extends BaseLayer<LightningStrike> {
   private lightningBoltEffects: Map<string, LightningBoltEffect> = new Map();
   private markerEffects: Map<string, PointMarkerEffect> = new Map();
+  private pendingMarkers: Map<string, LightningStrike> = new Map();
   private activeEffects: { id: string, timestamp: number }[] = [];
   private startAltitude: number = getConfig<number>('layers.clouds.altitude') ?? 
                                   getConfig<number>('layers.lightning.lightningBoltConfig.startAltitude') ?? 
@@ -64,9 +66,12 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   addData(strike: LightningStrike): void {
     if (getConfig<boolean>('layers.lightning.showLightningBolt')) {
       this.createLightningBoltEffect(strike);
+      // Marker is created after bolt animation completes (in update())
+      this.pendingMarkers.set(strike.id, strike);
+    } else {
+      this.createMarkerEffect(strike);
     }
 
-    this.createMarkerEffect(strike);
     this.enforceMaxDisplayedStrikes();
   }
 
@@ -120,12 +125,9 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     }
 
     const config = {
-      radius: getConfig<number>('layers.lightning.markerConfig.radius')             || 0.08,
-      color: getConfig<number>('layers.lightning.markerConfig.color')               || 0xffffff,
-      opacity: getConfig<number>('layers.lightning.markerConfig.opacity')           || 0.8,
-      // displayDelay: getConfig<number>('layers.lightning.markerConfig.displayDelay') || 500,
-      // If lightning is disabled, show markers immediately with full opacity
-      fadeInDuration: getConfig<boolean>('layers.lightning.showLightningBolt')              ? 1500 : 0,
+      radius: getConfig<number>('layers.lightning.markerConfig.radius')   || 0.08,
+      color: getConfig<number>('layers.lightning.markerConfig.color')     || 0xffdd00,
+      opacity: getConfig<number>('layers.lightning.markerConfig.opacity') || 0.9,
     };
 
     const effect = new PointMarkerEffect(strike.lat, strike.lng, strike.intensity || 0.5, config);
@@ -148,11 +150,16 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     .map(e => e.id);
 
     removeIds.forEach(id => {
-    const effect = this.lightningBoltEffects.get(id);
-    if (effect) {
-    effect.terminate();
-    this.lightningBoltEffects.delete(id);
-    }
+      const effect = this.lightningBoltEffects.get(id);
+      if (effect) {
+        effect.terminate();
+        this.lightningBoltEffects.delete(id);
+      }
+      const strike = this.pendingMarkers.get(id);
+      if (strike) {
+        this.createMarkerEffect(strike);
+        this.pendingMarkers.delete(id);
+      }
     });
 
       // Update active effects list
@@ -161,8 +168,13 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   }
 
   private clearLightningBoltEffects(): void {
-    this.lightningBoltEffects.forEach((effect) => {
+    this.lightningBoltEffects.forEach((effect, id) => {
       effect.terminate();
+      const strike = this.pendingMarkers.get(id);
+      if (strike) {
+        this.createMarkerEffect(strike);
+        this.pendingMarkers.delete(id);
+      }
     });
 
     this.lightningBoltEffects.clear();
@@ -186,6 +198,20 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
 
     const lineWidthScale = this.getLineWidthScale();
 
+    // Compute icon scale inputs once per frame; scale is applied per-marker
+    // using the true camera-to-marker distance so size stays constant in screen pixels.
+    const ICON_TARGET_PX = 16;
+    let iconCamera: THREE.PerspectiveCamera | null = null;
+    let iconFovTan = 0;
+    let iconViewH = 1;
+    let iconGlobeRadius = 100;
+    try {
+      iconCamera = this.globeEl?.camera() as THREE.PerspectiveCamera;
+      iconViewH = window.innerHeight || 900;
+      iconFovTan = Math.tan(((iconCamera?.fov ?? 75) * Math.PI / 180) / 2);
+      iconGlobeRadius = (this.globeEl?.getGlobeRadius?.() as number | undefined) ?? 100;
+    } catch { /* use defaults */ }
+
     // Update lightning bolt effects and collect completed IDs
     const completedLightningBoltIds: string[] = [];
 
@@ -207,12 +233,24 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
         effect.terminate();
       }
       this.lightningBoltEffects.delete(id);
+
+      const strike = this.pendingMarkers.get(id);
+      if (strike) {
+        this.createMarkerEffect(strike);
+        this.pendingMarkers.delete(id);
+      }
     });
 
     // Update point markers and collect completed IDs
     const completedMarkerIds: string[] = [];
 
     this.markerEffects.forEach((effect, id) => {
+      if (iconCamera) {
+        const distToMarker = iconCamera.position.distanceTo(effect.getWorldPosition());
+        const worldSize = ICON_TARGET_PX * distToMarker * 2 * iconFovTan / iconViewH;
+        // Cap at 1/20 of globe diameter so icons don't grow huge when zoomed far out
+        effect.setMarkerScale(Math.min(worldSize, iconGlobeRadius / 10));
+      }
       effect.update(currentTime);
       const isActive = !effect.isComplete();
 
@@ -227,6 +265,54 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
         effect.terminate();
       }
       this.markerEffects.delete(id);
+    });
+
+    this.clusterMarkers();
+  }
+
+  private clusterMarkers(): void {
+    if (!this.globeEl || this.markerEffects.size === 0) return;
+
+    let camera: THREE.Camera;
+    let viewW: number;
+    let viewH: number;
+    try {
+      camera = this.globeEl.camera();
+      const el = this.globeEl.renderer().domElement;
+      viewW = el.clientWidth || el.width;
+      viewH = el.clientHeight || el.height;
+    } catch {
+      return;
+    }
+
+    const CLUSTER_PX = 32;
+    const clusterCenters: { x: number; y: number }[] = [];
+
+    this.markerEffects.forEach((effect) => {
+      const worldPos = effect.getWorldPosition();
+      const ndc = worldPos.project(camera);
+
+      // Behind the globe
+      if (ndc.z > 1) {
+        effect.setClusterVisible(false);
+        return;
+      }
+
+      const sx = (ndc.x + 1) / 2 * viewW;
+      const sy = (1 - ndc.y) / 2 * viewH;
+
+      const overlaps = clusterCenters.some(c => {
+        const dx = sx - c.x;
+        const dy = sy - c.y;
+        return dx * dx + dy * dy < CLUSTER_PX * CLUSTER_PX;
+      });
+
+      if (overlaps) {
+        effect.setClusterVisible(false);
+      } else {
+        effect.setClusterVisible(true);
+        clusterCenters.push({ x: sx, y: sy });
+      }
     });
   }
 
@@ -262,6 +348,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
       effect.terminate();
     });
     this.lightningBoltEffects.clear();
+    this.pendingMarkers.clear();
 
     // Clear markers with proper cleanup
     this.markerEffects.forEach(effect => {
