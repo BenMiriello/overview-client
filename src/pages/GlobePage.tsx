@@ -108,11 +108,38 @@ const GlobePage = () => {
 
   const handleToggleOrbit = useCallback(() => setIsOrbiting(v => !v), []);
 
+  const hotspotRafRef = useRef<number | null>(null);
+
   const handleGoToHotspot = useCallback(() => {
     const spot = liveHotspot ?? hotspot;
     if (!spot || !globeEl.current) return;
     setHasNewHotspot(false);
-    globeEl.current.pointOfView({ lat: spot.lat, lng: spot.lng, altitude: 2 }, 1500);
+
+    if (hotspotRafRef.current !== null) {
+      cancelAnimationFrame(hotspotRafRef.current);
+      hotspotRafRef.current = null;
+    }
+
+    const start = globeEl.current.pointOfView();
+    const target = { lat: spot.lat, lng: spot.lng, altitude: 2 };
+    const duration = 1500;
+    let startTime: number | null = null;
+
+    const easeInOutCubic = (t: number) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+    const animate = (ts: number) => {
+      startTime ??= ts;
+      const t = Math.min((ts - startTime) / duration, 1);
+      const p = easeInOutCubic(t);
+      globeEl.current.pointOfView({
+        lat:      start.lat      + (target.lat      - start.lat)      * p,
+        lng:      start.lng      + (target.lng       - start.lng)      * p,
+        altitude: start.altitude + (target.altitude  - start.altitude) * p,
+      }, 0);
+      if (t < 1) hotspotRafRef.current = requestAnimationFrame(animate);
+      else hotspotRafRef.current = null;
+    };
+    hotspotRafRef.current = requestAnimationFrame(animate);
   }, [liveHotspot, hotspot]);
 
   return (

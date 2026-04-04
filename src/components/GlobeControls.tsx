@@ -35,21 +35,26 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
     hasNewHotspot ? 'new-hotspot' : '',
   ].filter(Boolean).join(' ');
 
+  const tooltipText = isViewingHotspot
+    ? "You're already viewing the most active hotspot. Click to re-center."
+    : 'Go to the most active hotspot';
+
   return (
     <div className="globe-controls">
       {hotspot && (
-        <button
-          className={hotspotClass}
-          onClick={onGoToHotspot}
-          title={
-            isViewingHotspot
-              ? "You're already viewing the most active hotspot. Click to re-center."
-              : 'Go to the most active hotspot'
-          }
-          aria-label="Go to hotspot"
-        >
-          <Flame size={16} />
-        </button>
+        <div className="hotspot-btn-wrap">
+          <button
+            className={hotspotClass}
+            onClick={onGoToHotspot}
+            aria-label="Go to hotspot"
+          >
+            <Flame size={16} />
+          </button>
+          <div className="hotspot-tooltip">
+            {tooltipText}
+            <span className="hotspot-tooltip-arrow" />
+          </div>
+        </div>
       )}
       <button
         className={`globe-ctrl-btn ${isOrbiting ? 'active' : ''}`}

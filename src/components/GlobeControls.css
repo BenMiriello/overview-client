@@ -42,10 +42,25 @@
     background: rgba(255, 255, 255, 0.22);
 }
 
-.globe-ctrl-btn.hotspot-btn {
-    transition: opacity 0.4s ease, transform 0.2s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+/* ── Hotspot button ─────────────────────────────────────────────────────── */
+
+.hotspot-btn-wrap {
+    position: relative;
 }
 
+.globe-ctrl-btn.hotspot-btn {
+    /* Clickable (default): warm orange, full opacity — clearly active */
+    color: #ff7820;
+    border-color: rgba(255, 120, 32, 0.45);
+    transition: opacity 0.4s ease, transform 0.4s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.globe-ctrl-btn.hotspot-btn:hover {
+    color: #ffaa60;
+    border-color: rgba(255, 150, 60, 0.7);
+}
+
+/* Viewing state: dimmed to signal "you're already here" */
 .globe-ctrl-btn.hotspot-btn.viewing {
     opacity: 0.35;
     cursor: default;
@@ -55,11 +70,54 @@
     transform: none;
 }
 
-@keyframes hotspot-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 120, 30, 0); }
-    50% { box-shadow: 0 0 0 5px rgba(255, 120, 30, 0.35); }
+/* New hotspot: scale up 15% until dismissed */
+.globe-ctrl-btn.hotspot-btn.new-hotspot {
+    transform: scale(1.15);
 }
 
-.globe-ctrl-btn.hotspot-btn.new-hotspot {
-    animation: hotspot-pulse 1.5s ease-in-out infinite;
+.globe-ctrl-btn.hotspot-btn.new-hotspot:hover {
+    transform: scale(1.15);
+}
+
+/* ── Tooltip ────────────────────────────────────────────────────────────── */
+
+.hotspot-tooltip {
+    pointer-events: none;
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 15, 20, 0.88);
+    backdrop-filter: blur(6px);
+    color: #e8e8e8;
+    font-size: 12px;
+    font-family: 'Roboto', sans-serif;
+    font-weight: 400;
+    line-height: 1.4;
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    width: max-content;
+    max-width: 200px;
+    white-space: normal;
+    text-align: center;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.hotspot-btn-wrap:hover .hotspot-tooltip {
+    opacity: 1;
+}
+
+/* Triangle pointer pointing down toward the button */
+.hotspot-tooltip-arrow {
+    position: absolute;
+    bottom: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid rgba(15, 15, 20, 0.88);
 }

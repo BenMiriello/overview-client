@@ -186,8 +186,10 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     try {
       const camera = this.globeEl.camera();
       const distance = camera.position.length();
-      const referenceDistance = 400; // matches default intro camera distance
-      return Math.max(0.2, Math.min(2.0, referenceDistance / distance));
+      const nearDistance = 150;
+      const farDistance = 1000;
+      const t = Math.max(0, Math.min(1, (distance - nearDistance) / (farDistance - nearDistance)));
+      return 1.0 + t * 2.0;
     } catch {
       return 1.0;
     }
@@ -244,12 +246,16 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     // Update point markers and collect completed IDs
     const completedMarkerIds: string[] = [];
 
+    // Compute one world-space size for all markers based on camera altitude
+    // (distance from globe center). Using per-marker distance causes jitter
+    // during globe-gl's arc-based camera transitions.
+    const iconWorldSize = iconCamera
+      ? Math.min(ICON_TARGET_PX * iconCamera.position.length() * 2 * iconFovTan / iconViewH, iconGlobeRadius / 10)
+      : 0;
+
     this.markerEffects.forEach((effect, id) => {
-      if (iconCamera) {
-        const distToMarker = iconCamera.position.distanceTo(effect.getWorldPosition());
-        const worldSize = ICON_TARGET_PX * distToMarker * 2 * iconFovTan / iconViewH;
-        // Cap at 1/20 of globe diameter so icons don't grow huge when zoomed far out
-        effect.setMarkerScale(Math.min(worldSize, iconGlobeRadius / 10));
+      if (iconWorldSize > 0) {
+        effect.setMarkerScale(iconWorldSize);
       }
       effect.update(currentTime);
       const isActive = !effect.isComplete();
