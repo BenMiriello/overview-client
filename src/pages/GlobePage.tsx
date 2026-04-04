@@ -35,6 +35,9 @@ const GlobePage = () => {
   const [hasNewHotspot, setHasNewHotspot] = useState(false);
   const [isViewingHotspot, setIsViewingHotspot] = useState(false);
 
+  // Passed to GlobeComponent to trigger a cancellable fly-to animation
+  const [flyTo, setFlyTo] = useState<{ lat: number; lng: number; altitude: number } | null>(null);
+
   const [is3D, setIs3D] = useState(() => localStorage.getItem('globe_prefer3D') !== 'false');
   const [isOrbiting, setIsOrbiting] = useState(false);
 
@@ -108,38 +111,12 @@ const GlobePage = () => {
 
   const handleToggleOrbit = useCallback(() => setIsOrbiting(v => !v), []);
 
-  const hotspotRafRef = useRef<number | null>(null);
-
   const handleGoToHotspot = useCallback(() => {
     const spot = liveHotspot ?? hotspot;
-    if (!spot || !globeEl.current) return;
+    if (!spot) return;
     setHasNewHotspot(false);
-
-    if (hotspotRafRef.current !== null) {
-      cancelAnimationFrame(hotspotRafRef.current);
-      hotspotRafRef.current = null;
-    }
-
-    const start = globeEl.current.pointOfView();
-    const target = { lat: spot.lat, lng: spot.lng, altitude: 2 };
-    const duration = 1500;
-    let startTime: number | null = null;
-
-    const easeInOutCubic = (t: number) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-
-    const animate = (ts: number) => {
-      startTime ??= ts;
-      const t = Math.min((ts - startTime) / duration, 1);
-      const p = easeInOutCubic(t);
-      globeEl.current.pointOfView({
-        lat:      start.lat      + (target.lat      - start.lat)      * p,
-        lng:      start.lng      + (target.lng       - start.lng)      * p,
-        altitude: start.altitude + (target.altitude  - start.altitude) * p,
-      }, 0);
-      if (t < 1) hotspotRafRef.current = requestAnimationFrame(animate);
-      else hotspotRafRef.current = null;
-    };
-    hotspotRafRef.current = requestAnimationFrame(animate);
+    // New object reference each call so GlobeComponent's useEffect re-fires
+    setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 2 });
   }, [liveHotspot, hotspot]);
 
   return (
@@ -149,6 +126,7 @@ const GlobePage = () => {
         onLayerManagerReady={handleLayerManagerReady}
         targetPosition={hotspot}
         targetPositionReady={hotspotReady}
+        flyTo={flyTo}
         is3D={is3D}
         isOrbiting={isOrbiting}
         onIsOrbitingChange={setIsOrbiting}

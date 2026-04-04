@@ -49,15 +49,11 @@
 }
 
 .globe-ctrl-btn.hotspot-btn {
-    /* Clickable (default): warm orange, full opacity — clearly active */
-    color: #ff7820;
-    border-color: rgba(255, 120, 32, 0.45);
+    /* Clickable (default): same visual weight as other active buttons */
+    color: #fff;
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.5);
     transition: opacity 0.4s ease, transform 0.4s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-}
-
-.globe-ctrl-btn.hotspot-btn:hover {
-    color: #ffaa60;
-    border-color: rgba(255, 150, 60, 0.7);
 }
 
 /* Viewing state: dimmed to signal "you're already here" */

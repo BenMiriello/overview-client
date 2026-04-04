@@ -21,11 +21,18 @@ interface TargetPosition {
   lng: number;
 }
 
+interface FlyToTarget {
+  lat: number;
+  lng: number;
+  altitude?: number;
+}
+
 interface GlobeComponentProps {
   onGlobeReady: (globeEl: any) => void;
   onLayerManagerReady: (layerManager: GlobeLayerManager) => void;
   targetPosition?: TargetPosition | null;
   targetPositionReady?: boolean;
+  flyTo?: FlyToTarget | null;
   is3D: boolean;
   isOrbiting: boolean;
   onIsOrbitingChange: (val: boolean) => void;
@@ -209,6 +216,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   onLayerManagerReady,
   targetPosition,
   targetPositionReady = true,
+  flyTo,
   is3D,
   isOrbiting,
   onIsOrbitingChange,
@@ -695,6 +703,54 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       }
     };
   }, [isGlobeReady, targetPosition, targetPositionReady]);
+
+  // ── Programmatic fly-to (hotspot navigation) ─────────────────────────────
+  useEffect(() => {
+    if (!isGlobeReady || !globeEl.current || !flyTo) return;
+
+    if (animationRef.current) {
+      animationRef.current.cancel();
+    }
+
+    const start = globeEl.current.pointOfView();
+    let lngDelta = flyTo.lng - start.lng;
+    if (lngDelta > 180) lngDelta -= 360;
+    if (lngDelta < -180) lngDelta += 360;
+
+    const targetAlt = flyTo.altitude ?? 2;
+    const duration = 1500;
+    let startTime: number | null = null;
+    let raf: number | null = null;
+    let canceled = false;
+
+    const animate = (ts: number) => {
+      if (canceled) return;
+      startTime ??= ts;
+      const t = Math.min((ts - startTime) / duration, 1);
+      const p = easeInOutCubicShifted(t, 0);
+      globeEl.current.pointOfView({
+        lat:      start.lat      + (flyTo.lat - start.lat) * p,
+        lng:      start.lng      + lngDelta                * p,
+        altitude: start.altitude + (targetAlt - start.altitude) * p,
+      }, 0);
+      if (t < 1) raf = requestAnimationFrame(animate);
+    };
+    raf = requestAnimationFrame(animate);
+
+    animationRef.current = {
+      cancel: () => {
+        canceled = true;
+        if (raf !== null) { cancelAnimationFrame(raf); raf = null; }
+      },
+    };
+
+    return () => {
+      if (animationRef.current) {
+        animationRef.current.cancel();
+        animationRef.current = null;
+      }
+    };
+  }, [isGlobeReady, flyTo]);
 
   // ── React to is3D preference changes ─────────────────────────────────────
   useEffect(() => {
