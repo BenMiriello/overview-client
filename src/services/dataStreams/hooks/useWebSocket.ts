@@ -91,8 +91,12 @@ export function useWebSocket({
       };
 
       socket.onmessage = (event) => {
-        // Any message (including pong) resets the heartbeat timeout
-        resetHeartbeatTimeout();
+        // Any message proves the connection is alive — cancel the pending timeout.
+        // Do NOT restart it here; the timeout is only started when we send a ping.
+        if (heartbeatTimeoutRef.current !== null) {
+          window.clearTimeout(heartbeatTimeoutRef.current);
+          heartbeatTimeoutRef.current = null;
+        }
 
         try {
           const data = JSON.parse(event.data);
