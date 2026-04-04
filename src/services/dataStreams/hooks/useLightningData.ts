@@ -65,6 +65,7 @@ export function useLightningData({ url }: UseLightningDataProps) {
     connected,
     connectionStatus,
     lastUpdate,
-    dataStream: dataStreamRef.current
+    dataStream: dataStreamRef.current,
+    subscribe,
   };
 }

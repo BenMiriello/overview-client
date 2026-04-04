@@ -41,3 +41,25 @@
 .globe-ctrl-btn.active:hover {
     background: rgba(255, 255, 255, 0.22);
 }
+
+.globe-ctrl-btn.hotspot-btn {
+    transition: opacity 0.4s ease, transform 0.2s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.globe-ctrl-btn.hotspot-btn.viewing {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.globe-ctrl-btn.hotspot-btn.viewing:hover {
+    transform: none;
+}
+
+@keyframes hotspot-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 120, 30, 0); }
+    50% { box-shadow: 0 0 0 5px rgba(255, 120, 30, 0.35); }
+}
+
+.globe-ctrl-btn.hotspot-btn.new-hotspot {
+    animation: hotspot-pulse 1.5s ease-in-out infinite;
+}

@@ -11,11 +11,30 @@ interface Hotspot {
   count: number;
 }
 
+// Angular degrees between two lat/lng points (great-circle)
+function angularDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 180) / Math.PI;
+}
+
 const GlobePage = () => {
   const globeEl = useRef<any>(null);
   const layerManagerRef = useRef<GlobeLayerManager | null>(null);
+
+  // Initial hotspot (from HTTP fetch on mount, used for intro camera)
   const [hotspot, setHotspot] = useState<Hotspot | null>(null);
   const [hotspotReady, setHotspotReady] = useState(false);
+
+  // Live hotspot pushed from server via WebSocket
+  const [liveHotspot, setLiveHotspot] = useState<Hotspot | null>(null);
+  const [hasNewHotspot, setHasNewHotspot] = useState(false);
+  const [isViewingHotspot, setIsViewingHotspot] = useState(false);
+
   const [is3D, setIs3D] = useState(() => localStorage.getItem('globe_prefer3D') !== 'false');
   const [isOrbiting, setIsOrbiting] = useState(false);
 
@@ -34,9 +53,37 @@ const GlobePage = () => {
       .finally(() => setHotspotReady(true));
   }, []);
 
-  const { connected, connectionStatus, lastUpdate, dataStream } = useLightningData({
+  const { connected, connectionStatus, lastUpdate, dataStream, subscribe } = useLightningData({
     url: 'ws://localhost:3001'
   });
+
+  // Listen for server-pushed hotspot updates on the shared WS connection
+  useEffect(() => {
+    return subscribe((data: any) => {
+      if (data.type === 'hotspot') {
+        setLiveHotspot({ lat: data.lat, lng: data.lng, count: data.count });
+        setHasNewHotspot(true);
+      }
+    });
+  }, [subscribe]);
+
+  // Poll whether the camera is currently over the active hotspot
+  useEffect(() => {
+    const activeHotspot = liveHotspot ?? hotspot;
+    if (!activeHotspot) return;
+
+    const id = setInterval(() => {
+      if (!globeEl.current) return;
+      const { lat, lng, altitude } = globeEl.current.pointOfView();
+      // Threshold scales with zoom: farther out → wider acceptance
+      const threshold = Math.max(20, altitude * 15);
+      const viewing = angularDistance(lat, lng, activeHotspot.lat, activeHotspot.lng) < threshold;
+      setIsViewingHotspot(viewing);
+      if (viewing) setHasNewHotspot(false);
+    }, 500);
+
+    return () => clearInterval(id);
+  }, [liveHotspot, hotspot]);
 
   const handleGlobeReady = useCallback((globe: any) => {
     globeEl.current = globe;
@@ -58,7 +105,15 @@ const GlobePage = () => {
       return next;
     });
   }, []);
+
   const handleToggleOrbit = useCallback(() => setIsOrbiting(v => !v), []);
+
+  const handleGoToHotspot = useCallback(() => {
+    const spot = liveHotspot ?? hotspot;
+    if (!spot || !globeEl.current) return;
+    setHasNewHotspot(false);
+    globeEl.current.pointOfView({ lat: spot.lat, lng: spot.lng, altitude: 2 }, 1500);
+  }, [liveHotspot, hotspot]);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
@@ -82,6 +137,10 @@ const GlobePage = () => {
         isOrbiting={isOrbiting}
         onToggle3D={handleToggle3D}
         onToggleOrbit={handleToggleOrbit}
+        hotspot={liveHotspot ?? hotspot}
+        isViewingHotspot={isViewingHotspot}
+        hasNewHotspot={hasNewHotspot}
+        onGoToHotspot={handleGoToHotspot}
       />
       <NavigationIcons currentPage="globe" />
     </div>
