@@ -13,6 +13,7 @@ const ALT_NEAR_POINT = 0.25;  // Camera altitude where near (realistic) scale is
 
 export class CloudLayer extends BaseLayer<void> {
   private cloudMesh: THREE.Mesh | null = null;
+  private occluderMesh: THREE.Mesh | null = null;
   private lastCloudAlt = -1;
 
   constructor() {
@@ -49,7 +50,19 @@ export class CloudLayer extends BaseLayer<void> {
       // IMPORTANT: Make sure this is a value that renders after the globe but before lightning
       this.cloudMesh.renderOrder = 1;
 
+      // Depth occluder: invisible BackSide sphere at globe radius.
+      // The globe's FrontSide material only fills depth for its near hemisphere, leaving
+      // the far hemisphere's depth buffer clear (1.0). Without this occluder, cloud fragments
+      // past the globe's silhouette pass the depth test against the clear value and render
+      // incorrectly. BackSide fills depth for the far hemisphere, blocking those fragments.
+      this.occluderMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(EARTH_RADIUS, 32, 32),
+        new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.BackSide })
+      );
+      this.occluderMesh.renderOrder = 0;
+
       this.scene.add(this.cloudMesh);
+      this.scene.add(this.occluderMesh);
     } catch (err) {
       console.error('CloudLayer: Error during initialization:', err);
     }
@@ -102,16 +115,15 @@ export class CloudLayer extends BaseLayer<void> {
   clear(): void {
     if (this.cloudMesh && this.scene) {
       this.scene.remove(this.cloudMesh);
-
-      if (this.cloudMesh.geometry) {
-        this.cloudMesh.geometry.dispose();
-      }
-
-      if (this.cloudMesh.material instanceof THREE.Material) {
-        this.cloudMesh.material.dispose();
-      }
-
+      if (this.cloudMesh.geometry) this.cloudMesh.geometry.dispose();
+      if (this.cloudMesh.material instanceof THREE.Material) this.cloudMesh.material.dispose();
       this.cloudMesh = null;
+    }
+    if (this.occluderMesh && this.scene) {
+      this.scene.remove(this.occluderMesh);
+      if (this.occluderMesh.geometry) this.occluderMesh.geometry.dispose();
+      if (this.occluderMesh.material instanceof THREE.Material) this.occluderMesh.material.dispose();
+      this.occluderMesh = null;
     }
   }
 }
