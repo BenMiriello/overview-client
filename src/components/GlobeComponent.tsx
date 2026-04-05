@@ -3,6 +3,7 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
+import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createNightTileEngine } from '../services/dayNightMaterial';
 
 const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
@@ -97,7 +98,9 @@ function raySphereIntersect(
 function cameraPositionFromTarget(state: CloseModeState, earthR: number): THREE.Vector3 {
   const T = latLngToCartesian(state.targetLat, state.targetLng, earthR);
   const T_unit = T.clone().normalize();
-  const r = earthR * (1 + state.altitude);
+  // Reduce altitude by cos(pitch) so camera orbits target at constant distance rather than
+  // constant radial height — prevents the "zooming out" feel as tilt increases.
+  const r = earthR * (1 + state.altitude * Math.cos(state.pitch));
 
   if (state.pitch < 0.001) {
     return T_unit.clone().multiplyScalar(r);
@@ -246,6 +249,54 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   const dragVelocityRef  = useRef<{ dlat: number; dlng: number } | null>(null);
 
+  const tileEngineRef = useRef<THREE.Object3D | null>(null);
+
+  const nightTileEngineRef = useRef<THREE.Object3D | null>(null);
+
+  // Day/night: darken day tiles + GIBS night tiles with additive blending for city lights
+  useEffect(() => {
+    if (!isGlobeReady || !globeEl.current) return;
+    let cancelled = false;
+    let rafId: number;
+
+    const globeRadius = globeEl.current.getGlobeRadius() as number;
+    const nightEngine = createNightTileEngine(globeRadius);
+    nightEngine.scale.setScalar(1.001);
+    const scene = globeEl.current.scene() as THREE.Scene;
+    scene.add(nightEngine);
+    nightTileEngineRef.current = nightEngine;
+
+    const tick = () => {
+      if (cancelled || !globeEl.current) return;
+
+      updateSunDirection(new Date());
+
+      // Drive night tile engine + patch night tiles
+      const camera = globeEl.current.camera();
+      nightEngine.updatePov(camera);
+
+      nightEngine.traverse((child: any) => {
+        if (child.isMesh && child.material?.isMeshBasicMaterial) {
+          child.visible = false;
+        } else if (child.isMesh && child.material?.isMeshLambertMaterial) {
+          patchNightTileMaterial(child.material);
+          child.material.depthWrite = false;
+        }
+      });
+
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      scene.remove(nightEngine);
+      nightEngine.clearTiles();
+      nightTileEngineRef.current = null;
+    };
+  }, [isGlobeReady]);
+
   // ── Main controls setup ──────────────────────────────────────────────────
   useEffect(() => {
     if (!isGlobeReady || !globeEl.current) return;
@@ -293,6 +344,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (scene) {
       scene.traverse((obj: any) => {
         if (typeof obj.globeTileEngineUrl === 'function') {
+          tileEngineRef.current = obj;
           obj.globeTileEngineUrl(
             (x: number, y: number, level: number) =>
               `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`
@@ -722,64 +774,106 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     let controls: any;
     try { controls = globeEl.current.controls(); } catch { flyToActiveRef.current = false; return; }
 
-    // Enter close-mode (3D) immediately if not already in it — we animate closeModeState
-    // directly so the close-mode RAF loop renders everything without exit/re-enter flicker.
-    if (!inCloseModeRef.current) {
+    const currentAlt = globeEl.current.pointOfView().altitude;
+
+    // Only enter close-mode (3D) if coming from far-mode — if the user is already zoomed
+    // in close but chose 2D, respect that and fall through to the pointOfView path below.
+    if (!inCloseModeRef.current && currentAlt >= TILT_THRESHOLD_ENTER) {
       preventReentryRef.current = false;
       prefer3DRef.current = true;
       onIs3DChange(true);
       enterCloseMode(controls);
     }
 
-    if (!closeModeState.current) { flyToActiveRef.current = false; return; }
+    if (closeModeState.current) {
+      // ── Close-mode path: animate closeModeState directly ──────────────────
+      const startLat = closeModeState.current.targetLat;
+      const startLng = closeModeState.current.targetLng;
+      const startAlt = closeModeState.current.altitude;
 
-    const startLat = closeModeState.current.targetLat;
-    const startLng = closeModeState.current.targetLng;
-    const startAlt = closeModeState.current.altitude;
+      let lngDelta = flyTo.lng - startLng;
+      if (lngDelta > 180) lngDelta -= 360;
+      if (lngDelta < -180) lngDelta += 360;
 
-    let lngDelta = flyTo.lng - startLng;
-    if (lngDelta > 180) lngDelta -= 360;
-    if (lngDelta < -180) lngDelta += 360;
+      const targetAlt = Math.min(flyTo.altitude ?? 0.5, startAlt);
 
-    // Never zoom out
-    const targetAlt = Math.min(flyTo.altitude ?? 0.5, startAlt);
+      const duration = 1500;
+      let startTime: number | null = null;
+      let raf: number | null = null;
+      let canceled = false;
 
-    const duration = 1500;
-    let startTime: number | null = null;
-    let raf: number | null = null;
-    let canceled = false;
+      const animate = (ts: number) => {
+        if (canceled || !closeModeState.current) return;
+        startTime ??= ts;
+        const t = Math.min((ts - startTime) / duration, 1);
+        const p = easeInOutCubicShifted(t, 0);
+        closeModeState.current.targetLat = startLat + (flyTo.lat - startLat) * p;
+        closeModeState.current.targetLng = startLng + lngDelta * p;
+        closeModeState.current.altitude  = startAlt + (targetAlt - startAlt) * p;
+        if (!entryAnimatingRef.current) {
+          closeModeState.current.pitch = pitchFromAltitude(closeModeState.current.altitude);
+        }
+        if (t < 1) {
+          raf = requestAnimationFrame(animate);
+        } else {
+          flyToActiveRef.current = false;
+        }
+      };
 
-    const animate = (ts: number) => {
-      if (canceled || !closeModeState.current) return;
-      startTime ??= ts;
-      const t = Math.min((ts - startTime) / duration, 1);
-      const p = easeInOutCubicShifted(t, 0);
-      closeModeState.current.targetLat = startLat + (flyTo.lat - startLat) * p;
-      closeModeState.current.targetLng = startLng + lngDelta * p;
-      closeModeState.current.altitude  = startAlt + (targetAlt - startAlt) * p;
-      if (!entryAnimatingRef.current) {
-        closeModeState.current.pitch = pitchFromAltitude(closeModeState.current.altitude);
-      }
-      if (t < 1) {
-        raf = requestAnimationFrame(animate);
-      } else {
-        flyToActiveRef.current = false;
-      }
-    };
+      // One tick so enterCloseMode's first RAF frame runs before we start overwriting state
+      const tid = setTimeout(() => {
+        if (!canceled) raf = requestAnimationFrame(animate);
+      }, 0);
 
-    // One tick so enterCloseMode's first RAF frame runs before we start overwriting state
-    const tid = setTimeout(() => {
-      if (!canceled) raf = requestAnimationFrame(animate);
-    }, 0);
+      animationRef.current = {
+        cancel: () => {
+          canceled = true;
+          flyToActiveRef.current = false;
+          clearTimeout(tid);
+          if (raf !== null) { cancelAnimationFrame(raf); raf = null; }
+        },
+      };
+    } else {
+      // ── 2D fallback: user is zoomed in close but in 2D mode — respect it ──
+      flyToActiveRef.current = false;
+      const start = globeEl.current.pointOfView();
+      globeEl.current.pointOfView(start, 0); // reset OrbitControls damping
 
-    animationRef.current = {
-      cancel: () => {
-        canceled = true;
-        flyToActiveRef.current = false;
-        clearTimeout(tid);
-        if (raf !== null) { cancelAnimationFrame(raf); raf = null; }
-      },
-    };
+      let lngDelta = flyTo.lng - start.lng;
+      if (lngDelta > 180) lngDelta -= 360;
+      if (lngDelta < -180) lngDelta += 360;
+
+      const targetAlt = Math.min(flyTo.altitude ?? 0.5, start.altitude);
+      const duration = 1500;
+      let startTime: number | null = null;
+      let raf: number | null = null;
+      let canceled = false;
+
+      const animate = (ts: number) => {
+        if (canceled) return;
+        startTime ??= ts;
+        const t = Math.min((ts - startTime) / duration, 1);
+        const p = easeInOutCubicShifted(t, 0);
+        globeEl.current.pointOfView({
+          lat:      start.lat      + (flyTo.lat - start.lat) * p,
+          lng:      start.lng      + lngDelta                * p,
+          altitude: start.altitude + (targetAlt - start.altitude) * p,
+        }, 0);
+        if (t < 1) raf = requestAnimationFrame(animate);
+      };
+
+      const tid = setTimeout(() => {
+        if (!canceled) raf = requestAnimationFrame(animate);
+      }, 0);
+
+      animationRef.current = {
+        cancel: () => {
+          canceled = true;
+          clearTimeout(tid);
+          if (raf !== null) { cancelAnimationFrame(raf); raf = null; }
+        },
+      };
+    }
 
     return () => {
       if (animationRef.current) {
