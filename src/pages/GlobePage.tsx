@@ -112,11 +112,17 @@ const GlobePage = () => {
   const handleToggleOrbit = useCallback(() => setIsOrbiting(v => !v), []);
 
   const handleGoToHotspot = useCallback(() => {
-    const spot = liveHotspot ?? hotspot;
-    if (!spot) return;
     setHasNewHotspot(false);
-    // New object reference each call so GlobeComponent's useEffect re-fires
-    setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
+    // Always re-fetch fresh hotspot — WS sends cached value on connect which can be stale
+    fetch('http://localhost:3001/api/hotspot')
+      .then(res => res.json())
+      .then(data => {
+        if (data) setFlyTo({ lat: data.lat, lng: data.lng, altitude: 0.5 });
+      })
+      .catch(() => {
+        const spot = liveHotspot ?? hotspot;
+        if (spot) setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
+      });
   }, [liveHotspot, hotspot]);
 
   return (
