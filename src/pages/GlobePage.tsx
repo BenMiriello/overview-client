@@ -40,6 +40,7 @@ const GlobePage = () => {
 
   const [is3D, setIs3D] = useState(() => localStorage.getItem('globe_prefer3D') !== 'false');
   const [isOrbiting, setIsOrbiting] = useState(false);
+  const [viewTarget, setViewTarget] = useState<'earth' | 'moon'>('earth');
 
   useEffect(() => {
     fetch('http://localhost:3001/api/hotspot')
@@ -110,6 +111,7 @@ const GlobePage = () => {
   }, []);
 
   const handleToggleOrbit = useCallback(() => setIsOrbiting(v => !v), []);
+  const handleToggleViewTarget = useCallback(() => setViewTarget(v => v === 'earth' ? 'moon' : 'earth'), []);
 
   const handleGoToHotspot = useCallback(() => {
     setHasNewHotspot(false);
@@ -137,6 +139,7 @@ const GlobePage = () => {
         onIs3DChange={setIs3D}
         isOrbiting={isOrbiting}
         onIsOrbitingChange={setIsOrbiting}
+        viewTarget={viewTarget}
       />
       <StatusBar
         connected={connected}
@@ -153,6 +156,8 @@ const GlobePage = () => {
         isViewingHotspot={isViewingHotspot}
         hasNewHotspot={hasNewHotspot}
         onGoToHotspot={handleGoToHotspot}
+        viewTarget={viewTarget}
+        onToggleViewTarget={handleToggleViewTarget}
       />
       <NavigationIcons currentPage="globe" />
     </div>

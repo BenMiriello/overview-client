@@ -3,11 +3,16 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
-import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createNightTileEngine } from '../services/dayNightMaterial';
+import { updateSunDirection, patchNightTileMaterial, createNightTileEngine } from '../services/dayNightMaterial';
+import { createMoonMesh, updateMoonPosition } from '../services/moonMesh';
+import { MOON_RADIUS_SCENE } from '../services/astronomy';
 
 const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
 const MIN_ALTITUDE         = 0.001;
+
+// Tile LOD: higher base = load sharper tiles from further away (default library value is 8)
+const TILE_LOD_BASE = 12;
 
 const PITCH_NEAR_THRESHOLD = 0;
 const PITCH_MAX_ZOOM       = Math.PI / 3; // 60° from vertical = 30° elevation at max zoom
@@ -38,6 +43,7 @@ interface GlobeComponentProps {
   onIs3DChange: (val: boolean) => void;
   isOrbiting: boolean;
   onIsOrbitingChange: (val: boolean) => void;
+  viewTarget?: 'earth' | 'moon';
 }
 
 // Target-primary state: the ground point (targetLat/targetLng) is the invariant.
@@ -225,6 +231,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   onIs3DChange,
   isOrbiting,
   onIsOrbitingChange,
+  viewTarget = 'earth',
 }) => {
   const globeEl          = useRef<any>(null);
   const layerManagerRef  = useRef<GlobeLayerManager | null>(null);
@@ -252,6 +259,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   const tileEngineRef = useRef<THREE.Object3D | null>(null);
 
   const nightTileEngineRef = useRef<THREE.Object3D | null>(null);
+  const moonMeshRef = useRef<THREE.Mesh | null>(null);
 
   // Day/night: darken day tiles + GIBS night tiles with additive blending for city lights
   useEffect(() => {
@@ -261,15 +269,45 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const globeRadius = globeEl.current.getGlobeRadius() as number;
     const nightEngine = createNightTileEngine(globeRadius);
+    nightEngine.thresholds = Array.from({ length: 30 }, (_, i) => TILE_LOD_BASE / Math.pow(2, i));
     nightEngine.scale.setScalar(1.001);
     const scene = globeEl.current.scene() as THREE.Scene;
     scene.add(nightEngine);
     nightTileEngineRef.current = nightEngine;
 
+    const moonMesh = createMoonMesh();
+    scene.add(moonMesh);
+    moonMeshRef.current = moonMesh;
+
     const tick = () => {
       if (cancelled || !globeEl.current) return;
 
-      updateSunDirection(new Date());
+      const now = new Date();
+      updateSunDirection(now);
+
+      const prevMoonPos = moonMesh.position.clone();
+      updateMoonPosition(moonMesh, now);
+
+      // When in moon view: apply moon orbit state and render (library is paused)
+      if (inMoonViewRef.current && moonOrbitState.current && globeEl.current) {
+        try {
+          const cam = globeEl.current.camera();
+          const moonPos = moonMesh.position;
+          const { theta, phi, distance } = moonOrbitState.current;
+
+          // Spherical → cartesian offset from moon center
+          const offset = new THREE.Vector3(
+            distance * Math.sin(phi) * Math.sin(theta),
+            distance * Math.cos(phi),
+            distance * Math.sin(phi) * Math.cos(theta),
+          );
+          cam.position.copy(moonPos).add(offset);
+          cam.up.set(0, 1, 0);
+          cam.lookAt(moonPos);
+
+          renderScene();
+        } catch { /* ignore */ }
+      }
 
       // Drive night tile engine + patch night tiles
       const camera = globeEl.current.camera();
@@ -294,6 +332,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       scene.remove(nightEngine);
       nightEngine.clearTiles();
       nightTileEngineRef.current = null;
+      scene.remove(moonMesh);
+      moonMesh.geometry.dispose();
+      (moonMesh.material as THREE.ShaderMaterial).dispose();
+      moonMeshRef.current = null;
     };
   }, [isGlobeReady]);
 
@@ -317,6 +359,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const checkThreshold = () => {
       if (inCloseModeRef.current) return;
+      if (inMoonViewRef.current) return;
       if (!globeEl.current) return;
       const { altitude } = globeEl.current.pointOfView();
       if (altitude >= TILT_THRESHOLD_EXIT) {
@@ -350,6 +393,13 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
               `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`
           );
           obj.globeTileEngineMaxLevel(17);
+
+          // Patch thresholds on the internal tile engine to load higher-res tiles sooner
+          obj.traverse((child: any) => {
+            if (Array.isArray(child.thresholds)) {
+              child.thresholds = Array.from({ length: 30 }, (_, i) => TILE_LOD_BASE / Math.pow(2, i));
+            }
+          });
         }
       });
     }
@@ -912,6 +962,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     isOrbitingRef.current = isOrbiting;
 
     if (!isGlobeReady || !globeEl.current) return;
+    if (inMoonViewRef.current) return;
 
     if (inCloseModeRef.current) {
       if (!isOrbiting && !tiltPausedRef.current && closeModeState.current
@@ -970,6 +1021,300 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       requestAnimationFrame(checkSnapDone);
     }
   }, [isOrbiting, isGlobeReady]);
+
+  // ── Earth/Moon view switching ────────────────────────────────────────────
+  //
+  // Strategy: the library (react-globe.gl) has TWO independent RAF loops that
+  // control the camera — _animationCycle (controls.update + render) and a TWEEN
+  // IIFE that processes pointOfView() animations. We cannot patch controls.update
+  // to suppress camera movement because the TWEEN loop bypasses controls entirely.
+  //
+  // Solution: pause the library's animation entirely, clear any active tweens,
+  // and fully own the camera + rendering during moon view (same proven pattern
+  // as close-mode).
+  //
+  const viewTargetRef = useRef(viewTarget);
+  const moonViewAnimRef = useRef<{ cancel: () => void } | null>(null);
+  const inMoonViewRef = useRef(false);
+  const savedControlsUpdateRef = useRef<((...args: any[]) => any) | null>(null);
+
+  interface MoonOrbitState {
+    theta: number;   // azimuthal angle (radians)
+    phi: number;     // polar angle from Y-up (radians), clamped to avoid poles
+    distance: number;
+  }
+  const moonOrbitState = useRef<MoonOrbitState | null>(null);
+
+  function pauseLibrary(controls: any) {
+    if (!savedControlsUpdateRef.current) {
+      savedControlsUpdateRef.current = controls.update.bind(controls);
+    }
+    controls.update = () => false;
+    controls.enabled = false;
+    controls.autoRotate = false;
+    // Stop the library's _animationCycle (controls.update + renderer.render)
+    globeEl.current?.pauseAnimation?.();
+    // Kill any active camera tweens by snapping pointOfView to current position
+    // (duration=0 means no tween created, and any running tween for a previous
+    // pointOfView call will be superseded)
+    try {
+      const pov = globeEl.current?.pointOfView?.();
+      if (pov) globeEl.current.pointOfView(pov, 0);
+    } catch { /* ignore */ }
+  }
+
+  function resumeLibrary(controls: any) {
+    if (savedControlsUpdateRef.current) {
+      controls.update = savedControlsUpdateRef.current;
+      savedControlsUpdateRef.current = null;
+    }
+    controls.enabled = true;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.1;
+    controls.minDistance = 100.1;
+    controls.maxDistance = 10000;
+    controls.target.set(0, 0, 0);
+    globeEl.current?.resumeAnimation?.();
+  }
+
+  function renderScene() {
+    if (!globeEl.current) return;
+    try {
+      const renderer = globeEl.current.renderer();
+      const scene = globeEl.current.scene();
+      const camera = globeEl.current.camera();
+      renderer.render(scene, camera);
+    } catch { /* ignore */ }
+  }
+
+  // Moon orbit mouse/touch handlers (modeled after close-mode handlers)
+  const onMoonMouseDown = (e: MouseEvent) => {
+    if (!moonOrbitState.current) return;
+    let lastX = e.clientX;
+    let lastY = e.clientY;
+
+    const onMouseMove = (me: MouseEvent) => {
+      if (!moonOrbitState.current) return;
+      const dx = me.clientX - lastX;
+      const dy = me.clientY - lastY;
+      lastX = me.clientX;
+      lastY = me.clientY;
+      moonOrbitState.current.theta -= dx * 0.005;
+      moonOrbitState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1,
+        moonOrbitState.current.phi + dy * 0.005));
+    };
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  const onMoonWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    if (!moonOrbitState.current) return;
+    const factor = Math.pow(1.001, e.deltaY);
+    moonOrbitState.current.distance = Math.max(
+      MOON_RADIUS_SCENE * 1.5,
+      Math.min(MOON_RADIUS_SCENE * 20, moonOrbitState.current.distance * factor)
+    );
+  };
+
+  const moonTouchRef = useRef<{ x: number; y: number; dist: number | null } | null>(null);
+
+  const onMoonTouchStart = (e: TouchEvent) => {
+    e.preventDefault();
+    if (!moonOrbitState.current) return;
+    const t0 = e.touches[0];
+    const dist = e.touches.length === 2
+      ? Math.hypot(e.touches[1].clientX - t0.clientX, e.touches[1].clientY - t0.clientY)
+      : null;
+    moonTouchRef.current = { x: t0.clientX, y: t0.clientY, dist };
+
+    const onTouchMove = (te: TouchEvent) => {
+      if (!moonOrbitState.current || !moonTouchRef.current) return;
+      const t = te.touches[0];
+      if (te.touches.length === 2 && moonTouchRef.current.dist !== null) {
+        const newDist = Math.hypot(te.touches[1].clientX - t.clientX, te.touches[1].clientY - t.clientY);
+        const scale = moonTouchRef.current.dist / newDist;
+        moonOrbitState.current.distance = Math.max(
+          MOON_RADIUS_SCENE * 1.5,
+          Math.min(MOON_RADIUS_SCENE * 20, moonOrbitState.current.distance * scale)
+        );
+        moonTouchRef.current.dist = newDist;
+      } else if (te.touches.length === 1) {
+        const dx = t.clientX - moonTouchRef.current.x;
+        const dy = t.clientY - moonTouchRef.current.y;
+        moonTouchRef.current.x = t.clientX;
+        moonTouchRef.current.y = t.clientY;
+        moonOrbitState.current.theta -= dx * 0.005;
+        moonOrbitState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1,
+          moonOrbitState.current.phi + dy * 0.005));
+      }
+    };
+    const onTouchEnd = () => {
+      moonTouchRef.current = null;
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+    };
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
+  };
+
+  function enterMoonView(controls: any, camera: THREE.PerspectiveCamera, moonMesh: THREE.Mesh) {
+    const moonPos = moonMesh.position.clone();
+    const camToMoon = moonPos.clone().sub(camera.position);
+    const dist = MOON_RADIUS_SCENE * 4;
+
+    // Compute initial spherical coords from approach direction
+    const endOffset = camToMoon.clone().normalize().multiplyScalar(-dist);
+    const spherical = new THREE.Spherical().setFromVector3(endOffset);
+
+    moonOrbitState.current = {
+      theta: spherical.theta,
+      phi: spherical.phi,
+      distance: dist,
+    };
+
+    // Attach moon orbit handlers
+    const el = controls.domElement;
+    el.addEventListener('mousedown', onMoonMouseDown);
+    el.addEventListener('wheel', onMoonWheel, { passive: false });
+    el.addEventListener('touchstart', onMoonTouchStart, { passive: false });
+  }
+
+  function exitMoonView(controls: any) {
+    moonOrbitState.current = null;
+    const el = controls.domElement;
+    el.removeEventListener('mousedown', onMoonMouseDown);
+    el.removeEventListener('wheel', onMoonWheel);
+    el.removeEventListener('touchstart', onMoonTouchStart);
+  }
+
+  useEffect(() => {
+    if (!isGlobeReady || !globeEl.current || !moonMeshRef.current) return;
+    if (viewTarget === viewTargetRef.current) return;
+    viewTargetRef.current = viewTarget;
+
+    // Cancel any in-flight animation
+    if (moonViewAnimRef.current) {
+      moonViewAnimRef.current.cancel();
+      moonViewAnimRef.current = null;
+    }
+
+    let controls: any;
+    try { controls = globeEl.current.controls(); } catch { return; }
+
+    const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+    const moonMesh = moonMeshRef.current;
+
+    if (viewTarget === 'moon') {
+      // Set flag BEFORE exitCloseMode to guard the isOrbiting effect
+      inMoonViewRef.current = true;
+
+      if (inCloseModeRef.current) exitCloseMode(controls);
+
+      // Pause the library entirely — stops both _animationCycle and kills tweens
+      pauseLibrary(controls);
+
+      const startPos = camera.position.clone();
+      const startLookTarget = new THREE.Vector3(0, 0, 0); // earth origin
+      const duration = 3000;
+      let startTime: number | null = null;
+      let raf: number | null = null;
+      let canceled = false;
+
+      const animate = (ts: number) => {
+        if (canceled || !globeEl.current) return;
+        startTime ??= ts;
+        const t = Math.min((ts - startTime) / duration, 1);
+        const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+
+        const moonPos = moonMesh.position.clone();
+        const viewDist = MOON_RADIUS_SCENE * 4;
+        const approachDir = startPos.clone().sub(moonPos).normalize();
+        const endPos = moonPos.clone().add(approachDir.multiplyScalar(viewDist));
+
+        camera.position.lerpVectors(startPos, endPos, ease);
+        const lookTarget = new THREE.Vector3().lerpVectors(startLookTarget, moonPos, ease);
+        camera.up.set(0, 1, 0);
+        camera.lookAt(lookTarget);
+
+        renderScene();
+
+        if (t < 1) {
+          raf = requestAnimationFrame(animate);
+        } else {
+          enterMoonView(controls, camera, moonMesh);
+          moonViewAnimRef.current = null;
+        }
+      };
+
+      raf = requestAnimationFrame(animate);
+      moonViewAnimRef.current = {
+        cancel: () => {
+          canceled = true;
+          if (raf !== null) cancelAnimationFrame(raf);
+        },
+      };
+    } else {
+      // Flying back to earth
+      exitMoonView(controls);
+
+      const startPos = camera.position.clone();
+      const startLookTarget = moonMesh.position.clone();
+      const earthR = globeEl.current.getGlobeRadius() as number;
+      const duration = 3000;
+      let startTime: number | null = null;
+      let raf: number | null = null;
+      let canceled = false;
+
+      const animate = (ts: number) => {
+        if (canceled || !globeEl.current) return;
+        startTime ??= ts;
+        const t = Math.min((ts - startTime) / duration, 1);
+        const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+
+        const earthTarget = new THREE.Vector3(0, 0, 0);
+        const viewDist = earthR * 3.5;
+        const approachDir = startPos.clone().sub(earthTarget).normalize();
+        const endPos = earthTarget.clone().add(approachDir.multiplyScalar(viewDist));
+
+        camera.position.lerpVectors(startPos, endPos, ease);
+        const lookTarget = new THREE.Vector3().lerpVectors(startLookTarget, earthTarget, ease);
+        camera.up.set(0, 1, 0);
+        camera.lookAt(lookTarget);
+
+        renderScene();
+
+        if (t < 1) {
+          raf = requestAnimationFrame(animate);
+        } else {
+          inMoonViewRef.current = false;
+          resumeLibrary(controls);
+          moonViewAnimRef.current = null;
+        }
+      };
+
+      raf = requestAnimationFrame(animate);
+      moonViewAnimRef.current = {
+        cancel: () => {
+          canceled = true;
+          if (raf !== null) cancelAnimationFrame(raf);
+          inMoonViewRef.current = false;
+          resumeLibrary(controls);
+        },
+      };
+    }
+
+    return () => {
+      if (moonViewAnimRef.current) {
+        moonViewAnimRef.current.cancel();
+        moonViewAnimRef.current = null;
+      }
+    };
+  }, [viewTarget, isGlobeReady]);
 
   // ── Layer manager cleanup ────────────────────────────────────────────────
   useEffect(() => {

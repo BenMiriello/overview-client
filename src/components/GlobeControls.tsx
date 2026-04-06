@@ -1,4 +1,4 @@
-import { Flame, RotateCcw } from 'lucide-react';
+import { Flame, RotateCcw, Moon } from 'lucide-react';
 import './GlobeControls.css';
 
 interface Hotspot {
@@ -16,6 +16,8 @@ interface GlobeControlsProps {
   isViewingHotspot?: boolean;
   hasNewHotspot?: boolean;
   onGoToHotspot?: () => void;
+  viewTarget?: 'earth' | 'moon';
+  onToggleViewTarget?: () => void;
 }
 
 interface CtrlBtnProps {
@@ -47,6 +49,8 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   isViewingHotspot,
   hasNewHotspot,
   onGoToHotspot,
+  viewTarget = 'earth',
+  onToggleViewTarget,
 }) => {
   const hotspotClass = [
     'globe-ctrl-btn',
@@ -79,6 +83,14 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         tooltip={isOrbiting ? 'Stop auto-rotation' : 'Start auto-rotation'}
       >
         <RotateCcw size={16} />
+      </CtrlBtn>
+      <CtrlBtn
+        className={`globe-ctrl-btn ${viewTarget === 'moon' ? 'active' : ''}`}
+        onClick={onToggleViewTarget}
+        ariaLabel={viewTarget === 'moon' ? 'View Earth' : 'View Moon'}
+        tooltip={viewTarget === 'moon' ? 'Switch to Earth view' : 'Switch to Moon view'}
+      >
+        <Moon size={16} />
       </CtrlBtn>
       <CtrlBtn
         className={`globe-ctrl-btn ${is3D ? 'active' : ''}`}
