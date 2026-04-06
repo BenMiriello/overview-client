@@ -3,7 +3,7 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
-import { updateSunDirection, patchNightTileMaterial, createNightTileEngine } from '../services/dayNightMaterial';
+import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createNightTileEngine } from '../services/dayNightMaterial';
 import { createMoonMesh, updateMoonPosition } from '../services/moonMesh';
 import { MOON_RADIUS_SCENE } from '../services/astronomy';
 
@@ -322,8 +322,16 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         } catch { /* ignore */ }
       }
 
-      // Drive night tile engine + patch night tiles
+      // Patch day tiles with day/night darkening shader
       const camera = globeEl.current.camera();
+      const scene = globeEl.current.scene() as THREE.Scene;
+      scene.traverse((child: any) => {
+        if (child.isMesh && child.material?.isMeshLambertMaterial && !child.material.userData?.__nightTilePatched) {
+          patchTileMaterial(child.material);
+        }
+      });
+
+      // Drive night tile engine + patch night tiles
       nightEngine.updatePov(camera);
 
       nightEngine.traverse((child: any) => {

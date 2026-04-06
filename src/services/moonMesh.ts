@@ -48,6 +48,11 @@ export function createMoonMesh(): THREE.Mesh {
       moonMap: { value: moonTexture },
       sunDir: sharedNightUniforms.sunDir,
     },
+    // transparent puts the moon in the transparent render pass so renderOrder
+    // can place it AFTER the night tiles (which have depthTest: false).
+    // The shader always outputs alpha=1.0 so it's visually opaque.
+    transparent: true,
+    depthWrite: true,
   });
 
   const mesh = new THREE.Mesh(geometry, material);
