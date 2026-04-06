@@ -52,6 +52,7 @@ export function createMoonMesh(): THREE.Mesh {
 
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = 'moon';
+  mesh.renderOrder = 1;
   return mesh;
 }
 
