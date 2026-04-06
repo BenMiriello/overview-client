@@ -288,14 +288,27 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const prevMoonPos = moonMesh.position.clone();
       updateMoonPosition(moonMesh, now);
 
-      // When in moon view: apply moon orbit state and render (library is paused)
+      // When in moon view: apply drag inertia, compute camera from orbit state, render
       if (inMoonViewRef.current && moonOrbitState.current && globeEl.current) {
         try {
+          // Apply drag velocity with exponential decay
+          if (moonVelocityRef.current) {
+            const dt = 1 / 60; // approximate frame time
+            moonOrbitState.current.theta += moonVelocityRef.current.dTheta * dt;
+            moonOrbitState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1,
+              moonOrbitState.current.phi + moonVelocityRef.current.dPhi * dt));
+            const decay = Math.exp(-3 * dt);
+            moonVelocityRef.current.dTheta *= decay;
+            moonVelocityRef.current.dPhi *= decay;
+            if (Math.abs(moonVelocityRef.current.dTheta) + Math.abs(moonVelocityRef.current.dPhi) < 0.001) {
+              moonVelocityRef.current = null;
+            }
+          }
+
           const cam = globeEl.current.camera();
           const moonPos = moonMesh.position;
           const { theta, phi, distance } = moonOrbitState.current;
 
-          // Spherical → cartesian offset from moon center
           const offset = new THREE.Vector3(
             distance * Math.sin(phi) * Math.sin(theta),
             distance * Math.cos(phi),
@@ -1044,6 +1057,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     distance: number;
   }
   const moonOrbitState = useRef<MoonOrbitState | null>(null);
+  const moonVelocityRef = useRef<{ dTheta: number; dPhi: number } | null>(null);
 
   function pauseLibrary(controls: any) {
     if (!savedControlsUpdateRef.current) {
@@ -1090,8 +1104,12 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   // Moon orbit mouse/touch handlers (modeled after close-mode handlers)
   const onMoonMouseDown = (e: MouseEvent) => {
     if (!moonOrbitState.current) return;
+    moonVelocityRef.current = null;
     let lastX = e.clientX;
     let lastY = e.clientY;
+    let lastTime = performance.now();
+    let smoothDTheta = 0;
+    let smoothDPhi = 0;
 
     const onMouseMove = (me: MouseEvent) => {
       if (!moonOrbitState.current) return;
@@ -1099,11 +1117,23 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const dy = me.clientY - lastY;
       lastX = me.clientX;
       lastY = me.clientY;
-      moonOrbitState.current.theta -= dx * 0.005;
+      const dTheta = -dx * 0.003;
+      const dPhi = -dy * 0.003;
+      moonOrbitState.current.theta += dTheta;
       moonOrbitState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1,
-        moonOrbitState.current.phi + dy * 0.005));
+        moonOrbitState.current.phi + dPhi));
+
+      const now = performance.now();
+      const dt = (now - lastTime) / 1000;
+      if (dt > 0 && dt < 0.1) {
+        const alpha = 0.3;
+        smoothDTheta = smoothDTheta * (1 - alpha) + (dTheta / dt) * alpha;
+        smoothDPhi = smoothDPhi * (1 - alpha) + (dPhi / dt) * alpha;
+      }
+      lastTime = now;
     };
     const onMouseUp = () => {
+      moonVelocityRef.current = { dTheta: smoothDTheta, dPhi: smoothDPhi };
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
@@ -1148,9 +1178,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         const dy = t.clientY - moonTouchRef.current.y;
         moonTouchRef.current.x = t.clientX;
         moonTouchRef.current.y = t.clientY;
-        moonOrbitState.current.theta -= dx * 0.005;
+        moonOrbitState.current.theta -= dx * 0.003;
         moonOrbitState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1,
-          moonOrbitState.current.phi + dy * 0.005));
+          moonOrbitState.current.phi - dy * 0.003));
       }
     };
     const onTouchEnd = () => {
