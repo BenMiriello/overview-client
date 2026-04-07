@@ -1,8 +1,14 @@
+// Service worker rules: read the comment block at the top of public/tile-sw.js
+// before modifying anything here or in that file.
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom';
 import './index.css'
 import App from './App.tsx'
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/tile-sw.js');
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
