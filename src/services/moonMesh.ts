@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MOON_RADIUS_SCENE, getMoonPosition } from './astronomy';
+import { MOON_RADIUS_SCENE, getMoonPosition, getMoonLibration, CELESTIAL_NORTH_SCENE } from './astronomy';
 import { sharedNightUniforms } from './dayNightMaterial';
 
 const MOON_TEXTURE_URL = 'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/moon_1024.jpg';
@@ -64,4 +64,37 @@ export function createMoonMesh(): THREE.Mesh {
 export function updateMoonPosition(mesh: THREE.Mesh, date: Date): void {
   const pos = getMoonPosition(date);
   mesh.position.copy(pos);
+}
+
+/**
+ * Orient the moon so its near side faces Earth (tidal locking), with libration
+ * wobble applied. Earth is at scene origin. The moon's texture uses standard
+ * SphereGeometry UV mapping where the prime meridian (center of the near side)
+ * lies along the mesh's local -Z axis.
+ */
+const _tmpM = new THREE.Matrix4();
+const _tmpEye = new THREE.Vector3();
+const _tmpLibQuat = new THREE.Quaternion();
+const _tmpAxisY = new THREE.Vector3(0, 1, 0);
+const _tmpAxisX = new THREE.Vector3(1, 0, 0);
+
+export function updateMoonOrientation(mesh: THREE.Mesh, date: Date): void {
+  // Base orientation: look from moon center toward Earth (origin), so local -Z
+  // ends up pointing at Earth. Matrix4.lookAt builds a basis whose -Z axis
+  // points from `eye` toward `target`.
+  _tmpEye.copy(mesh.position);
+  _tmpM.lookAt(_tmpEye, new THREE.Vector3(0, 0, 0), CELESTIAL_NORTH_SCENE);
+  mesh.quaternion.setFromRotationMatrix(_tmpM);
+
+  // Libration: the sub-earth point is offset from (0,0) selenographic by
+  // (elon, elat). To make that offset point face Earth instead of the prime
+  // meridian, rotate the mesh by (-elon) about its local Y and (-elat) about
+  // its local X — i.e., post-multiply by the inverse libration rotation.
+  const { elon, elat } = getMoonLibration(date);
+  const lonRad = -elon * Math.PI / 180;
+  const latRad = -elat * Math.PI / 180;
+  _tmpLibQuat.setFromAxisAngle(_tmpAxisY, lonRad);
+  mesh.quaternion.multiply(_tmpLibQuat);
+  _tmpLibQuat.setFromAxisAngle(_tmpAxisX, latRad);
+  mesh.quaternion.multiply(_tmpLibQuat);
 }

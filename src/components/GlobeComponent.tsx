@@ -3,16 +3,14 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
-import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createNightTileEngine } from '../services/dayNightMaterial';
-import { createMoonMesh, updateMoonPosition } from '../services/moonMesh';
+import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
+import { createMoonMesh, updateMoonPosition, updateMoonOrientation } from '../services/moonMesh';
 import { MOON_RADIUS_SCENE } from '../services/astronomy';
 
 const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
 const MIN_ALTITUDE         = 0.001;
 
-// Tile LOD: higher base = load sharper tiles from further away (default library value is 8)
-const TILE_LOD_BASE = 12;
 
 const PITCH_NEAR_THRESHOLD = 0;
 const PITCH_MAX_ZOOM       = Math.PI / 3; // 60° from vertical = 30° elevation at max zoom
@@ -269,7 +267,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const globeRadius = globeEl.current.getGlobeRadius() as number;
     const nightEngine = createNightTileEngine(globeRadius);
-    nightEngine.thresholds = Array.from({ length: 30 }, (_, i) => TILE_LOD_BASE / Math.pow(2, i));
     nightEngine.scale.setScalar(1.001);
     const scene = globeEl.current.scene() as THREE.Scene;
     scene.add(nightEngine);
@@ -279,6 +276,41 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     scene.add(moonMesh);
     moonMeshRef.current = moonMesh;
 
+    // Sky sphere: located once the background texture mesh is created by the
+    // library. Identified by BackSide material with a color/image map (the
+    // atmosphere uses ShaderMaterial so it's distinguishable).
+    let skySphere: THREE.Mesh | null = null;
+    const findSkySphere = (): THREE.Mesh | null => {
+      let found: THREE.Mesh | null = null;
+      scene.traverse((obj: any) => {
+        if (found) return;
+        if (obj.isMesh && obj.material?.side === THREE.BackSide && obj.material?.map) {
+          found = obj;
+        }
+      });
+      return found;
+    };
+
+    const EARTH_R = globeRadius;
+    const MOON_R_SCENE = MOON_RADIUS_SCENE;
+    const tmpCamPos = new THREE.Vector3();
+    const tmpDir = new THREE.Vector3();
+    const tmpSunDir = new THREE.Vector3();
+    const tmpMoonPos = new THREE.Vector3();
+
+    const computeBrightArea = (body: 'earth' | 'moon', camPos: THREE.Vector3, bodyPos: THREE.Vector3, bodyR: number, fovRad: number, albedoScale: number): number => {
+      const toBody = tmpDir.subVectors(bodyPos, camPos);
+      const dist = toBody.length();
+      if (dist <= bodyR) return albedoScale; // inside surface — treat as fully bright
+      const angularR = Math.asin(bodyR / dist);
+      const screenFraction = Math.min(1, (angularR / fovRad) * (angularR / fovRad));
+      // Lit hemisphere fraction visible from camera
+      const camToBody = toBody.normalize();
+      const bodyToCam = camToBody.clone().negate();
+      const lit = Math.max(0, Math.min(1, bodyToCam.dot(tmpSunDir) * 0.5 + 0.5));
+      return lit * albedoScale * Math.min(1, screenFraction / 0.1);
+    };
+
     const tick = () => {
       if (cancelled || !globeEl.current) return;
 
@@ -287,6 +319,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
       const prevMoonPos = moonMesh.position.clone();
       updateMoonPosition(moonMesh, now);
+      updateMoonOrientation(moonMesh, now);
 
       // When in moon view: apply drag inertia, compute camera from orbit state, render
       if (inMoonViewRef.current && moonOrbitState.current && globeEl.current) {
@@ -342,6 +375,27 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           child.material.depthWrite = false;
         }
       });
+
+      // Star visibility: fade the sky sphere based on how much bright surface
+      // dominates the camera's field of view.
+      if (!skySphere) skySphere = findSkySphere();
+      if (skySphere) {
+        const cam = camera as THREE.PerspectiveCamera;
+        const fovRad = (cam.fov * Math.PI) / 180;
+        tmpCamPos.copy(cam.position);
+        tmpSunDir.copy(sharedNightUniforms.sunDir.value);
+
+        const earthBright = computeBrightArea('earth', tmpCamPos, new THREE.Vector3(0, 0, 0), EARTH_R, fovRad, 1.0);
+        tmpMoonPos.copy(moonMesh.position);
+        const moonBright = computeBrightArea('moon', tmpCamPos, tmpMoonPos, MOON_R_SCENE, fovRad, 0.4);
+
+        const totalBright = earthBright + moonBright;
+        const starVisibility = 1.0 - THREE.MathUtils.smoothstep(totalBright, 0.0, 0.4);
+
+        const mat = skySphere.material as THREE.MeshBasicMaterial;
+        if (!mat.transparent) mat.transparent = true;
+        mat.opacity = starVisibility;
+      }
 
       rafId = requestAnimationFrame(tick);
     };
@@ -414,13 +468,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
               `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`
           );
           obj.globeTileEngineMaxLevel(17);
-
-          // Patch thresholds on the internal tile engine to load higher-res tiles sooner
-          obj.traverse((child: any) => {
-            if (Array.isArray(child.thresholds)) {
-              child.thresholds = Array.from({ length: 30 }, (_, i) => TILE_LOD_BASE / Math.pow(2, i));
-            }
-          });
         }
       });
     }

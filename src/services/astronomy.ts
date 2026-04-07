@@ -75,3 +75,18 @@ export function getSunDirection(date: Date): THREE.Vector3 {
 export function getSunPosition(date: Date): THREE.Vector3 {
   return getSunDirection(date).multiplyScalar(50000);
 }
+
+/**
+ * Sub-earth selenographic point (degrees). Center of the near side of the moon
+ * relative to Earth, including libration wobble.
+ */
+export function getMoonLibration(date: Date): { elon: number; elat: number } {
+  const lib = Astronomy.Libration(date);
+  return { elon: lib.elon, elat: lib.elat };
+}
+
+/**
+ * North celestial pole direction in the scene frame.
+ * Matches eqjToScene's mapping of EQJ +z (celestial north) -> scene +y.
+ */
+export const CELESTIAL_NORTH_SCENE = new THREE.Vector3(0, 1, 0);
