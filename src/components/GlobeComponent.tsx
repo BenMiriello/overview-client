@@ -5,7 +5,9 @@ import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
 import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
 import { createMoonMesh, updateMoonPosition, updateMoonOrientation } from '../services/moonMesh';
+import { createSunGroup, updateSunPosition, disposeSunGroup, SUN_HALO_SCALE } from '../services/sunMesh';
 import { MOON_RADIUS_SCENE } from '../services/astronomy';
+import { StoredView, saveView } from './globeViewPersistence';
 
 const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
@@ -42,6 +44,7 @@ interface GlobeComponentProps {
   isOrbiting: boolean;
   onIsOrbitingChange: (val: boolean) => void;
   viewTarget?: 'earth' | 'moon';
+  restoredView?: StoredView | null;
 }
 
 // Target-primary state: the ground point (targetLat/targetLng) is the invariant.
@@ -168,6 +171,7 @@ function applyCameraState(
 const introCameraMovement = (
   globeEl: React.RefObject<any>,
   target: TargetPosition,
+  shouldAbort: () => boolean,
 ): { cancel: () => void } => {
   let startTime: number | null = null;
   let animationFrameId: number | null = null;
@@ -180,7 +184,7 @@ const introCameraMovement = (
   globeEl.current.pointOfView({ lat: initialLat, lng: initialLng, altitude: initialAltitude }, 0);
 
   setTimeout(() => {
-    if (isCanceled) return;
+    if (isCanceled || shouldAbort()) return;
 
     const duration = 5000;
     const latDelta = target.lat - initialLat;
@@ -188,7 +192,7 @@ const introCameraMovement = (
     const altShift = -1;
 
     const animate = (timestamp: number) => {
-      if (isCanceled) return;
+      if (isCanceled || shouldAbort()) return;
       startTime ||= timestamp;
       const elapsed = timestamp - startTime;
 
@@ -230,11 +234,14 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   isOrbiting,
   onIsOrbitingChange,
   viewTarget = 'earth',
+  restoredView = null,
 }) => {
   const globeEl          = useRef<any>(null);
   const layerManagerRef  = useRef<GlobeLayerManager | null>(null);
   const [isGlobeReady, setIsGlobeReady] = useState(false);
   const animationRef     = useRef<{ cancel: () => void } | null>(null);
+  const cancelIntroRef   = useRef<(() => void) | null>(null);
+  const restoredViewRef  = useRef<boolean>(restoredView !== null);
 
   const closeModeState   = useRef<CloseModeState | null>(null);
   const closeModeRafRef  = useRef<number | null>(null);
@@ -254,7 +261,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   const dragVelocityRef  = useRef<{ dlat: number; dlng: number } | null>(null);
 
-  const tileEngineRef = useRef<THREE.Object3D | null>(null);
+  const tileEngineRef    = useRef<THREE.Object3D | null>(null);
+  // The ThreeSlippyMapGlobe instance inside the globe group — needed to call
+  // updatePov() ourselves when OrbitControls is disabled (close mode), since
+  // the library only calls it from the controls 'change' event.
+  const dayTileEngineRef = useRef<any>(null);
 
   const nightTileEngineRef = useRef<THREE.Object3D | null>(null);
   const moonMeshRef = useRef<THREE.Mesh | null>(null);
@@ -276,6 +287,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     scene.add(moonMesh);
     moonMeshRef.current = moonMesh;
 
+    const sunGroup = createSunGroup();
+    scene.add(sunGroup);
+
     // Sky sphere: located once the background texture mesh is created by the
     // library. Identified by BackSide material with a color/image map (the
     // atmosphere uses ShaderMaterial so it's distinguishable).
@@ -293,10 +307,33 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const EARTH_R = globeRadius;
     const MOON_R_SCENE = MOON_RADIUS_SCENE;
+    const SUN_BRIGHTNESS_SCALE = 4;
     const tmpCamPos = new THREE.Vector3();
     const tmpDir = new THREE.Vector3();
     const tmpSunDir = new THREE.Vector3();
     const tmpMoonPos = new THREE.Vector3();
+    const tmpSunPos = new THREE.Vector3();
+    const tmpRayDir = new THREE.Vector3();
+    const sunFrustum = new THREE.Frustum();
+    const tmpProjScreen = new THREE.Matrix4();
+
+    // Returns true if the segment from `camPos` to `sunPos` passes through a
+    // sphere at the origin with radius `EARTH_R`. Standard ray-sphere
+    // intersection: solve |camPos + t*dir|^2 = R^2 for t in (0, |sunPos-camPos|).
+    const sunOccludedByEarth = (camPos: THREE.Vector3, sunPos: THREE.Vector3): boolean => {
+      tmpRayDir.subVectors(sunPos, camPos);
+      const dist = tmpRayDir.length();
+      if (dist === 0) return false;
+      tmpRayDir.divideScalar(dist);
+      const b = camPos.dot(tmpRayDir);
+      const c = camPos.lengthSq() - EARTH_R * EARTH_R;
+      const disc = b * b - c;
+      if (disc < 0) return false;
+      const sq = Math.sqrt(disc);
+      const t1 = -b - sq;
+      const t2 = -b + sq;
+      return (t1 > 0 && t1 < dist) || (t2 > 0 && t2 < dist);
+    };
 
     // Returns a brightness contribution for `body` based on how tall it appears
     // on screen and how much of the visible hemisphere is sunlit. The height
@@ -323,6 +360,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const prevMoonPos = moonMesh.position.clone();
       updateMoonPosition(moonMesh, now);
       updateMoonOrientation(moonMesh, now);
+      updateSunPosition(sunGroup, now);
 
       // When in moon view: apply drag inertia, compute camera from orbit state, render
       if (inMoonViewRef.current && moonOrbitState.current && globeEl.current) {
@@ -367,7 +405,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         }
       });
 
-      // Drive night tile engine + patch night tiles
+      // Drive tile engines. The library only calls updatePov from the OrbitControls
+      // 'change' event, so when controls are disabled (close mode) tiles never upgrade.
+      // Calling it every frame here ensures LOD always tracks the actual camera position.
+      if (dayTileEngineRef.current) dayTileEngineRef.current.updatePov(camera);
       nightEngine.updatePov(camera);
 
       nightEngine.traverse((child: any) => {
@@ -394,7 +435,20 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         tmpMoonPos.copy(moonMesh.position);
         const moonBright = computeBrightArea(tmpCamPos, tmpMoonPos, MOON_R_SCENE, fovRad, 0.66);
 
-        const totalBright = earthBright + moonBright;
+        // Sun contribution: stylized fixed angular size from the halo sprite,
+        // gated by frustum check and Earth occlusion (eclipse easter egg).
+        tmpSunPos.copy(sunGroup.position);
+        tmpProjScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+        sunFrustum.setFromProjectionMatrix(tmpProjScreen);
+        let sunBright = 0;
+        if (sunFrustum.containsPoint(tmpSunPos) && !sunOccludedByEarth(tmpCamPos, tmpSunPos)) {
+          const sunDist = tmpCamPos.distanceTo(tmpSunPos);
+          const sunAngularR = Math.atan((SUN_HALO_SCALE / 2) / sunDist);
+          const sunHeightFraction = Math.min(1, (2 * sunAngularR) / fovRad);
+          sunBright = sunHeightFraction * SUN_BRIGHTNESS_SCALE;
+        }
+
+        const totalBright = earthBright + moonBright + sunBright;
         // Begin dimming once a fully-lit body covers ~10% of viewport height,
         // fully gone once it covers ~70%.
         const starVisibility = 1.0 - THREE.MathUtils.smoothstep(totalBright, 0.1, 0.7);
@@ -416,6 +470,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       moonMesh.geometry.dispose();
       (moonMesh.material as THREE.ShaderMaterial).dispose();
       moonMeshRef.current = null;
+      scene.remove(sunGroup);
+      disposeSunGroup(sunGroup);
     };
   }, [isGlobeReady]);
 
@@ -436,6 +492,12 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.maxDistance = 10000;
     controls.enableDamping = true;
     controls.dampingFactor = 0.1;
+
+    // Default near plane (0.1) clips the globe surface at close-mode max zoom,
+    // where the camera is only ~0.05 units from the surface. Reduce to prevent clipping.
+    const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+    camera.near = 0.01;
+    camera.updateProjectionMatrix();
 
     const checkThreshold = () => {
       if (inCloseModeRef.current) return;
@@ -458,6 +520,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         animationRef.current = null;
       }
     };
+    cancelIntroRef.current = stopIntroAnimation;
 
     controls.domElement.addEventListener('mousedown', stopIntroAnimation);
     controls.domElement.addEventListener('wheel', stopIntroAnimation, { passive: true });
@@ -473,6 +536,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
               `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`
           );
           obj.globeTileEngineMaxLevel(17);
+          // Cache the ThreeSlippyMapGlobe instance so the tick loop can call
+          // updatePov() when OrbitControls is disabled (see dayTileEngineRef).
+          obj.traverse((child: any) => {
+            if (Array.isArray(child.thresholds)) dayTileEngineRef.current = child;
+          });
         }
       });
     }
@@ -495,6 +563,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           controls.domElement.removeEventListener('touchstart', stopIntroAnimation);
         }
       } catch { /* ignore */ }
+      cancelIntroRef.current = null;
     };
   }, [isGlobeReady, onGlobeReady, onLayerManagerReady]);
 
@@ -502,6 +571,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   function enterCloseMode(controls: any) {
     if (inCloseModeRef.current || !globeEl.current) return;
+
+    cancelIntroRef.current?.();
 
     const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
     const earthR = globeEl.current.getGlobeRadius();
@@ -771,6 +842,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   const onCloseWheel = (e: WheelEvent) => {
     e.preventDefault();
+    cancelIntroRef.current?.();
     if (!closeModeState.current || !globeEl.current || exitAnimatingRef.current) return;
 
     const zoomFactor = Math.pow(0.999, -e.deltaY);
@@ -880,6 +952,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   useEffect(() => {
     if (!isGlobeReady || !globeEl.current || !targetPositionReady) return;
     if (!targetPosition) return;
+    if (restoredViewRef.current) return;
     const target = targetPosition;
     console.log(
       `[GlobeComponent] intro animation → lat=${target.lat.toFixed(2)}, lng=${target.lng.toFixed(2)} (hotspot)`
@@ -887,7 +960,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (animationRef.current) {
       animationRef.current.cancel();
     }
-    animationRef.current = introCameraMovement(globeEl, target);
+    animationRef.current = introCameraMovement(
+      globeEl,
+      target,
+      () => inCloseModeRef.current || inMoonViewRef.current,
+    );
     return () => {
       if (animationRef.current) {
         animationRef.current.cancel();
@@ -1415,6 +1492,114 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       }
     };
   }, [viewTarget, isGlobeReady]);
+
+  // ── Restore stored view on first render ──────────────────────────────────
+  useEffect(() => {
+    if (!isGlobeReady || !globeEl.current || !restoredView) return;
+    if (!restoredViewRef.current) return;
+    restoredViewRef.current = false; // one-shot
+
+    let controls: any;
+    try { controls = globeEl.current.controls(); } catch { return; }
+    if (!controls) return;
+
+    if (restoredView.viewTarget === 'moon' && restoredView.moon) {
+      // Suppress the earth/moon switching effect by marking moon as already-applied.
+      viewTargetRef.current = 'moon';
+      inMoonViewRef.current = true;
+      pauseLibrary(controls);
+      moonOrbitState.current = { ...restoredView.moon };
+      const el = controls.domElement;
+      el.addEventListener('mousedown', onMoonMouseDown);
+      el.addEventListener('wheel', onMoonWheel, { passive: false });
+      el.addEventListener('touchstart', onMoonTouchStart, { passive: false });
+      return;
+    }
+
+    if (restoredView.mode === 'close' && restoredView.close) {
+      const c = restoredView.close;
+      // Seed far-mode pov so enterCloseMode's altitude derivation lands near our target
+      globeEl.current.pointOfView(
+        { lat: c.targetLat, lng: c.targetLng, altitude: Math.max(c.altitude, 0.5) },
+        0
+      );
+      preventReentryRef.current = false;
+      prefer3DRef.current = true;
+      enterCloseMode(controls);
+      // Overwrite with exact stored state and skip the entry pitch ramp
+      closeModeState.current = { ...c };
+      entryAnimatingRef.current = false;
+      return;
+    }
+
+    if (restoredView.far) {
+      globeEl.current.pointOfView(restoredView.far, 0);
+    }
+  }, [isGlobeReady]);
+
+  // ── Periodic save of view state ──────────────────────────────────────────
+  useEffect(() => {
+    if (!isGlobeReady || !globeEl.current) return;
+
+    let lastSerialized = '';
+
+    const snapshot = (): StoredView | null => {
+      if (!globeEl.current) return null;
+      const mode: 'far' | 'close' | 'moon' = inMoonViewRef.current
+        ? 'moon'
+        : inCloseModeRef.current
+        ? 'close'
+        : 'far';
+
+      const view: StoredView = {
+        version: 1,
+        viewTarget: viewTargetRef.current,
+        is3D: prefer3DRef.current,
+        isOrbiting: isOrbitingRef.current,
+        mode,
+      };
+
+      try {
+        const pov = globeEl.current.pointOfView();
+        if (pov && Number.isFinite(pov.lat) && Number.isFinite(pov.lng) && Number.isFinite(pov.altitude)) {
+          view.far = { lat: pov.lat, lng: pov.lng, altitude: pov.altitude };
+        }
+      } catch { /* ignore */ }
+
+      if (closeModeState.current) {
+        view.close = { ...closeModeState.current };
+      }
+      if (moonOrbitState.current) {
+        view.moon = { ...moonOrbitState.current };
+      }
+
+      return view;
+    };
+
+    const persist = () => {
+      const view = snapshot();
+      if (!view) return;
+      const serialized = JSON.stringify(view);
+      if (serialized === lastSerialized) return;
+      lastSerialized = serialized;
+      saveView(view);
+    };
+
+    const intervalId = window.setInterval(persist, 500);
+    const onBeforeUnload = () => persist();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') persist();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      persist();
+    };
+  }, [isGlobeReady, restoredView]);
 
   // ── Layer manager cleanup ────────────────────────────────────────────────
   useEffect(() => {
