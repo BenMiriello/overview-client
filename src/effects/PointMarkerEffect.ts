@@ -24,7 +24,7 @@ export const DEFAULT_MARKER_CONFIG: PointMarkerConfig = {
   color: 0xffdd00,
   opacity: 1,
   resolution: 25,
-  altitude: 0.001,
+  altitude: 0.00001,
   duration: 60000,
   fadeInDuration: 0,
   fadeOutDuration: 2000,

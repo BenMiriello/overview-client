@@ -298,17 +298,20 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const tmpSunDir = new THREE.Vector3();
     const tmpMoonPos = new THREE.Vector3();
 
-    const computeBrightArea = (body: 'earth' | 'moon', camPos: THREE.Vector3, bodyPos: THREE.Vector3, bodyR: number, fovRad: number, albedoScale: number): number => {
+    // Returns a brightness contribution for `body` based on how tall it appears
+    // on screen and how much of the visible hemisphere is sunlit. The height
+    // fraction (not area) gives a better feel for "how much the body dominates
+    // the view" across different aspect ratios.
+    const computeBrightArea = (camPos: THREE.Vector3, bodyPos: THREE.Vector3, bodyR: number, fovRad: number, albedoScale: number): number => {
       const toBody = tmpDir.subVectors(bodyPos, camPos);
       const dist = toBody.length();
-      if (dist <= bodyR) return albedoScale; // inside surface — treat as fully bright
+      if (dist <= bodyR) return albedoScale;
       const angularR = Math.asin(bodyR / dist);
-      const screenFraction = Math.min(1, (angularR / fovRad) * (angularR / fovRad));
-      // Lit hemisphere fraction visible from camera
+      const heightFraction = Math.min(1, (2 * angularR) / fovRad);
       const camToBody = toBody.normalize();
       const bodyToCam = camToBody.clone().negate();
       const lit = Math.max(0, Math.min(1, bodyToCam.dot(tmpSunDir) * 0.5 + 0.5));
-      return lit * albedoScale * Math.min(1, screenFraction / 0.1);
+      return lit * albedoScale * heightFraction;
     };
 
     const tick = () => {
@@ -376,8 +379,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         }
       });
 
-      // Star visibility: fade the sky sphere based on how much bright surface
-      // dominates the camera's field of view.
+      // Star visibility: modulate the sky sphere material color (which is
+      // multiplied into its texture) instead of opacity. Using opacity reveals
+      // the renderer clear color through the fade — color modulation keeps the
+      // result at pure black at zero brightness regardless of clear color.
       if (!skySphere) skySphere = findSkySphere();
       if (skySphere) {
         const cam = camera as THREE.PerspectiveCamera;
@@ -385,16 +390,16 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         tmpCamPos.copy(cam.position);
         tmpSunDir.copy(sharedNightUniforms.sunDir.value);
 
-        const earthBright = computeBrightArea('earth', tmpCamPos, new THREE.Vector3(0, 0, 0), EARTH_R, fovRad, 1.0);
+        const earthBright = computeBrightArea(tmpCamPos, new THREE.Vector3(0, 0, 0), EARTH_R, fovRad, 0.8);
         tmpMoonPos.copy(moonMesh.position);
-        const moonBright = computeBrightArea('moon', tmpCamPos, tmpMoonPos, MOON_R_SCENE, fovRad, 0.4);
+        const moonBright = computeBrightArea(tmpCamPos, tmpMoonPos, MOON_R_SCENE, fovRad, 0.66);
 
         const totalBright = earthBright + moonBright;
-        const starVisibility = 1.0 - THREE.MathUtils.smoothstep(totalBright, 0.0, 0.4);
+        // Begin dimming once a fully-lit body covers ~10% of viewport height,
+        // fully gone once it covers ~70%.
+        const starVisibility = 1.0 - THREE.MathUtils.smoothstep(totalBright, 0.1, 0.7);
 
-        const mat = skySphere.material as THREE.MeshBasicMaterial;
-        if (!mat.transparent) mat.transparent = true;
-        mat.opacity = starVisibility;
+        (skySphere.material as THREE.MeshBasicMaterial).color.setScalar(starVisibility);
       }
 
       rafId = requestAnimationFrame(tick);
@@ -533,6 +538,15 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.enabled  = false;
     controls.autoRotate = false;
 
+    // Pause the library's animation loops — same pattern as moon view.
+    // Stops _animationCycle AND prevents the TWEEN loop from overriding our
+    // manually-driven camera (the TWEEN loop bypasses controls.update entirely).
+    globeEl.current?.pauseAnimation?.();
+    try {
+      const pov = globeEl.current?.pointOfView?.();
+      if (pov) globeEl.current.pointOfView(pov, 0);
+    } catch { /* ignore */ }
+
     if (isOrbitingRef.current) {
       isOrbitingRef.current = false;
       onIsOrbitingChange(false);
@@ -617,6 +631,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.enabled    = true;
     controls.autoRotate = false;
     controls.target.set(0, 0, 0);
+    globeEl.current?.resumeAnimation?.();
 
     // Position camera directly above the target point
     if (closeModeState.current && globeEl.current) {
@@ -679,7 +694,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const camera = globeEl.current.camera() as THREE.Camera;
       const earthR = globeEl.current.getGlobeRadius();
       applyCameraState(camera, closeModeState.current, earthR);
-      controls.dispatchEvent({ type: 'change' });
+      renderScene();
 
       closeModeRafRef.current = requestAnimationFrame(tick);
     };

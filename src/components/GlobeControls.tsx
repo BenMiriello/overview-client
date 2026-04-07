@@ -1,4 +1,4 @@
-import { Flame, RotateCcw, Moon } from 'lucide-react';
+import { Flame, RotateCcw, Moon, Earth } from 'lucide-react';
 import './GlobeControls.css';
 
 interface Hotspot {
@@ -90,7 +90,10 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         ariaLabel={viewTarget === 'moon' ? 'View Earth' : 'View Moon'}
         tooltip={viewTarget === 'moon' ? 'Switch to Earth view' : 'Switch to Moon view'}
       >
-        <Moon size={16} />
+        {viewTarget === 'earth' ?
+          <Moon size={16} />
+        : <Earth size={16} />
+        }
       </CtrlBtn>
       <CtrlBtn
         className={`globe-ctrl-btn ${is3D ? 'active' : ''}`}
