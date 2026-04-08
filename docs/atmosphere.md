@@ -16,6 +16,9 @@ The sun direction uniform is `sharedNightUniforms.sunDir` from `client/src/servi
   - Cloud layer (`client/src/layers/CloudLayer.ts:8-10`) sits at `EARTH_R * (1.003 .. 1.01)` — fully inside the atmosphere shell with comfortable headroom.
 - `RAYLEIGH_SCALE_HEIGHT = 0.25 * ATMOSPHERE_HEIGHT = 0.625`. Independent from `ATMOSPHERE_HEIGHT` and rescaled in proportion to it. Real Earth scale height ~8.5 km → ~8.5% of the optical-atmosphere thickness; we keep that ratio loose.
 - `RAYLEIGH_COEFF` (β_R, β_G, β_B): proportional to `(5.8, 13.5, 33.1)` — the canonical wavelength⁻⁴ ratio for Rayleigh at 680/550/440 nm. The absolute scale is tuned visually; physically-correct values per meter are `~10⁻⁶`, but rescaled to scene units (1 unit = ~63.7 km) and dialed up for visibility.
+- `MIE_COEFF`: grayscale (Mie is approximately wavelength-independent at first order — that's why haze reads white/gray, not blue). Magnitude tuned visually.
+- `MIE_SCALE_HEIGHT`: Mie hugs the surface much more tightly than Rayleigh (real Earth ~1.2 km vs ~8.5 km). Set to 0.25 of `ATMOSPHERE_HEIGHT`, roughly preserving the real-Earth ratio.
+- `MIE_G`: Henyey-Greenstein anisotropy parameter, `0.76`. Higher values produce a sharper forward peak (a tighter, brighter halo concentrated around the sun). This is the parameter that breaks the front/back symmetry of the Rayleigh phase function and gives the day-side view its distinctive bright concentrated glow vs the dim opposite sky.
 
 ## Rendering strategy
 
@@ -33,8 +36,10 @@ For each fragment:
    - `density = exp(-altitude / scaleHeight) * stepLength`
    - **Ground-shadow test:** ray-sphere intersect from `P` toward `sunDir` against the planet. If the planet is hit on the positive side, this sample is in Earth's shadow → contributes 0. (This is the single most physically important detail — without it, no twilight, no limb-bleed, no sunsets.)
    - Otherwise: accumulate `density * sunIntensity` into the per-sample contribution.
-5. **Phase function:** multiply final accumulated value by `(3 / (16π)) * (1 + cos²θ)` where `θ` is the angle between the view direction and the sun direction.
-6. **Color:** multiply by `RAYLEIGH_COEFF`. Output as `(rgb, 1.0)` with additive blending.
+5. **Phase functions:**
+   - Rayleigh: `(3 / (16π)) * (1 + cos²θ)` — symmetric forward and backward, peaks at 0° AND 180°.
+   - Mie (Henyey-Greenstein): `(3 / (8π)) * ((1 - g²)(1 + cos²θ)) / ((2 + g²)(1 + g² - 2g·cosθ)^(3/2))` — strongly forward-peaked, near-zero backward. This is what makes the day-side limb dramatically brighter than the night-side limb.
+6. **Color:** combine as `uSunIntensity * (β_R · phaseR · rayleighSum + β_M · phaseM · mieSum)`. Output as `(rgb, 1.0)` with additive blending.
 
 ### Why one shader path, not two
 
@@ -57,8 +62,7 @@ These are intentional. Future refactors should not "fix" them without an explici
 
 - **Single scattering only.** No multiple-scatter integration. Terminator and twilight will be slightly less luminous than reality.
 - **No ozone.** Real Earth's ozone layer adds a cold blue absorption band that pulls sunsets toward red-purple. Without it our terminator may look more orange than rosy.
-- **No Mie / no aerosols.** No haze, no white-yellow forward-scattering halo around the sun. Revisit if sunset colors look wrong.
-- **Constant Rayleigh coefficients.** Real coefficients vary slightly with altitude/composition.
+- **Constant Rayleigh and Mie coefficients.** Real coefficients vary slightly with altitude/composition.
 - **One scale height, exponential density.** Real atmosphere has multiple scale heights and is non-exponential at high altitudes.
 - **No tone mapping.** Scene is linear-SRGB. Bright limbs may clip to white. If this looks bad we can enable `THREE.ACESFilmicToneMapping` at the renderer level — but that's a global change affecting every other material.
 
