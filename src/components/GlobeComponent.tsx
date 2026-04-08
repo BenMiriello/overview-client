@@ -119,6 +119,61 @@ function raySphereIntersect(
   return origin.clone().addScaledVector(direction, t);
 }
 
+// In close mode the pitched camera's nadir exits the frustum, so the library's octree
+// search (centred on nadir) produces zero tiles that pass the frustum test. Fix: send
+// additional updatePov calls from synthetic nadir-looking cameras placed above the
+// look-at area the camera actually sees — one at the screen centre, one near the horizon.
+// Both synthetics share the same altitude as the real camera → same level → no tile eviction.
+// After both, the real camera is restored so _isInView reverts to the actual frustum.
+//
+// Works for any sphere: pass sphereCenter=(0,0,0) for Earth, moonMesh.position for Moon.
+function applyHorizonTilePovs(
+  engine: { updatePov: (cam: THREE.Camera) => void },
+  camera: THREE.PerspectiveCamera,
+  sphereCenter: THREE.Vector3,
+  sphereRadius: number,
+): void {
+  const lookDir = new THREE.Vector3();
+  camera.getWorldDirection(lookDir);
+  const originLocal = camera.position.clone().sub(sphereCenter);
+  const camAlt = camera.position.distanceTo(sphereCenter) - sphereRadius;
+
+  const fovHalf = (camera.fov * Math.PI) / 360;
+  const right = new THREE.Vector3().crossVectors(lookDir, camera.up).normalize();
+
+  const buildSynth = (dir: THREE.Vector3): THREE.PerspectiveCamera | null => {
+    const hit = raySphereIntersect(originLocal, dir, sphereRadius);
+    if (!hit) return null;
+    const hitWorld = hit.clone().add(sphereCenter);
+    const normal = hit.clone().normalize();
+    const synth = camera.clone();
+    synth.position.copy(hitWorld).addScaledVector(normal, camAlt);
+    synth.lookAt(sphereCenter);
+    // Widen FOV so the frustum accepts tiles across the library's full octree/bbox search
+    // radius. At close altitude the real FOV accepts only ~2° of arc around the nadir;
+    // 150° accepts tiles up to ~65° from nadir, matching the octree search radius.
+    synth.fov = 150;
+    synth.updateProjectionMatrix();
+    synth.updateMatrixWorld(true);
+    return synth;
+  };
+
+  // Near-ground ray: covers the lower screen portion (tiles closer to directly below camera).
+  const nearDir = lookDir.clone().applyAxisAngle(right, -fovHalf * 0.7);
+  const synthNear = buildSynth(nearDir);
+  if (synthNear) engine.updatePov(synthNear);
+
+  const synthCenter = buildSynth(lookDir);
+  if (synthCenter) engine.updatePov(synthCenter);
+
+  // Horizon ray: covers the far zone (tiles toward the visible horizon).
+  const horizonDir = lookDir.clone().applyAxisAngle(right, fovHalf * 0.8);
+  const synthHorizon = buildSynth(horizonDir);
+  if (synthHorizon) engine.updatePov(synthHorizon);
+
+  engine.updatePov(camera);
+}
+
 /**
  * Derives camera world position from target-primary state.
  *
@@ -566,6 +621,18 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       // When in moon view + close mode: drive camera from moon-local close state.
       if (inMoonViewRef.current && moonCloseState.current && globeEl.current) {
         try {
+          if (moonCloseDragVelocityRef.current) {
+            const dt = 1 / 60;
+            moonCloseState.current.targetLat += moonCloseDragVelocityRef.current.dlat * dt;
+            moonCloseState.current.targetLng += moonCloseDragVelocityRef.current.dlng * dt;
+            moonCloseState.current.targetLat = Math.max(-85, Math.min(85, moonCloseState.current.targetLat));
+            const decay = Math.exp(-2.5 * dt);
+            moonCloseDragVelocityRef.current.dlat *= decay;
+            moonCloseDragVelocityRef.current.dlng *= decay;
+            if (Math.abs(moonCloseDragVelocityRef.current.dlat) + Math.abs(moonCloseDragVelocityRef.current.dlng) < 0.001) {
+              moonCloseDragVelocityRef.current = null;
+            }
+          }
           const cam = globeEl.current.camera() as THREE.Camera;
           applyMoonCameraState(cam, moonCloseState.current, moonMesh, MOON_RADIUS_SCENE);
           renderScene();
@@ -586,6 +653,23 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
             moonVelocityRef.current.dPhi *= decay;
             if (Math.abs(moonVelocityRef.current.dTheta) + Math.abs(moonVelocityRef.current.dPhi) < 0.001) {
               moonVelocityRef.current = null;
+            }
+          }
+
+          if (moonZoomVelocityRef.current !== 0) {
+            const newDist = Math.max(
+              MOON_RADIUS_SCENE * MOON_MIN_DISTANCE_RATIO,
+              Math.min(MOON_RADIUS_SCENE * MOON_MAX_DISTANCE_RATIO,
+                moonOrbitState.current.distance * Math.exp(moonZoomVelocityRef.current))
+            );
+            const newAlt = newDist / MOON_RADIUS_SCENE - 1;
+            if (prefer3DRef.current && newAlt < MOON_TILT_THRESHOLD_ENTER) {
+              moonZoomVelocityRef.current = 0;
+              enterMoonCloseMode(newAlt);
+            } else {
+              moonOrbitState.current.distance = newDist;
+              moonZoomVelocityRef.current *= 0.75; // exponential decay, ~0.5s to drain
+              if (Math.abs(moonZoomVelocityRef.current) < 1e-5) moonZoomVelocityRef.current = 0;
             }
           }
 
@@ -628,52 +712,32 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       if (dayTileEngineRef.current && (inCloseModeRef.current || cameraActuallyMoved)) {
         dayTileEngineRef.current.updatePov(camera);
 
-        // In close mode the camera is pitched forward, so the nadir (directly below the camera)
-        // exits the camera frustum. The library's octree pre-selection is centred on the camera's
-        // 3D position (above the nadir), so every candidate tile fails the subsequent frustum test
-        // and _fetchNeededTiles produces zero results — nothing at the current resolution loads.
-        // Fix: issue a second updatePov from a synthetic nadir-looking camera placed above the
-        // look-at point (where the real camera's center ray hits the surface). The octree then
-        // searches the area the camera actually sees. We restore the real camera afterward so
-        // _isInView reverts to the real frustum for the actual tile-load decision.
-        // Both cameras are at the same altitude → same cameraDistToSurface → same level; the
-        // level setter is a no-op, so no tiles are evicted between the two calls.
         if (inCloseModeRef.current) {
-          const lookDir = new THREE.Vector3();
-          camera.getWorldDirection(lookDir);
-          const hit = raySphereIntersect(camera.position, lookDir, EARTH_R);
-          if (hit) {
-            const surfaceNormal = hit.clone().normalize();
-            const camAlt = camera.position.length() - EARTH_R;
-            const synthCam = (camera as THREE.PerspectiveCamera).clone();
-            synthCam.position.copy(hit).addScaledVector(surfaceNormal, camAlt);
-            synthCam.lookAt(new THREE.Vector3(0, 0, 0));
-            synthCam.updateMatrixWorld(true);
-            dayTileEngineRef.current.updatePov(synthCam);
-            dayTileEngineRef.current.updatePov(camera);
-          }
+          applyHorizonTilePovs(dayTileEngineRef.current, camera as THREE.PerspectiveCamera,
+            new THREE.Vector3(), EARTH_R);
         }
       }
-      if (cameraActuallyMoved) {
+      if (inCloseModeRef.current || cameraActuallyMoved) {
         nightEngine.updatePov(camera);
         if (inCloseModeRef.current) {
-          const lookDir = new THREE.Vector3();
-          camera.getWorldDirection(lookDir);
-          const hit = raySphereIntersect(camera.position, lookDir, EARTH_R);
-          if (hit) {
-            const surfaceNormal = hit.clone().normalize();
-            const camAlt = camera.position.length() - EARTH_R;
-            const synthCam = (camera as THREE.PerspectiveCamera).clone();
-            synthCam.position.copy(hit).addScaledVector(surfaceNormal, camAlt);
-            synthCam.lookAt(new THREE.Vector3(0, 0, 0));
-            synthCam.updateMatrixWorld(true);
-            nightEngine.updatePov(synthCam);
-            nightEngine.updatePov(camera);
-          }
+          applyHorizonTilePovs(nightEngine, camera as THREE.PerspectiveCamera,
+            new THREE.Vector3(), EARTH_R);
         }
         if (moonMeshRef.current) {
-          moonMeshRef.current.colorEngine.updatePov(camera);
-          moonMeshRef.current.reliefEngine.updatePov(camera);
+          const inMoonClose = inMoonViewRef.current && moonCloseState.current !== null;
+          if (inMoonClose || cameraActuallyMoved) {
+            const moonCenter = moonMeshRef.current.position.clone();
+            moonMeshRef.current.colorEngine.updatePov(camera);
+            if (inMoonClose) {
+              applyHorizonTilePovs(moonMeshRef.current.colorEngine,
+                camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
+            }
+            moonMeshRef.current.reliefEngine.updatePov(camera);
+            if (inMoonClose) {
+              applyHorizonTilePovs(moonMeshRef.current.reliefEngine,
+                camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
+            }
+          }
         }
       }
 
@@ -1268,6 +1332,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       enterCloseMode(controls);
     }
 
+    console.log(`[flyTo] target=${flyTo.lat.toFixed(3)},${flyTo.lng.toFixed(3)} inCloseMode=${inCloseModeRef.current} closeModeState=${closeModeState.current ? `lat=${closeModeState.current.targetLat.toFixed(3)},lng=${closeModeState.current.targetLng.toFixed(3)}` : 'null'} pov=${JSON.stringify(globeEl.current.pointOfView())}`);
+
     if (closeModeState.current) {
       // ── Close-mode path: animate closeModeState directly ──────────────────
       const startLat = closeModeState.current.targetLat;
@@ -1286,7 +1352,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       let canceled = false;
 
       const animate = (ts: number) => {
-        if (canceled || !closeModeState.current) return;
+        if (canceled) { console.log('[flyTo] animate: canceled'); return; }
+        if (!closeModeState.current) { console.log('[flyTo] animate: closeModeState null'); return; }
         startTime ??= ts;
         const t = Math.min((ts - startTime) / duration, 1);
         const p = easeInOutCubicShifted(t, 0);
@@ -1299,6 +1366,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         if (t < 1) {
           raf = requestAnimationFrame(animate);
         } else {
+          console.log(`[flyTo] complete: targetLat=${closeModeState.current.targetLat.toFixed(3)} targetLng=${closeModeState.current.targetLng.toFixed(3)}`);
           flyToActiveRef.current = false;
         }
       };
@@ -1501,6 +1569,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   }
   const moonOrbitState = useRef<MoonOrbitState | null>(null);
   const moonVelocityRef = useRef<{ dTheta: number; dPhi: number } | null>(null);
+  const moonCloseDragVelocityRef = useRef<{ dlat: number; dlng: number } | null>(null);
+  const moonZoomVelocityRef = useRef<number>(0); // log-scale zoom rate per frame, decays each tick
   const moonCloseState = useRef<MoonCloseState | null>(null);
 
   function pauseLibrary(controls: any) {
@@ -1585,6 +1655,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     };
     moonOrbitState.current = null;
     moonVelocityRef.current = null;
+    moonCloseDragVelocityRef.current = null;
+    moonZoomVelocityRef.current = 0;
   }
 
   // Transition: close → orbit. Reproject the current camera world position
@@ -1603,16 +1675,21 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     moonOrbitState.current = { theta, phi, distance };
     moonCloseState.current = null;
+    moonCloseDragVelocityRef.current = null;
+    moonZoomVelocityRef.current = 0;
   }
 
   // Moon mouse/touch handlers — dispatch by which mode is active. Both modes
   // share the same listener attachment (registered once on entering moon view).
   const onMoonMouseDown = (e: MouseEvent) => {
     if (moonCloseState.current) {
-      // Close-mode pan: drag in screen space → lat/lng on the moon surface.
-      // Mirrors earth onCloseMouseDown.
+      moonCloseDragVelocityRef.current = null;
       let lastX = e.clientX;
       let lastY = e.clientY;
+      let lastMoveTime = performance.now();
+      let smoothDlat = 0;
+      let smoothDlng = 0;
+
       const onCloseMove = (me: MouseEvent) => {
         if (!moonCloseState.current || !globeEl.current) return;
         const dx = me.clientX - lastX;
@@ -1637,8 +1714,18 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         moonCloseState.current.targetLat += dlat;
         moonCloseState.current.targetLng += dlng;
         moonCloseState.current.targetLat = Math.max(-85, Math.min(85, moonCloseState.current.targetLat));
+
+        const now = performance.now();
+        const dt = (now - lastMoveTime) / 1000;
+        if (dt > 0 && dt < 0.1) {
+          const alpha = 0.3;
+          smoothDlat = smoothDlat * (1 - alpha) + (dlat / dt) * alpha;
+          smoothDlng = smoothDlng * (1 - alpha) + (dlng / dt) * alpha;
+        }
+        lastMoveTime = now;
       };
       const onCloseUp = () => {
+        moonCloseDragVelocityRef.current = { dlat: smoothDlat, dlng: smoothDlng };
         window.removeEventListener('mousemove', onCloseMove);
         window.removeEventListener('mouseup', onCloseUp);
       };
@@ -1689,8 +1776,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   const onMoonWheel = (e: WheelEvent) => {
     e.preventDefault();
 
-    // Close-mode zoom: shrink/grow altitude; transition back to orbit if we
-    // cross the EXIT threshold.
     if (moonCloseState.current) {
       const factor = Math.pow(0.999, -e.deltaY);
       const newAlt = Math.max(MOON_MIN_ALTITUDE, moonCloseState.current.altitude * factor);
@@ -1704,17 +1789,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     }
 
     if (!moonOrbitState.current) return;
-    const factor = Math.pow(1.001, e.deltaY);
-    const newDist = Math.max(
-      MOON_RADIUS_SCENE * MOON_MIN_DISTANCE_RATIO,
-      Math.min(MOON_RADIUS_SCENE * MOON_MAX_DISTANCE_RATIO, moonOrbitState.current.distance * factor)
-    );
-    const newAltitude = newDist / MOON_RADIUS_SCENE - 1;
-    if (prefer3DRef.current && newAltitude < MOON_TILT_THRESHOLD_ENTER) {
-      enterMoonCloseMode(newAltitude);
-      return;
-    }
-    moonOrbitState.current.distance = newDist;
+    // Accumulate into a decaying zoom velocity so scroll has smooth inertia.
+    // Math.pow(1.001, deltaY) = exp(deltaY * ~0.001); dividing by 4 keeps the
+    // total integrated zoom equivalent when the 0.75 decay series sums to 4.
+    moonZoomVelocityRef.current += e.deltaY * 0.00025;
   };
 
   const moonTouchRef = useRef<{ x: number; y: number; dist: number | null } | null>(null);

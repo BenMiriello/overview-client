@@ -47,6 +47,8 @@ export const cloudFragmentShader = /* glsl */ `
   uniform float uDetailFade;
   uniform float uDensityGamma;
   uniform float uNightAmbient;
+  uniform sampler2D uLayerTex;
+  uniform float uLayerChannel;
 
   varying vec2 vUv;
   varying vec3 vWorldPos;
@@ -89,8 +91,16 @@ export const cloudFragmentShader = /* glsl */ `
     return vec2(dE / (cosLat * 6.2831853), -dN / 3.1415927);
   }
 
+  float getLayerMask(vec2 uv) {
+    vec4 lc = texture2D(uLayerTex, uv);
+    if (uLayerChannel < 0.5) return lc.r;
+    if (uLayerChannel < 1.5) return lc.g;
+    return lc.b;
+  }
+
   float sampleDensity(vec2 uv) {
     float base = texture2D(uMap, uv).a;
+    base *= getLayerMask(uv);
     float ds = uDetailStrength * uDetailFade;
     float detail = fbm(uv * uDetailFreq + vec2(uTime * 0.0008, 0.0));
     return base * mix(1.0 - ds, 1.0 + ds, detail);
