@@ -16,9 +16,60 @@ export class CloudLayer extends BaseLayer<void> {
   private cloudMesh: THREE.Mesh | null = null;
   private occluderMesh: THREE.Mesh | null = null;
   private lastCloudAlt = -1;
+  private refreshTimer: number | null = null;
+  private currentTextureUrl: string | null = null;
 
   constructor() {
     super();
+  }
+
+  /**
+   * Loads a texture from a URL chain, falling back if any link fails.
+   * Returns the loaded texture and the URL that succeeded.
+   */
+  private loadTextureWithFallback(urls: string[]): Promise<{ texture: THREE.Texture; url: string }> {
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin('anonymous');
+    return new Promise((resolve, reject) => {
+      const tryNext = (i: number) => {
+        if (i >= urls.length) { reject(new Error('All cloud texture URLs failed')); return; }
+        loader.load(
+          urls[i],
+          tex => resolve({ texture: tex, url: urls[i] }),
+          undefined,
+          () => { console.warn(`CloudLayer: failed to load ${urls[i]}, trying next`); tryNext(i + 1); },
+        );
+      };
+      tryNext(0);
+    });
+  }
+
+  private buildUrlChain(): string[] {
+    const useLive = getConfig<boolean>('layers.clouds.useLiveTexture') ?? true;
+    const liveUrl = getConfig<string>('layers.clouds.liveTextureEndpoint') || '';
+    const fallback = getConfig<string>('layers.clouds.fallbackImagePath') || '/clouds-fallback.png';
+    const chain: string[] = [];
+    if (useLive && liveUrl) {
+      chain.push(`${liveUrl}?t=${Date.now()}`);
+      chain.push(`${liveUrl}?previous=1&t=${Date.now()}`);
+    }
+    chain.push(fallback);
+    return chain;
+  }
+
+  private async refreshTexture(): Promise<void> {
+    if (!this.cloudMesh) return;
+    try {
+      const { texture, url } = await this.loadTextureWithFallback(this.buildUrlChain());
+      const mat = this.cloudMesh.material as THREE.MeshPhongMaterial;
+      const old = mat.map;
+      mat.map = texture;
+      mat.needsUpdate = true;
+      if (old) old.dispose();
+      this.currentTextureUrl = url;
+    } catch (err) {
+      console.error('CloudLayer: texture refresh failed:', err);
+    }
   }
 
   initialize(globeEl: any): void {
@@ -30,9 +81,14 @@ export class CloudLayer extends BaseLayer<void> {
     }
 
     try {
-      // Create cloud material using the provided texture
+      // Cloud material; map is set asynchronously by refreshTexture() with the
+      // live mirror → previous → bundled-fallback chain. Start with a transparent
+      // 1x1 placeholder so the mesh exists immediately and never flashes the
+      // legacy unrealistic clouds.png.
+      const placeholder = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
+      placeholder.needsUpdate = true;
       const material = new THREE.MeshPhongMaterial({
-        map: new THREE.TextureLoader().load(getConfig<string>('layers.clouds.imagePath') || '/clouds.png'),
+        map: placeholder,
         transparent: true,
         opacity: getConfig<number>('layers.clouds.opacity') || 0.6,
         depthWrite: false, // Don't write to depth buffer to allow objects behind to render
@@ -62,6 +118,10 @@ export class CloudLayer extends BaseLayer<void> {
 
       this.scene.add(this.cloudMesh);
       this.scene.add(this.occluderMesh);
+
+      this.refreshTexture();
+      const intervalMs = getConfig<number>('layers.clouds.refreshIntervalMs') || 30 * 60 * 1000;
+      this.refreshTimer = window.setInterval(() => this.refreshTexture(), intervalMs);
     } catch (err) {
       console.error('CloudLayer: Error during initialization:', err);
     }
@@ -112,10 +172,20 @@ export class CloudLayer extends BaseLayer<void> {
   }
 
   clear(): void {
+    if (this.refreshTimer !== null) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
     if (this.cloudMesh && this.scene) {
       this.scene.remove(this.cloudMesh);
       if (this.cloudMesh.geometry) this.cloudMesh.geometry.dispose();
-      if (this.cloudMesh.material instanceof THREE.Material) this.cloudMesh.material.dispose();
+      const mat = this.cloudMesh.material;
+      if (mat instanceof THREE.MeshPhongMaterial) {
+        if (mat.map) mat.map.dispose();
+        mat.dispose();
+      } else if (mat instanceof THREE.Material) {
+        mat.dispose();
+      }
       this.cloudMesh = null;
     }
     if (this.occluderMesh && this.scene) {
