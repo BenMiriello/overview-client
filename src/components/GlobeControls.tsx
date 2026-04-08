@@ -85,12 +85,12 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         <RotateCcw size={16} />
       </CtrlBtn>
       <CtrlBtn
-        className={`globe-ctrl-btn ${viewTarget === 'moon' ? 'active' : ''}`}
+        className="globe-ctrl-btn active"
         onClick={onToggleViewTarget}
-        ariaLabel={viewTarget === 'moon' ? 'View Earth' : 'View Moon'}
+        ariaLabel={viewTarget === 'moon' ? 'Switch to Earth view' : 'Switch to Moon view'}
         tooltip={viewTarget === 'moon' ? 'Switch to Earth view' : 'Switch to Moon view'}
       >
-        {viewTarget === 'earth' ?
+        {viewTarget === 'moon' ?
           <Moon size={16} />
         : <Earth size={16} />
         }

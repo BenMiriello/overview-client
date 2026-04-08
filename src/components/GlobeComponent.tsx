@@ -15,6 +15,11 @@ const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
 const MIN_ALTITUDE         = 0.001;
 
+// Moon close mode mirrors earth's close-mode thresholds in moon-radius units.
+const MOON_TILT_THRESHOLD_ENTER = 1.0;
+const MOON_TILT_THRESHOLD_EXIT  = 1.15;
+const MOON_MIN_ALTITUDE         = 0.001;
+
 
 const PITCH_NEAR_THRESHOLD = 0;
 const PITCH_MAX_ZOOM       = Math.PI / 3; // 60° from vertical = 30° elevation at max zoom
@@ -63,6 +68,16 @@ interface CloseModeState {
   altitude: number;
   heading: number;  // radians clockwise from north
   pitch: number;    // radians from vertical: 0=nadir, PI/2=horizon
+}
+
+// Moon close mode state. Lat/lng are in the moon-LOCAL frame (the moon mesh
+// rotates over time; lat/lng remain a constant point on the moon's surface).
+interface MoonCloseState {
+  targetLat: number;
+  targetLng: number;
+  altitude: number;  // in moon-radius units
+  heading: number;
+  pitch: number;
 }
 
 function latLngToCartesian(lat: number, lng: number, radius: number): THREE.Vector3 {
@@ -173,6 +188,94 @@ function applyCameraState(
   const upDir = northAtT.clone().applyQuaternion(headingQuat);
 
   camera.up.copy(upDir);
+  camera.lookAt(T_world);
+}
+
+// Moon-local lat/lng → cartesian. Matches SlippyMapGlobe's polar2Cartesian
+// convention so coords align with the moon's tile UVs (lng=0,lat=0 → +Z).
+function moonPolar2Cartesian(lat: number, lng: number, r: number): THREE.Vector3 {
+  const phi = ((90 - lat) * Math.PI) / 180;
+  const theta = ((90 - lng) * Math.PI) / 180;
+  return new THREE.Vector3(
+    r * Math.sin(phi) * Math.cos(theta),
+    r * Math.cos(phi),
+    r * Math.sin(phi) * Math.sin(theta),
+  );
+}
+
+function moonCartesian2Polar(v: THREE.Vector3): { lat: number; lng: number } {
+  const r = v.length();
+  if (r < 1e-9) return { lat: 0, lng: 0 };
+  const phi = Math.acos(Math.max(-1, Math.min(1, v.y / r)));
+  const lat = 90 - (phi * 180) / Math.PI;
+  const theta = Math.atan2(v.z, v.x);
+  let lng = 90 - (theta * 180) / Math.PI;
+  lng = ((lng + 540) % 360) - 180;
+  return { lat, lng };
+}
+
+/**
+ * Sets the camera position/orientation from a moon-local target. The math
+ * mirrors `applyCameraState` but operates in the moon's local frame, then
+ * transforms to world coords via the moon mesh's current world matrix
+ * (the moon both moves and rotates over time, so this must run every frame).
+ */
+function applyMoonCameraState(
+  camera: THREE.Camera,
+  state: MoonCloseState,
+  moonMesh: THREE.Object3D,
+  moonR: number,
+): void {
+  const T_local = moonPolar2Cartesian(state.targetLat, state.targetLng, moonR);
+  const T_unit = T_local.clone().normalize();
+
+  const r = moonR * (1 + state.altitude * Math.cos(state.pitch));
+
+  let camPos_local: THREE.Vector3;
+  if (state.pitch < 0.001) {
+    camPos_local = T_unit.clone().multiplyScalar(r);
+  } else {
+    const sinAngleT = Math.min(1, (r * Math.sin(state.pitch)) / moonR);
+    const angleO = Math.asin(sinAngleT) - state.pitch;
+
+    if (angleO < 0.001) {
+      camPos_local = T_unit.clone().multiplyScalar(r);
+    } else {
+      const localY = new THREE.Vector3(0, 1, 0);
+      let eastAtT = new THREE.Vector3().crossVectors(localY, T_unit);
+      if (eastAtT.lengthSq() < 1e-6) eastAtT.set(1, 0, 0);
+      eastAtT.normalize();
+      const northAtT = new THREE.Vector3().crossVectors(T_unit, eastAtT).normalize();
+
+      const headingQuat = new THREE.Quaternion().setFromAxisAngle(T_unit, -state.heading);
+      const lookNorth = northAtT.clone().applyQuaternion(headingQuat);
+      const tangent = lookNorth.clone().negate();
+
+      camPos_local = T_unit.clone()
+        .multiplyScalar(Math.cos(angleO))
+        .addScaledVector(tangent, Math.sin(angleO))
+        .normalize()
+        .multiplyScalar(r);
+    }
+  }
+
+  // Up vector in moon-local frame: local-north rotated by heading.
+  const localY = new THREE.Vector3(0, 1, 0);
+  let eastAtT = new THREE.Vector3().crossVectors(localY, T_unit);
+  if (eastAtT.lengthSq() < 1e-6) eastAtT.set(1, 0, 0);
+  eastAtT.normalize();
+  const northAtT = new THREE.Vector3().crossVectors(T_unit, eastAtT).normalize();
+  const headingQuat = new THREE.Quaternion().setFromAxisAngle(T_unit, -state.heading);
+  const upDir_local = northAtT.clone().applyQuaternion(headingQuat);
+
+  // Transform local positions/directions to world via moon's current transform.
+  moonMesh.updateMatrixWorld();
+  const T_world = T_local.clone().applyMatrix4(moonMesh.matrixWorld);
+  const camPos_world = camPos_local.clone().applyMatrix4(moonMesh.matrixWorld);
+  const upDir_world = upDir_local.clone().applyQuaternion(moonMesh.quaternion);
+
+  camera.position.copy(camPos_world);
+  camera.up.copy(upDir_world);
   camera.lookAt(T_world);
 }
 
@@ -459,6 +562,15 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       updateMoonPosition(moonMesh, now);
       updateMoonOrientation(moonMesh, now);
       updateSunPosition(sunGroup, now);
+
+      // When in moon view + close mode: drive camera from moon-local close state.
+      if (inMoonViewRef.current && moonCloseState.current && globeEl.current) {
+        try {
+          const cam = globeEl.current.camera() as THREE.Camera;
+          applyMoonCameraState(cam, moonCloseState.current, moonMesh, MOON_RADIUS_SCENE);
+          renderScene();
+        } catch { /* ignore */ }
+      }
 
       // When in moon view: apply drag inertia, compute camera from orbit state, render
       if (inMoonViewRef.current && moonOrbitState.current && globeEl.current) {
@@ -1218,6 +1330,21 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (!isGlobeReady || !globeEl.current) return;
     prefer3DRef.current = is3D;
 
+    // Moon path: same semantics as earth, but using moonCloseState/moonOrbitState.
+    if (inMoonViewRef.current) {
+      if (!is3D && moonCloseState.current) {
+        exitMoonCloseMode();
+      }
+      if (is3D && !moonCloseState.current && moonOrbitState.current) {
+        const altitude = moonOrbitState.current.distance / MOON_RADIUS_SCENE - 1;
+        if (altitude < MOON_TILT_THRESHOLD_ENTER) {
+          enterMoonCloseMode(altitude);
+        }
+      }
+      return;
+    }
+
+    // Earth path
     if (!is3D && inCloseModeRef.current) {
       try {
         animateExitCloseMode(globeEl.current.controls());
@@ -1333,6 +1460,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   }
   const moonOrbitState = useRef<MoonOrbitState | null>(null);
   const moonVelocityRef = useRef<{ dTheta: number; dPhi: number } | null>(null);
+  const moonCloseState = useRef<MoonCloseState | null>(null);
 
   function pauseLibrary(controls: any) {
     if (!savedControlsUpdateRef.current) {
@@ -1376,8 +1504,108 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     } catch { /* ignore */ }
   }
 
-  // Moon orbit mouse/touch handlers (modeled after close-mode handlers)
+  /**
+   * Radians of orbit-angle change per pixel of drag, scaled so the moon's
+   * surface tracks the cursor 1:1 in screen space at any zoom level.
+   *
+   * Same shape as Earth close-mode's `degPerPx = 2 * alt * tan(fov/2) / viewH`,
+   * adapted to moon orbit: `alt` becomes the camera altitude above the moon
+   * surface in moon-radii units, and the result is in radians instead of
+   * degrees (matching the units of moonOrbitState.theta/phi).
+   */
+  function moonDragRadPerPx(): number {
+    if (!globeEl.current || !moonOrbitState.current) return 0;
+    const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+    const viewH = globeEl.current.renderer().domElement.clientHeight;
+    const fovRad = (camera.fov * Math.PI) / 180;
+    const altInRadii = (moonOrbitState.current.distance - MOON_RADIUS_SCENE) / MOON_RADIUS_SCENE;
+    return (2 * altInRadii * Math.tan(fovRad / 2)) / viewH;
+  }
+
+  // Transition: orbit → close. Pick the surface point currently under the
+  // camera (in moon-local frame) and seed the close-mode state from it.
+  function enterMoonCloseMode(altitude: number) {
+    if (!moonMeshRef.current || !globeEl.current) return;
+    const moonMesh = moonMeshRef.current;
+    moonMesh.updateMatrixWorld();
+
+    const cam = globeEl.current.camera() as THREE.Camera;
+    const camLocal = moonMesh.worldToLocal(cam.position.clone());
+    if (camLocal.lengthSq() < 1e-9) return;
+    const T_local = camLocal.clone().normalize().multiplyScalar(MOON_RADIUS_SCENE);
+    const { lat, lng } = moonCartesian2Polar(T_local);
+
+    moonCloseState.current = {
+      targetLat: lat,
+      targetLng: lng,
+      altitude,
+      heading: 0,
+      pitch: pitchFromAltitude(altitude),
+    };
+    moonOrbitState.current = null;
+    moonVelocityRef.current = null;
+  }
+
+  // Transition: close → orbit. Reproject the current camera world position
+  // into spherical coords around the moon's current world position so the
+  // camera does not jump.
+  function exitMoonCloseMode() {
+    if (!moonCloseState.current || !moonMeshRef.current || !globeEl.current) return;
+    const moonMesh = moonMeshRef.current;
+    moonMesh.updateMatrixWorld();
+
+    const cam = globeEl.current.camera() as THREE.Camera;
+    const offset = cam.position.clone().sub(moonMesh.position);
+    const distance = Math.max(MOON_RADIUS_SCENE * MOON_MIN_DISTANCE_RATIO, offset.length());
+    const phi = Math.acos(Math.max(-1, Math.min(1, offset.y / distance)));
+    const theta = Math.atan2(offset.x, offset.z);
+
+    moonOrbitState.current = { theta, phi, distance };
+    moonCloseState.current = null;
+  }
+
+  // Moon mouse/touch handlers — dispatch by which mode is active. Both modes
+  // share the same listener attachment (registered once on entering moon view).
   const onMoonMouseDown = (e: MouseEvent) => {
+    if (moonCloseState.current) {
+      // Close-mode pan: drag in screen space → lat/lng on the moon surface.
+      // Mirrors earth onCloseMouseDown.
+      let lastX = e.clientX;
+      let lastY = e.clientY;
+      const onCloseMove = (me: MouseEvent) => {
+        if (!moonCloseState.current || !globeEl.current) return;
+        const dx = me.clientX - lastX;
+        const dy = me.clientY - lastY;
+        lastX = me.clientX;
+        lastY = me.clientY;
+        if (dx === 0 && dy === 0) return;
+
+        const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+        const viewH = globeEl.current.renderer().domElement.clientHeight;
+        const fovRad = (camera.fov * Math.PI) / 180;
+        const alt = moonCloseState.current.altitude;
+        const degPerPx = (2 * alt * Math.tan(fovRad / 2) * (180 / Math.PI)) / viewH;
+        const cosLat = Math.cos((moonCloseState.current.targetLat * Math.PI) / 180);
+
+        const h = moonCloseState.current.heading;
+        const cosH = Math.cos(h);
+        const sinH = Math.sin(h);
+        const dlat = degPerPx * (dy * cosH + dx * sinH);
+        const dlng = (degPerPx * (dy * sinH - dx * cosH)) / Math.max(cosLat, 0.1);
+
+        moonCloseState.current.targetLat += dlat;
+        moonCloseState.current.targetLng += dlng;
+        moonCloseState.current.targetLat = Math.max(-85, Math.min(85, moonCloseState.current.targetLat));
+      };
+      const onCloseUp = () => {
+        window.removeEventListener('mousemove', onCloseMove);
+        window.removeEventListener('mouseup', onCloseUp);
+      };
+      window.addEventListener('mousemove', onCloseMove);
+      window.addEventListener('mouseup', onCloseUp);
+      return;
+    }
+
     if (!moonOrbitState.current) return;
     moonVelocityRef.current = null;
     let lastX = e.clientX;
@@ -1392,8 +1620,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const dy = me.clientY - lastY;
       lastX = me.clientX;
       lastY = me.clientY;
-      const dTheta = -dx * 0.003;
-      const dPhi = -dy * 0.003;
+      const radPerPx = moonDragRadPerPx();
+      const dTheta = -dx * radPerPx;
+      const dPhi = -dy * radPerPx;
       moonOrbitState.current.theta += dTheta;
       moonOrbitState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1,
         moonOrbitState.current.phi + dPhi));
@@ -1418,19 +1647,40 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   const onMoonWheel = (e: WheelEvent) => {
     e.preventDefault();
+
+    // Close-mode zoom: shrink/grow altitude; transition back to orbit if we
+    // cross the EXIT threshold.
+    if (moonCloseState.current) {
+      const factor = Math.pow(0.999, -e.deltaY);
+      const newAlt = Math.max(MOON_MIN_ALTITUDE, moonCloseState.current.altitude * factor);
+      if (newAlt > MOON_TILT_THRESHOLD_EXIT) {
+        exitMoonCloseMode();
+        return;
+      }
+      moonCloseState.current.altitude = newAlt;
+      moonCloseState.current.pitch = pitchFromAltitude(newAlt);
+      return;
+    }
+
     if (!moonOrbitState.current) return;
     const factor = Math.pow(1.001, e.deltaY);
-    moonOrbitState.current.distance = Math.max(
+    const newDist = Math.max(
       MOON_RADIUS_SCENE * MOON_MIN_DISTANCE_RATIO,
       Math.min(MOON_RADIUS_SCENE * MOON_MAX_DISTANCE_RATIO, moonOrbitState.current.distance * factor)
     );
+    const newAltitude = newDist / MOON_RADIUS_SCENE - 1;
+    if (prefer3DRef.current && newAltitude < MOON_TILT_THRESHOLD_ENTER) {
+      enterMoonCloseMode(newAltitude);
+      return;
+    }
+    moonOrbitState.current.distance = newDist;
   };
 
   const moonTouchRef = useRef<{ x: number; y: number; dist: number | null } | null>(null);
 
   const onMoonTouchStart = (e: TouchEvent) => {
     e.preventDefault();
-    if (!moonOrbitState.current) return;
+    if (!moonOrbitState.current && !moonCloseState.current) return;
     const t0 = e.touches[0];
     const dist = e.touches.length === 2
       ? Math.hypot(e.touches[1].clientX - t0.clientX, e.touches[1].clientY - t0.clientY)
@@ -1438,24 +1688,71 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     moonTouchRef.current = { x: t0.clientX, y: t0.clientY, dist };
 
     const onTouchMove = (te: TouchEvent) => {
-      if (!moonOrbitState.current || !moonTouchRef.current) return;
+      if (!moonTouchRef.current) return;
       const t = te.touches[0];
+
+      if (moonCloseState.current) {
+        if (te.touches.length === 2 && moonTouchRef.current.dist !== null) {
+          const newDist = Math.hypot(te.touches[1].clientX - t.clientX, te.touches[1].clientY - t.clientY);
+          const scale = moonTouchRef.current.dist / newDist;
+          const newAlt = Math.max(MOON_MIN_ALTITUDE, moonCloseState.current.altitude * scale);
+          if (newAlt > MOON_TILT_THRESHOLD_EXIT) {
+            exitMoonCloseMode();
+            return;
+          }
+          moonCloseState.current.altitude = newAlt;
+          moonCloseState.current.pitch = pitchFromAltitude(newAlt);
+          moonTouchRef.current.dist = newDist;
+        } else if (te.touches.length === 1 && globeEl.current) {
+          const dx = t.clientX - moonTouchRef.current.x;
+          const dy = t.clientY - moonTouchRef.current.y;
+          moonTouchRef.current.x = t.clientX;
+          moonTouchRef.current.y = t.clientY;
+
+          const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+          const viewH = globeEl.current.renderer().domElement.clientHeight;
+          const fovRad = (camera.fov * Math.PI) / 180;
+          const alt = moonCloseState.current.altitude;
+          const degPerPx = (2 * alt * Math.tan(fovRad / 2) * (180 / Math.PI)) / viewH;
+          const cosLat = Math.cos((moonCloseState.current.targetLat * Math.PI) / 180);
+
+          const h = moonCloseState.current.heading;
+          const cosH = Math.cos(h);
+          const sinH = Math.sin(h);
+          const dlat = degPerPx * (dy * cosH + dx * sinH);
+          const dlng = (degPerPx * (dy * sinH - dx * cosH)) / Math.max(cosLat, 0.1);
+
+          moonCloseState.current.targetLat += dlat;
+          moonCloseState.current.targetLng += dlng;
+          moonCloseState.current.targetLat = Math.max(-85, Math.min(85, moonCloseState.current.targetLat));
+        }
+        return;
+      }
+
+      if (!moonOrbitState.current) return;
       if (te.touches.length === 2 && moonTouchRef.current.dist !== null) {
         const newDist = Math.hypot(te.touches[1].clientX - t.clientX, te.touches[1].clientY - t.clientY);
         const scale = moonTouchRef.current.dist / newDist;
-        moonOrbitState.current.distance = Math.max(
+        const newOrbitDist = Math.max(
           MOON_RADIUS_SCENE * MOON_MIN_DISTANCE_RATIO,
           Math.min(MOON_RADIUS_SCENE * MOON_MAX_DISTANCE_RATIO, moonOrbitState.current.distance * scale)
         );
+        const newAltitude = newOrbitDist / MOON_RADIUS_SCENE - 1;
+        if (prefer3DRef.current && newAltitude < MOON_TILT_THRESHOLD_ENTER) {
+          enterMoonCloseMode(newAltitude);
+          return;
+        }
+        moonOrbitState.current.distance = newOrbitDist;
         moonTouchRef.current.dist = newDist;
       } else if (te.touches.length === 1) {
         const dx = t.clientX - moonTouchRef.current.x;
         const dy = t.clientY - moonTouchRef.current.y;
         moonTouchRef.current.x = t.clientX;
         moonTouchRef.current.y = t.clientY;
-        moonOrbitState.current.theta -= dx * 0.003;
+        const radPerPx = moonDragRadPerPx();
+        moonOrbitState.current.theta -= dx * radPerPx;
         moonOrbitState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1,
-          moonOrbitState.current.phi - dy * 0.003));
+          moonOrbitState.current.phi - dy * radPerPx));
       }
     };
     const onTouchEnd = () => {
@@ -1491,6 +1788,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   function exitMoonView(controls: any) {
     moonOrbitState.current = null;
+    moonCloseState.current = null;
     const el = controls.domElement;
     el.removeEventListener('mousedown', onMoonMouseDown);
     el.removeEventListener('wheel', onMoonWheel);
@@ -1635,14 +1933,24 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       try { controls = globeEl.current.controls(); } catch { return; }
       if (!controls) return;
 
-      if (restoredView.viewTarget === 'moon' && restoredView.moon) {
+      if (restoredView.viewTarget === 'moon') {
         // viewTargetRef was already initialized to 'moon' from the prop, so the
         // earth/moon switching effect already returned early — just inline the
         // moon-view setup without the 3-second fly-in animation.
         viewTargetRef.current = 'moon';
         inMoonViewRef.current = true;
         pauseLibrary(controls);
-        moonOrbitState.current = { ...restoredView.moon };
+        if (restoredView.mode === 'moonClose' && restoredView.moonClose) {
+          moonCloseState.current = { ...restoredView.moonClose };
+          moonOrbitState.current = null;
+        } else if (restoredView.moon) {
+          moonOrbitState.current = { ...restoredView.moon };
+          moonCloseState.current = null;
+        } else {
+          // No usable moon data — fall back to a sensible default orbit so we
+          // don't end up in a no-state moon view.
+          moonOrbitState.current = { theta: 0, phi: Math.PI / 2, distance: MOON_RADIUS_SCENE * 4 };
+        }
         const el = controls.domElement;
         el.addEventListener('mousedown', onMoonMouseDown);
         el.addEventListener('wheel', onMoonWheel, { passive: false });
@@ -1713,8 +2021,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const snapshot = (): StoredView | null => {
       if (!globeEl.current) return null;
-      const mode: 'far' | 'close' | 'moon' = inMoonViewRef.current
-        ? 'moon'
+      const mode: StoredView['mode'] = inMoonViewRef.current
+        ? (moonCloseState.current ? 'moonClose' : 'moon')
         : inCloseModeRef.current
         ? 'close'
         : 'far';
@@ -1740,6 +2048,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       if (moonOrbitState.current) {
         view.moon = { ...moonOrbitState.current };
       }
+      if (moonCloseState.current) {
+        view.moonClose = { ...moonCloseState.current };
+      }
 
       return view;
     };
@@ -1753,6 +2064,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       if (view.mode === 'far' && !view.far) return;
       if (view.mode === 'close' && !view.close) return;
       if (view.mode === 'moon' && !view.moon) return;
+      if (view.mode === 'moonClose' && !view.moonClose) return;
       const serialized = JSON.stringify(view);
       if (serialized === lastSerialized) return;
       lastSerialized = serialized;

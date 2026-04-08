@@ -21,15 +21,24 @@ export interface MoonSnapshot {
   distance: number;
 }
 
+export interface MoonCloseSnapshot {
+  targetLat: number;
+  targetLng: number;
+  altitude: number;
+  heading: number;
+  pitch: number;
+}
+
 export interface StoredView {
   version: 1;
   viewTarget: 'earth' | 'moon';
   is3D: boolean;
   isOrbiting: boolean;
-  mode: 'far' | 'close' | 'moon';
+  mode: 'far' | 'close' | 'moon' | 'moonClose';
   far?: FarSnapshot;
   close?: CloseSnapshot;
   moon?: MoonSnapshot;
+  moonClose?: MoonCloseSnapshot;
 }
 
 export function loadView(): StoredView | null {
