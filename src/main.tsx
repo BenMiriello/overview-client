@@ -7,7 +7,29 @@ import './index.css'
 import App from './App.tsx'
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/tile-sw.js');
+  const activateWaiting = (sw: ServiceWorker) => sw.postMessage({ type: 'SKIP_WAITING' });
+
+  navigator.serviceWorker
+    .register('/tile-sw.js', { updateViaCache: 'none' })
+    .then(registration => {
+      registration.update();
+
+      if (registration.waiting) activateWaiting(registration.waiting);
+
+      registration.addEventListener('updatefound', () => {
+        const sw = registration.installing!;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && registration.waiting) activateWaiting(registration.waiting);
+        });
+      });
+    });
+
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloading) return;
+    reloading = true;
+    window.location.reload();
+  });
 }
 
 createRoot(document.getElementById('root')!).render(
