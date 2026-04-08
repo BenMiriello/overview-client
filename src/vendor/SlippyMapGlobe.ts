@@ -243,8 +243,7 @@ function defaultApplyTexture(material: Material, texture: Texture): void {
   mat.color = null;
   mat.needsUpdate = true;
 }
-const TILE_SEARCH_RADIUS_CAMERA_DISTANCE = 3;
-const TILE_SEARCH_RADIUS_SURFACE_DISTANCE = 90;
+// Search radii are computed geometrically in #fetchNeededTiles — no constant needed.
 
 export default class SlippyMapGlobe extends Group {
   // Public attributes (matching upstream API)
@@ -405,8 +404,26 @@ export default class SlippyMapGlobe extends Group {
       const pov = camera.position.clone();
       const distToGlobeCenter = pov.distanceTo(this.getWorldPosition(new Vector3()));
       const cameraDistance = (distToGlobeCenter - this.#radius) / this.#radius;
-      const idx = this.thresholds.findIndex((t) => t && t <= cameraDistance);
-      this.level = Math.min(this.maxLevel, Math.max(this.minLevel, idx < 0 ? this.thresholds.length : idx));
+      const rawIdx = this.thresholds.findIndex((t) => t && t <= cameraDistance);
+      const rawLevel = Math.min(this.maxLevel, Math.max(this.minLevel, rawIdx < 0 ? this.thresholds.length : rawIdx));
+
+      // Hysteresis: only switch levels when clearly past the threshold boundary.
+      // Prevents thrashing when the camera hovers near a transition point, which
+      // causes the level setter to evict and re-create tiles every frame.
+      const LEVEL_HYSTERESIS = 0.05;
+      const curLevel = this.#level ?? rawLevel;
+      let targetLevel = rawLevel;
+      if (rawLevel !== curLevel) {
+        const isZoomingIn = rawLevel > curLevel;
+        // The boundary lives at thresholds[curLevel] (zoom in) or thresholds[rawLevel] (zoom out).
+        const boundaryIdx = isZoomingIn ? curLevel : rawLevel;
+        const boundary = this.thresholds[boundaryIdx] ?? 0;
+        const shouldSwitch = isZoomingIn
+          ? cameraDistance < boundary * (1 - LEVEL_HYSTERESIS)
+          : cameraDistance > boundary * (1 + LEVEL_HYSTERESIS);
+        if (!shouldSwitch) targetLevel = curLevel;
+      }
+      this.level = targetLevel;
       this.#fetchNeededTiles();
     }
   }
@@ -451,7 +468,12 @@ export default class SlippyMapGlobe extends Group {
       const povPos = this.worldToLocal(this.#camera.position.clone());
       const fullLevel = this.#tilesMeta[this.#level];
       if (fullLevel.octree) {
-        const searchRadius = (povPos.length() - this.#radius) * TILE_SEARCH_RADIUS_CAMERA_DISTANCE;
+        // Correct search radius: the farthest visible surface point is at the geometric horizon,
+        // whose chord distance from the camera is sqrt(dist² - r²). The old formula D*3*r was
+        // geometrically incorrect — it underestimates by 28-50% at level 6 and 5× at level 7,
+        // causing entire sections of the visible hemisphere to be absent from the fetch queue.
+        const dist = povPos.length();
+        const searchRadius = Math.sqrt(dist * dist - this.#radius * this.#radius) * 1.1;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tiles = (fullLevel.octree as any).findAllWithinRadius(povPos.x, povPos.y, povPos.z, searchRadius);
 
@@ -466,8 +488,12 @@ export default class SlippyMapGlobe extends Group {
       } else {
         // Tiles populated dynamically (high-level path)
         const povCoords = cartesian2Polar(povPos);
-        const searchRadiusLat = (povCoords.r / this.#radius - 1) * TILE_SEARCH_RADIUS_SURFACE_DISTANCE;
-        const searchRadiusLng = searchRadiusLat / Math.cos(deg2Rad(povCoords.lat));
+        // Correct angular search radius: the visible horizon is at arccos(r/dist) degrees.
+        // The old formula D*90 is 5× too small at level 8 (D≈0.03), causing most visible tiles
+        // to be absent from the fetch queue at maximum zoom.
+        const horizonDeg = Math.acos(Math.min(1, this.#radius / povCoords.r)) * (180 / Math.PI);
+        const searchRadiusLat = horizonDeg * 1.1; // 10% past horizon
+        const searchRadiusLng = searchRadiusLat / Math.max(Math.cos(deg2Rad(povCoords.lat)), 0.01);
         const lngRange: [number, number] = [povCoords.lng - searchRadiusLng, povCoords.lng + searchRadiusLng];
         const latRange: [number, number] = [povCoords.lat + searchRadiusLat, povCoords.lat - searchRadiusLat];
         const [x0, y0] = findTileXY(this.#level, this.#isMercator, lngRange[0], latRange[0]);
@@ -479,6 +505,7 @@ export default class SlippyMapGlobe extends Group {
           tiles = genTilesCoords(this.#level, this.#isMercator, x0, y0, x1, y1).map((d) => {
             const k = `${d.x}_${d.y}`;
             if (Object.prototype.hasOwnProperty.call(r, k)) return r[k];
+            d.centroid = polar2Cartesian(d.lat, d.lng, this.#radius);
             r[k] = d;
             fullLevel.push(d);
             return d;
@@ -490,6 +517,7 @@ export default class SlippyMapGlobe extends Group {
               const k = `${x}_${y}`;
               if (!Object.prototype.hasOwnProperty.call(r, k)) {
                 r[k] = genTilesCoords(this.#level, this.#isMercator, x, y, x, y)[0];
+                r[k].centroid = polar2Cartesian(r[k].lat, r[k].lng, this.#radius);
                 fullLevel.push(r[k]);
               }
               selTiles.push(r[k]);
@@ -497,13 +525,25 @@ export default class SlippyMapGlobe extends Group {
           }
           tiles = selTiles;
         }
+
+        // Abort in-flight fetches for tiles that left the bbox — same as the octree path above.
+        const neededSetDyn = new Set(tiles.map((d: TileMeta) => `${d.x}_${d.y}`));
+        fullLevel.forEach((d: TileMeta) => {
+          if (d.loading && d.controller && !neededSetDyn.has(`${d.x}_${d.y}`)) {
+            d.controller.abort();
+          }
+        });
       }
     }
 
     // Cap concurrent in-flight fetches per engine. Prioritize tiles closest to screen
     // center so the most-visible tiles load first when multiple are queued.
-    const MAX_CONCURRENT = 6;
-    const inFlight = (this.#tilesMeta[this.#level] as TileMeta[]).filter((d) => d.loading).length;
+    // 16 concurrent: GIBS and Trek use HTTP/2 (multiplexed streams), not HTTP/1.1's 6-per-origin limit.
+    const MAX_CONCURRENT = 16;
+    // Exclude aborted tiles: signal.aborted is synchronous, but d.loading stays true until the
+    // async catch fires. Without this, freshly-aborted tiles block new fetches in the same frame.
+    const inFlight = (this.#tilesMeta[this.#level] as TileMeta[])
+      .filter((d) => d.loading && !d.controller?.signal.aborted).length;
     const slots = MAX_CONCURRENT - inFlight;
     if (slots <= 0) return;
 
@@ -585,12 +625,11 @@ export default class SlippyMapGlobe extends Group {
             d.loading = false;
             delete d.controller;
           })
-          .catch((err) => {
-            // AbortError: intentional cancel (camera moved or level changed) — no retry needed.
-            // Other errors: dispose geometry so the tile re-enters the candidate pool next frame.
-            if (err.name !== 'AbortError') {
-              if (d.obj) { deallocate(d.obj); delete d.obj; }
-            }
+          .catch(() => {
+            // Always clean up geometry — both on abort and on fetch errors.
+            // Keeping d.obj after abort would leave the tile in a permanent "has geometry
+            // but no texture, not in scene" state, making it invisible and unfetchable.
+            if (d.obj) { deallocate(d.obj); delete d.obj; }
             d.loading = false;
             delete d.controller;
           });
