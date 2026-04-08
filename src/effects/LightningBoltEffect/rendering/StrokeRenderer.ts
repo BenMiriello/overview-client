@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ReturnStrokeSegment } from '../physics';
+import { LAYERS } from '../../../services/renderLayers';
 
 export class StrokeRenderer {
   private group: THREE.Group;
@@ -33,11 +34,11 @@ export class StrokeRenderer {
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
 
     const glowLine = new THREE.Line(geometry.clone(), this.glowMaterial.clone());
-    glowLine.renderOrder = 1001;
+    glowLine.renderOrder = LAYERS.LIGHTNING_BASE + 1;
     this.group.add(glowLine);
 
     const mainLine = new THREE.Line(geometry, this.mainMaterial.clone());
-    mainLine.renderOrder = 1002;
+    mainLine.renderOrder = LAYERS.LIGHTNING_BASE + 2;
 
     if (flashIntensity > 0) {
       (mainLine.material as THREE.LineBasicMaterial).opacity = Math.min(1.0, 0.8 + flashIntensity * 0.2);

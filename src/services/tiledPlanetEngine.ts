@@ -13,7 +13,9 @@
 import * as THREE from 'three';
 import SlippyMapGlobe, { SlippyMapOptions, TileUrlFn } from '../vendor/SlippyMapGlobe';
 
-export type TilePatchFn = (material: THREE.MeshLambertMaterial) => void;
+export type LambertPatchFn = (material: THREE.MeshLambertMaterial) => void;
+export type MaterialFactory = () => THREE.Material;
+export type ApplyTextureFn = (material: THREE.Material, texture: THREE.Texture) => void;
 
 export interface TiledPlanetOptions {
   radius: number;
@@ -21,24 +23,48 @@ export interface TiledPlanetOptions {
   maxLevel: number;
   /** Default Web Mercator. Set to 'equirectangular' for NASA Trek-style tiles. */
   projection?: 'mercator' | 'equirectangular';
-  /** Called once per tile material as soon as it's constructed. */
-  patchMaterial?: TilePatchFn;
+  /**
+   * Provide either `patchMaterial` (shortcut — uses a MeshLambertMaterial and
+   * calls this function to patch it) OR `materialFactory` (full control over
+   * the material type). If both are provided `materialFactory` wins.
+   */
+  patchMaterial?: LambertPatchFn;
+  materialFactory?: MaterialFactory;
+  /**
+   * Custom texture binder. Required when using a `materialFactory` that
+   * doesn't expose a `.map` property (e.g. `THREE.ShaderMaterial`).
+   */
+  applyTexture?: ApplyTextureFn;
   /** Render order applied to each tile mesh — three.js does NOT inherit renderOrder from parent groups. */
   tileRenderOrder?: number;
 }
 
 export function createTiledPlanetEngine(opts: TiledPlanetOptions): SlippyMapGlobe {
-  const { radius, tileUrl, maxLevel, projection = 'mercator', patchMaterial, tileRenderOrder } = opts;
+  const {
+    radius,
+    tileUrl,
+    maxLevel,
+    projection = 'mercator',
+    patchMaterial,
+    materialFactory,
+    applyTexture,
+    tileRenderOrder,
+  } = opts;
+
+  const resolvedFactory: MaterialFactory =
+    materialFactory ??
+    (() => {
+      const mat = new THREE.MeshLambertMaterial();
+      if (patchMaterial) patchMaterial(mat);
+      return mat;
+    });
 
   const slippyOpts: SlippyMapOptions = {
     tileUrl,
     maxLevel,
     mercatorProjection: projection === 'mercator',
-    materialFactory: () => {
-      const mat = new THREE.MeshLambertMaterial();
-      if (patchMaterial) patchMaterial(mat);
-      return mat;
-    },
+    materialFactory: resolvedFactory,
+    applyTexture,
     tileRenderOrder,
   };
 

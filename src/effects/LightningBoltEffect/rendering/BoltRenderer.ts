@@ -5,6 +5,7 @@ import { BoltGeometry, Vec3 } from '../simulation';
 import { AnimationState, AnimationPhase } from '../animation';
 import { LightningMaterials } from './LightningMaterials';
 import { CoordinateTransform } from '../CoordinateTransform';
+import { LAYERS } from '../../../services/renderLayers';
 
 // Continuing current colors: transition from white -> orange -> red during decay
 const WHITE = new THREE.Color(1.0, 1.0, 1.0);
@@ -65,8 +66,8 @@ export class BoltRenderer {
       const depthGroup = this.createDepthGroup(segs, bucket);
       this.depthGroups.set(bucket, depthGroup);
       // Glow renders behind the core bolt
-      depthGroup.glowLine.renderOrder = 999 - Math.floor(bucket * 10);
-      depthGroup.line.renderOrder = 1000 - Math.floor(bucket * 10);
+      depthGroup.glowLine.renderOrder = LAYERS.LIGHTNING_BASE - 1 - Math.floor(bucket * 10);
+      depthGroup.line.renderOrder = LAYERS.LIGHTNING_BASE - Math.floor(bucket * 10);
       this.group.add(depthGroup.glowLine);
       this.group.add(depthGroup.line);
     }

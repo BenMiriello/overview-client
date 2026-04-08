@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BaseLayer } from './LayerInterface';
 import { getConfig, setConfig } from '../config';
+import { LAYERS } from '../services/renderLayers';
 
 /**
  * Creates a cloud layer around the globe
@@ -46,9 +47,7 @@ export class CloudLayer extends BaseLayer<void> {
       this.cloudMesh.scale.setScalar(1 + initialAlt);
       this.lastCloudAlt = initialAlt;
 
-      // Set rendering order (lower numbers render first)
-      // IMPORTANT: Make sure this is a value that renders after the globe but before lightning
-      this.cloudMesh.renderOrder = 1;
+      this.cloudMesh.renderOrder = LAYERS.CLOUDS;
 
       // Depth occluder: invisible BackSide sphere at globe radius.
       // The globe's FrontSide material only fills depth for its near hemisphere, leaving
@@ -59,7 +58,7 @@ export class CloudLayer extends BaseLayer<void> {
         new THREE.SphereGeometry(EARTH_RADIUS, 32, 32),
         new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.BackSide })
       );
-      this.occluderMesh.renderOrder = 0;
+      this.occluderMesh.renderOrder = LAYERS.CLOUD_OCCLUDER;
 
       this.scene.add(this.cloudMesh);
       this.scene.add(this.occluderMesh);

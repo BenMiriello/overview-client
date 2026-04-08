@@ -31,6 +31,7 @@ import {
   TextureLoader,
   SRGBColorSpace,
   Material,
+  Texture,
   BufferAttribute,
 } from 'three';
 import { octree } from 'd3-octree';
@@ -45,6 +46,13 @@ export interface SlippyMapOptions {
   mercatorProjection?: boolean;
   /** Optional factory called for every new tile to provide its material. Defaults to MeshLambertMaterial. */
   materialFactory?: () => Material;
+  /**
+   * Optional texture binder. Called after a tile texture loads, with the
+   * tile's material and the loaded texture. Defaults to assigning
+   * `material.map = texture` (correct for MeshLambertMaterial and similar).
+   * Custom materials (e.g. ShaderMaterial) should set their own uniform.
+   */
+  applyTexture?: (material: Material, texture: Texture) => void;
   /** Optional callback fired after a tile's texture loads and it joins the scene graph. */
   onTileLoaded?: (tile: Mesh) => void;
   /** Render order assigned to every tile mesh as it's created. Defaults to 0. */
@@ -219,6 +227,22 @@ const MAX_LEVEL_TO_RENDER_ALL_TILES_MERCATOR = 6; // 4096 tiles
 const MAX_LEVEL_TO_BUILD_LOOKUP_OCTREE_MERCATOR = 7; // 16384 tiles
 const MAX_LEVEL_TO_RENDER_ALL_TILES_EQUIRECT = 5; // 2048 tiles
 const MAX_LEVEL_TO_BUILD_LOOKUP_OCTREE_EQUIRECT = 6; // 8192 tiles
+
+/**
+ * Default texture binder — assigns `material.map = texture`. Correct for
+ * MeshLambertMaterial / MeshBasicMaterial / MeshStandardMaterial etc.
+ * Custom materials (like ShaderMaterial) should supply their own binder
+ * via the `applyTexture` option on the constructor.
+ */
+function defaultApplyTexture(material: Material, texture: Texture): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mat = material as any;
+  mat.map = texture;
+  // Upstream three-slippy-map-globe sets color to null to ensure the diffuse
+  // uniform doesn't tint. We replicate that here for behavioural parity.
+  mat.color = null;
+  mat.needsUpdate = true;
+}
 const TILE_SEARCH_RADIUS_CAMERA_DISTANCE = 3;
 const TILE_SEARCH_RADIUS_SURFACE_DISTANCE = 90;
 
@@ -236,6 +260,7 @@ export default class SlippyMapGlobe extends Group {
   #isMercator: boolean;
   #tileUrl?: TileUrlFn;
   #materialFactory: () => Material;
+  #applyTexture: (material: Material, texture: Texture) => void;
   #onTileLoaded?: (tile: Mesh) => void;
   #tileRenderOrder: number;
   #level?: number;
@@ -252,6 +277,7 @@ export default class SlippyMapGlobe extends Group {
       maxLevel = 17,
       mercatorProjection = true,
       materialFactory = () => new MeshLambertMaterial(),
+      applyTexture = defaultApplyTexture,
       onTileLoaded,
       tileRenderOrder = 0,
     } = opts;
@@ -259,6 +285,7 @@ export default class SlippyMapGlobe extends Group {
     this.#radius = radius;
     this.#isMercator = mercatorProjection;
     this.#materialFactory = materialFactory;
+    this.#applyTexture = applyTexture;
     this.#onTileLoaded = onTileLoaded;
     this.#tileRenderOrder = tileRenderOrder;
     this.minLevel = minLevel;
@@ -494,14 +521,7 @@ export default class SlippyMapGlobe extends Group {
             const tile = d.obj;
             if (tile) {
               texture.colorSpace = SRGBColorSpace;
-              const mat = tile.material as Material & {
-                map?: typeof texture;
-                color?: unknown;
-                needsUpdate: boolean;
-              };
-              mat.map = texture;
-              mat.color = null;
-              mat.needsUpdate = true;
+              this.#applyTexture(tile.material as Material, texture);
               this.add(tile);
               this.#onTileLoaded?.(tile);
             }

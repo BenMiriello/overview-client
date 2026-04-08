@@ -2,7 +2,11 @@ import * as THREE from 'three';
 import { MOON_RADIUS_SCENE, getMoonPosition, getMoonLibration, CELESTIAL_NORTH_SCENE } from './astronomy';
 import SlippyMapGlobe from '../vendor/SlippyMapGlobe';
 import { createTiledPlanetEngine } from './tiledPlanetEngine';
-import { patchMoonColorTileMaterial, patchMoonReliefTileMaterial } from './moonMaterial';
+import {
+  createMoonColorMaterial,
+  createMoonReliefMaterial,
+  applyMoonTileTexture,
+} from './moonMaterial';
 import { LAYERS } from './renderLayers';
 
 const RELIEF_OFFSET = 1.0008;
@@ -28,14 +32,16 @@ export interface MoonGroup extends THREE.Group {
 export function createMoonMesh(): MoonGroup {
   const group = new THREE.Group() as MoonGroup;
   group.name = 'moon';
-  group.renderOrder = 1;
+  group.renderOrder = LAYERS.MOON_SURFACE;
 
   const colorEngine = createTiledPlanetEngine({
     radius: MOON_RADIUS_SCENE,
     tileUrl: MOON_COLOR_URL,
     maxLevel: MOON_COLOR_MAX_LEVEL,
     projection: 'equirectangular',
-    patchMaterial: patchMoonColorTileMaterial,
+    materialFactory: createMoonColorMaterial,
+    applyTexture: applyMoonTileTexture,
+    tileRenderOrder: LAYERS.MOON_SURFACE,
   });
   group.add(colorEngine);
 
@@ -44,8 +50,12 @@ export function createMoonMesh(): MoonGroup {
     tileUrl: MOON_RELIEF_URL,
     maxLevel: MOON_RELIEF_MAX_LEVEL,
     projection: 'equirectangular',
-    patchMaterial: patchMoonReliefTileMaterial,
+    materialFactory: createMoonReliefMaterial,
+    applyTexture: applyMoonTileTexture,
+    tileRenderOrder: LAYERS.MOON_RELIEF,
   });
+  // Offset slightly outward to avoid z-fighting with the color sphere.
+  reliefEngine.scale.setScalar(RELIEF_OFFSET);
   group.add(reliefEngine);
 
   group.colorEngine = colorEngine;

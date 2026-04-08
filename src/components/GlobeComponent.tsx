@@ -627,9 +627,50 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       //   d.loading flag prevents redundant fetches.
       if (dayTileEngineRef.current && (inCloseModeRef.current || cameraActuallyMoved)) {
         dayTileEngineRef.current.updatePov(camera);
+
+        // In close mode the camera is pitched forward, so the nadir (directly below the camera)
+        // exits the camera frustum. The library's octree pre-selection is centred on the camera's
+        // 3D position (above the nadir), so every candidate tile fails the subsequent frustum test
+        // and _fetchNeededTiles produces zero results — nothing at the current resolution loads.
+        // Fix: issue a second updatePov from a synthetic nadir-looking camera placed above the
+        // look-at point (where the real camera's center ray hits the surface). The octree then
+        // searches the area the camera actually sees. We restore the real camera afterward so
+        // _isInView reverts to the real frustum for the actual tile-load decision.
+        // Both cameras are at the same altitude → same cameraDistToSurface → same level; the
+        // level setter is a no-op, so no tiles are evicted between the two calls.
+        if (inCloseModeRef.current) {
+          const lookDir = new THREE.Vector3();
+          camera.getWorldDirection(lookDir);
+          const hit = raySphereIntersect(camera.position, lookDir, EARTH_R);
+          if (hit) {
+            const surfaceNormal = hit.clone().normalize();
+            const camAlt = camera.position.length() - EARTH_R;
+            const synthCam = (camera as THREE.PerspectiveCamera).clone();
+            synthCam.position.copy(hit).addScaledVector(surfaceNormal, camAlt);
+            synthCam.lookAt(new THREE.Vector3(0, 0, 0));
+            synthCam.updateMatrixWorld(true);
+            dayTileEngineRef.current.updatePov(synthCam);
+            dayTileEngineRef.current.updatePov(camera);
+          }
+        }
       }
       if (cameraActuallyMoved) {
         nightEngine.updatePov(camera);
+        if (inCloseModeRef.current) {
+          const lookDir = new THREE.Vector3();
+          camera.getWorldDirection(lookDir);
+          const hit = raySphereIntersect(camera.position, lookDir, EARTH_R);
+          if (hit) {
+            const surfaceNormal = hit.clone().normalize();
+            const camAlt = camera.position.length() - EARTH_R;
+            const synthCam = (camera as THREE.PerspectiveCamera).clone();
+            synthCam.position.copy(hit).addScaledVector(surfaceNormal, camAlt);
+            synthCam.lookAt(new THREE.Vector3(0, 0, 0));
+            synthCam.updateMatrixWorld(true);
+            nightEngine.updatePov(synthCam);
+            nightEngine.updatePov(camera);
+          }
+        }
         if (moonMeshRef.current) {
           moonMeshRef.current.colorEngine.updatePov(camera);
           moonMeshRef.current.reliefEngine.updatePov(camera);

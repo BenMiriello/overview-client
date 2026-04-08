@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { createAtmosphereMaterial, ATMOSPHERE_RADIUS_SCENE } from './atmosphereMaterial';
+import { LAYERS } from './renderLayers';
 
 export function createAtmosphereMesh(): THREE.Mesh {
   const geometry = new THREE.SphereGeometry(ATMOSPHERE_RADIUS_SCENE, 64, 64);
   const material = createAtmosphereMaterial();
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = 'atmosphere';
-  mesh.renderOrder = 5;
+  mesh.renderOrder = LAYERS.ATMOSPHERE;
   mesh.frustumCulled = false;
   return mesh;
 }

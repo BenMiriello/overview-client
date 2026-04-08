@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BaseEffect } from './core/BaseEffect';
 import { BaseEffectConfig } from './core/EffectInterface';
 import { MarkerType } from '../types';
+import { LAYERS } from '../services/renderLayers';
 
 export interface PointMarkerConfig extends BaseEffectConfig {
   markerType: MarkerType;
@@ -122,7 +123,7 @@ export class PointMarkerEffect extends BaseEffect {
     }
 
     this.marker = new THREE.Mesh(this.geometry, this.material);
-    this.marker.renderOrder = 30;
+    this.marker.renderOrder = LAYERS.MARKERS;
     this.marker.userData = { createdAt: this.createTime, intensity: this.intensity };
 
     this.registerResource(this.geometry);

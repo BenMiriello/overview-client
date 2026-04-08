@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { LeaderSegment } from '../physics';
+import { LAYERS } from '../../../services/renderLayers';
 
 export class LeaderRenderer {
   private group: THREE.Group;
@@ -45,7 +46,7 @@ export class LeaderRenderer {
         material.color = new THREE.Color(0.7 - depth * 0.1, 0.7 - depth * 0.1, 1.0);
 
         const line = new THREE.LineSegments(geometry, material);
-        line.renderOrder = 1000 - depth;
+        line.renderOrder = LAYERS.LIGHTNING_BASE - depth;
         this.group.add(line);
       }
     }
