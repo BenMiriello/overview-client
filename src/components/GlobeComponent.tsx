@@ -1712,6 +1712,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       bumpImageUrl="https://unpkg.com/three-globe/example/img/earth-topology.png"
       backgroundImageUrl="https://unpkg.com/three-globe/example/img/night-sky.png"
       animateIn={false}
+      showAtmosphere={false}
     />
   );
 };
