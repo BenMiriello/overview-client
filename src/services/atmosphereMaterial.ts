@@ -9,8 +9,10 @@ const ATMOSPHERE_RADIUS = PLANET_RADIUS + ATMOSPHERE_HEIGHT; // 102.5
 const SCALE_HEIGHT = 0.25 * ATMOSPHERE_HEIGHT; // 0.625
 
 // Rayleigh coefficients in the canonical (R, G, B) ratio for 680/550/440 nm,
-// scaled to scene units. Tuned visually; see atmosphere.md.
-const RAYLEIGH_COEFF = new THREE.Vector3(0.058, 0.135, 0.331);
+// scaled to scene units. Tuned visually against SUN_INTENSITY to keep the
+// day-disk inside LDR while leaving enough optical-depth differential to
+// reveal a visible reddening at the terminator.
+const RAYLEIGH_COEFF = new THREE.Vector3(0.116, 0.270, 0.662);
 
 // Mie is approximately wavelength-independent (haze is white/gray), so the
 // coefficient is grayscale. Magnitude tuned visually; see atmosphere.md.
@@ -25,7 +27,10 @@ const MIE_SCALE_HEIGHT = 0.25 * (0.025 * PLANET_RADIUS); // 0.25 of atmosphere h
 const MIE_G = 0.76;
 
 // Brightness multiplier on the final scattered color before additive blend.
-const SUN_INTENSITY = 7.0;
+// Lowered alongside doubling RAYLEIGH_COEFF: net mid-disk brightness is
+// similar but the dynamic range shifts down so reddening at the terminator
+// becomes visible before the day disk clips to white in LDR.
+const SUN_INTENSITY = 3.0;
 
 const VIEW_SAMPLES = 10;
 const SHADOW_SAMPLES = 4;
@@ -96,11 +101,23 @@ const fragmentShader = /* glsl */ `
       float densityR = exp(-altitude / uScaleHeight)    * segLen;
       float densityM = exp(-altitude / uScaleHeightMie) * segLen;
 
-      // Ground-shadow test: is the sun visible from this sample point?
-      // If the planet blocks it, this sample is in Earth's shadow.
+      // Soft ground-shadow factor: a binary "ray hits Earth = contribute 0"
+      // test snaps a sample's contribution to zero across one frame's worth
+      // of motion at the terminator, killing the dusk gradient. Instead,
+      // measure the sun ray's closest approach to Earth's center and smooth
+      // the transition over a narrow band centered on the surface so dusk
+      // samples contribute partially.
       vec2 shadow = raySphere(P, uSunDir, uPlanetR);
-      bool shadowed = (shadow.y > 0.0 && shadow.x > 0.0);
-      if (shadowed) continue;
+      float shadowFactor = 1.0;
+      if (shadow.y > 0.0 && shadow.x > 0.0) {
+        float tClosest = -dot(P, uSunDir);
+        vec3 closestPt = P + uSunDir * tClosest;
+        float closest = length(closestPt);
+        shadowFactor = smoothstep(uPlanetR - 0.5, uPlanetR + 0.5, closest);
+      }
+      if (shadowFactor <= 0.0) continue;
+      densityR *= shadowFactor;
+      densityM *= shadowFactor;
 
       // Light optical depth: integrate density along sun ray to top of atmosphere.
       vec2 lightAtm = raySphere(P, uSunDir, uAtmosphereR);
