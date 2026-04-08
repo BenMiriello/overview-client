@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import SlippyMap from 'three-slippy-map-globe';
+import SlippyMapGlobe from '../vendor/SlippyMapGlobe';
+import { createTiledPlanetEngine } from './tiledPlanetEngine';
 import { getSunLatLng } from './astronomy';
 
 const DAY_PATCH_FLAG = '__dayNightPatched';
@@ -113,34 +114,16 @@ const GIBS_URL = (x: number, y: number, level: number) =>
   `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/${level}/${y}/${x}.png`;
 
 /**
- * Creates a standalone SlippyMap tile engine for GIBS Black Marble night tiles.
+ * Creates a tile engine for GIBS Black Marble night tiles. Tiles are patched
+ * with the night-side fade shader at material creation time so there is no
+ * unpatched-flash on the first frame after a tile loads.
  */
-export function createNightTileEngine(radius: number): InstanceType<typeof SlippyMap> {
-  const engine = new SlippyMap(radius, {
+export function createNightTileEngine(radius: number): SlippyMapGlobe {
+  return createTiledPlanetEngine({
+    radius,
     tileUrl: GIBS_URL,
     maxLevel: 8,
+    projection: 'mercator',
+    patchMaterial: patchNightTileMaterial,
   });
-
-  // Hide the inner black sphere created by SlippyMap
-  engine.children.forEach((child: any) => {
-    if (child.isMesh && child.material?.isMeshBasicMaterial) {
-      child.visible = false;
-    }
-  });
-
-  // Patch tiles the instant they're added — prevents 1-frame unpatched flash
-  const originalAdd = engine.add.bind(engine);
-  engine.add = (...objects: any[]) => {
-    for (const obj of objects) {
-      if (obj.isMesh && obj.material?.isMeshLambertMaterial) {
-        patchNightTileMaterial(obj.material);
-      }
-      if (obj.isMesh && obj.material?.isMeshBasicMaterial) {
-        obj.visible = false;
-      }
-    }
-    return originalAdd(...objects);
-  };
-
-  return engine;
 }

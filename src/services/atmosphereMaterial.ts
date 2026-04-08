@@ -30,7 +30,7 @@ const MIE_G = 0.76;
 // Lowered alongside doubling RAYLEIGH_COEFF: net mid-disk brightness is
 // similar but the dynamic range shifts down so reddening at the terminator
 // becomes visible before the day disk clips to white in LDR.
-const SUN_INTENSITY = 3.0;
+const SUN_INTENSITY = 5.0;
 
 const VIEW_SAMPLES = 10;
 const SHADOW_SAMPLES = 4;

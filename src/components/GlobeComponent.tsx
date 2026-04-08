@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
 import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
-import { createMoonMesh, updateMoonPosition, updateMoonOrientation } from '../services/moonMesh';
+import { createMoonMesh, updateMoonPosition, updateMoonOrientation, MoonGroup } from '../services/moonMesh';
 import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE, SUN_HALO_SCALE } from '../services/sunMesh';
 import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } from '../services/atmosphereMesh';
 import { MOON_RADIUS_SCENE } from '../services/astronomy';
@@ -269,7 +269,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   const dayTileEngineRef = useRef<any>(null);
 
   const nightTileEngineRef = useRef<THREE.Object3D | null>(null);
-  const moonMeshRef = useRef<THREE.Mesh | null>(null);
+  const moonMeshRef = useRef<MoonGroup | null>(null);
 
   // Day/night: darken day tiles + GIBS night tiles with additive blending for city lights
   useEffect(() => {
@@ -479,11 +479,17 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         }
       });
 
-      // Drive tile engines. The library only calls updatePov from the OrbitControls
-      // 'change' event, so when controls are disabled (close mode) tiles never upgrade.
-      // Calling it every frame here ensures LOD always tracks the actual camera position.
-      if (dayTileEngineRef.current) dayTileEngineRef.current.updatePov(camera);
+      // In close mode, OrbitControls is disabled so its 'change' event never fires
+      // and the library never calls updatePov on its own. Drive it manually here.
+      // In normal mode, OrbitControls drives updatePov via 'change' — calling it
+      // again here would double-fire _fetchNeededTiles every frame, flooding the
+      // browser with concurrent image requests that get NS_BINDING_ABORTED.
+      if (inCloseModeRef.current && dayTileEngineRef.current) dayTileEngineRef.current.updatePov(camera);
       nightEngine.updatePov(camera);
+      if (moonMeshRef.current) {
+        moonMeshRef.current.colorEngine.updatePov(camera);
+        moonMeshRef.current.reliefEngine.updatePov(camera);
+      }
 
       nightEngine.traverse((child: any) => {
         if (child.isMesh && child.material?.isMeshBasicMaterial) {
@@ -558,8 +564,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       nightEngine.clearTiles();
       nightTileEngineRef.current = null;
       scene.remove(moonMesh);
-      moonMesh.geometry.dispose();
-      (moonMesh.material as THREE.ShaderMaterial).dispose();
+      moonMesh.colorEngine.clearTiles();
+      moonMesh.reliefEngine.clearTiles();
       moonMeshRef.current = null;
       scene.remove(sunGroup);
       disposeSunGroup(sunGroup);
@@ -1432,7 +1438,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     window.addEventListener('touchend', onTouchEnd);
   };
 
-  function enterMoonView(controls: any, camera: THREE.PerspectiveCamera, moonMesh: THREE.Mesh) {
+  function enterMoonView(controls: any, camera: THREE.PerspectiveCamera, moonMesh: THREE.Object3D) {
     const moonPos = moonMesh.position.clone();
     const camToMoon = moonPos.clone().sub(camera.position);
     const dist = MOON_RADIUS_SCENE * 4;
