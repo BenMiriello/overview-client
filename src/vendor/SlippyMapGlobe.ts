@@ -28,7 +28,6 @@ import {
   Vector3,
   Frustum,
   Matrix4,
-  TextureLoader,
   SRGBColorSpace,
   Material,
   Texture,
@@ -69,6 +68,7 @@ interface TileMeta {
   hullPnts?: Vector3[];
   obj?: Mesh;
   loading?: boolean;
+  controller?: AbortController;
 }
 
 interface TileMetaLevel extends Array<TileMeta> {
@@ -340,6 +340,7 @@ export default class SlippyMapGlobe extends Group {
     if (prevLevel > level) {
       for (let l = level + 1; l <= prevLevel; l++) {
         this.#tilesMeta[l]?.forEach((d) => {
+          d.controller?.abort();
           if (d.obj) {
             this.remove(d.obj);
             emptyObject(d.obj);
@@ -354,6 +355,7 @@ export default class SlippyMapGlobe extends Group {
   clearTiles = (): void => {
     Object.values(this.#tilesMeta).forEach((l) => {
       l.forEach((d) => {
+        d.controller?.abort();
         if (d.obj) {
           this.remove(d.obj);
           emptyObject(d.obj);
@@ -409,6 +411,12 @@ export default class SlippyMapGlobe extends Group {
     }
   }
 
+  /** Count of tiles at the current level whose fetch is in-flight. Useful for detecting stuck state. */
+  get loadingCount(): number {
+    if (this.#level === undefined || !this.#tilesMeta[this.#level]) return 0;
+    return this.#tilesMeta[this.#level].filter((d) => d.loading).length;
+  }
+
   #buildMetaLevel(level: number): void {
     const octreeCap = this.#isMercator
       ? MAX_LEVEL_TO_BUILD_LOOKUP_OCTREE_MERCATOR
@@ -446,6 +454,15 @@ export default class SlippyMapGlobe extends Group {
         const searchRadius = (povPos.length() - this.#radius) * TILE_SEARCH_RADIUS_CAMERA_DISTANCE;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tiles = (fullLevel.octree as any).findAllWithinRadius(povPos.x, povPos.y, povPos.z, searchRadius);
+
+        // Abort in-flight fetches for tiles that are no longer in the candidate set.
+        // This frees connection slots immediately so new tiles can start loading.
+        const neededSet = new Set(tiles.map((d: TileMeta) => `${d.x}_${d.y}`));
+        fullLevel.forEach((d: TileMeta) => {
+          if (d.loading && d.controller && !neededSet.has(`${d.x}_${d.y}`)) {
+            d.controller.abort();
+          }
+        });
       } else {
         // Tiles populated dynamically (high-level path)
         const povCoords = cartesian2Polar(povPos);
@@ -483,9 +500,30 @@ export default class SlippyMapGlobe extends Group {
       }
     }
 
+    // Cap concurrent in-flight fetches per engine. Prioritize tiles closest to screen
+    // center so the most-visible tiles load first when multiple are queued.
+    const MAX_CONCURRENT = 6;
+    const inFlight = (this.#tilesMeta[this.#level] as TileMeta[]).filter((d) => d.loading).length;
+    const slots = MAX_CONCURRENT - inFlight;
+    if (slots <= 0) return;
+
+    // Camera look direction in local space — used to sort tiles by screen-center proximity.
+    let camLookLocal: Vector3 | null = null;
+    if (this.#camera && (this.#camera as any).quaternion) {
+      const worldLook = new Vector3(0, 0, -1).applyQuaternion((this.#camera as any).quaternion);
+      camLookLocal = this.worldToLocal(this.#camera.position.clone().add(worldLook)).normalize();
+    }
+
     tiles
-      .filter((d) => !d.obj)
+      .filter((d) => !d.obj && !d.loading)
       .filter(this.#isInView ?? (() => true))
+      .sort((a, b) => {
+        if (!camLookLocal || !a.centroid || !b.centroid) return 0;
+        const dotA = new Vector3(a.centroid.x, a.centroid.y, a.centroid.z).normalize().dot(camLookLocal);
+        const dotB = new Vector3(b.centroid.x, b.centroid.y, b.centroid.z).normalize().dot(camLookLocal);
+        return dotB - dotA;  // larger dot = closer to screen center = higher priority
+      })
+      .slice(0, slots)
       .forEach((d) => {
         const { x, y, lng, lat, latLen } = d;
         const { gx } = gridDims(this.#level!, this.#isMercator);
@@ -515,19 +553,47 @@ export default class SlippyMapGlobe extends Group {
           }
           d.obj = tile;
         }
-        if (!d.loading) {
-          d.loading = true;
-          new TextureLoader().load(this.tileUrl!(x, y, this.#level!), (texture) => {
-            const tile = d.obj;
-            if (tile) {
+
+        d.loading = true;
+        const ctrl = new AbortController();
+        d.controller = ctrl;
+        const url = this.tileUrl!(x, y, this.#level!);
+        const capturedLevel = this.#level!;
+
+        fetch(url, { signal: ctrl.signal })
+          .then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.blob();
+          })
+          .then((blob) =>
+            // Pre-flip so the bitmap has south at the top row. WebGL's UNPACK_FLIP_Y_WEBGL
+            // does not apply to ImageBitmap (only to HTMLImageElement), so we must pre-flip
+            // here and set texture.flipY=false to get the correct north-up orientation.
+            createImageBitmap(blob, { imageOrientation: 'flipY' })
+          )
+          .then((bitmap) => {
+            // Discard if this tile was evicted while the fetch was in-flight.
+            if (d.obj && this.#level === capturedLevel) {
+              const texture = new Texture(bitmap as unknown as HTMLImageElement);
               texture.colorSpace = SRGBColorSpace;
-              this.#applyTexture(tile.material as Material, texture);
-              this.add(tile);
-              this.#onTileLoaded?.(tile);
+              texture.flipY = false;  // bitmap is already oriented for WebGL; no second flip
+              texture.needsUpdate = true;
+              this.#applyTexture(d.obj.material as Material, texture);
+              this.add(d.obj);
+              this.#onTileLoaded?.(d.obj);
             }
             d.loading = false;
+            delete d.controller;
+          })
+          .catch((err) => {
+            // AbortError: intentional cancel (camera moved or level changed) — no retry needed.
+            // Other errors: dispose geometry so the tile re-enters the candidate pool next frame.
+            if (err.name !== 'AbortError') {
+              if (d.obj) { deallocate(d.obj); delete d.obj; }
+            }
+            d.loading = false;
+            delete d.controller;
           });
-        }
       });
   }
 }

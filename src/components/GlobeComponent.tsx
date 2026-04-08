@@ -596,6 +596,12 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     // frame across multiple engines. We only call updatePov when the camera
     // actually moved by more than a threshold since the last call.
     const lastEngineCamPos = new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN);
+
+    // Recovery watchdog for the npm Earth day engine (react-globe.gl / three-slippy-map-globe).
+    // That engine has no onError callback, so failed fetches leave tiles permanently stuck
+    // (d.loading=true, blank texture). When child count stops changing in close mode,
+    // the engine is likely stuck — clearTiles() resets all tile state.
+    const dayEngineWatchdog = { lastCount: -1, lastChangedAt: Date.now() };
     const cameraMoved = (cam: THREE.Camera, threshold: number): boolean => {
       if (Number.isNaN(lastEngineCamPos.x)) {
         lastEngineCamPos.copy(cam.position);
@@ -711,15 +717,30 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       //   d.loading flag prevents redundant fetches.
       if (dayTileEngineRef.current && (inCloseModeRef.current || cameraActuallyMoved)) {
         dayTileEngineRef.current.updatePov(camera);
-
-        if (inCloseModeRef.current) {
+        // Synthetic cameras only needed when camera actually moved — tiles are already
+        // loaded when stationary, so the extra updatePov calls would be pure overhead.
+        if (inCloseModeRef.current && cameraActuallyMoved) {
           applyHorizonTilePovs(dayTileEngineRef.current, camera as THREE.PerspectiveCamera,
             new THREE.Vector3(), EARTH_R);
+        }
+
+        // Watchdog: if in close mode and the tile child count hasn't changed in 30s,
+        // the engine is likely stuck with blank tiles. clearTiles() resets all state
+        // so tiles can be re-fetched fresh.
+        if (inCloseModeRef.current) {
+          const count = dayTileEngineRef.current.children.length;
+          if (count !== dayEngineWatchdog.lastCount) {
+            dayEngineWatchdog.lastCount = count;
+            dayEngineWatchdog.lastChangedAt = Date.now();
+          } else if (Date.now() - dayEngineWatchdog.lastChangedAt > 30_000) {
+            dayTileEngineRef.current.clearTiles();
+            dayEngineWatchdog.lastChangedAt = Date.now();
+          }
         }
       }
       if (inCloseModeRef.current || cameraActuallyMoved) {
         nightEngine.updatePov(camera);
-        if (inCloseModeRef.current) {
+        if (inCloseModeRef.current && cameraActuallyMoved) {
           applyHorizonTilePovs(nightEngine, camera as THREE.PerspectiveCamera,
             new THREE.Vector3(), EARTH_R);
         }
@@ -728,12 +749,12 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           if (inMoonClose || cameraActuallyMoved) {
             const moonCenter = moonMeshRef.current.position.clone();
             moonMeshRef.current.colorEngine.updatePov(camera);
-            if (inMoonClose) {
+            if (inMoonClose && cameraActuallyMoved) {
               applyHorizonTilePovs(moonMeshRef.current.colorEngine,
                 camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
             }
             moonMeshRef.current.reliefEngine.updatePov(camera);
-            if (inMoonClose) {
+            if (inMoonClose && cameraActuallyMoved) {
               applyHorizonTilePovs(moonMeshRef.current.reliefEngine,
                 camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
             }

@@ -23,21 +23,35 @@
  * Service Workers → Unregister. Or clear all site data for the origin.
  */
 
-const CACHE       = 'tiles-v1';
-const MAX_ENTRIES = 2000;          // ~80-100MB at ~40-50KB per tile
-const EVICT_COUNT = 400;           // drop this many oldest entries when over limit
+const CACHE       = 'tiles-v2';
+const MAX_ENTRIES = 3000;          // ~120-150MB
+const EVICT_COUNT = 600;           // drop oldest 20% when over limit
 const MAX_AGE     = 24 * 60 * 60 * 1000; // 24h
 
-const TILE_ORIGINS = ['server.arcgisonline.com', 'gibs.earthdata.nasa.gov'];
+// server.arcgisonline.com: Earth day tiles loaded by the unmodifiable npm engine
+// (react-globe.gl → three-slippy-map-globe). That engine has no onError callback, so
+// a failed fetch leaves d.loading=true permanently. Returning transparent PNG on failure
+// allows onLoad to fire, resetting d.loading so the tile can eventually be retried.
+const FALLBACK_PNG_ORIGINS = ['server.arcgisonline.com'];
+
+// gibs.earthdata.nasa.gov: Earth night tiles (vendored SlippyMapGlobe.ts, has onError).
+// trek.nasa.gov: Moon color + relief tiles (same vendored engine, has onError).
+// For these engines, onError already disposes and resets state correctly. Returning
+// transparent PNG would intercept the failure as a 200 success, preventing onError from
+// firing at all — the tile gets a blank texture and is never retried. Instead, propagate
+// failures so the browser fires img.onerror → TextureLoader onError → our handler.
+const PROPAGATE_ORIGINS = ['gibs.earthdata.nasa.gov', 'trek.nasa.gov'];
+
+const TILE_ORIGINS = [...FALLBACK_PNG_ORIGINS, ...PROPAGATE_ORIGINS];
 
 // Open once at module scope — caches.open() is an IDB operation and must not
 // be called per-request (see rule 3 above).
 const tileCache = caches.open(CACHE);
 
-// Pre-decoded 1×1 transparent PNG. Returned on network error so that
-// TextureLoader's onLoad fires and three-slippy-map-globe's d.loading flag
-// clears. Without this, failed tiles leave d.loading=true permanently, the
-// tile mesh is never added to the scene, and the globe surface stays black.
+// Pre-decoded 1×1 transparent PNG. Returned on failure for FALLBACK_PNG_ORIGINS only
+// (the npm Earth-day engine which has no onError callback). Without this, a failed
+// fetch leaves d.loading=true permanently and the tile is never re-requested.
+// PROPAGATE_ORIGINS use 503 instead so the vendored engine's onError fires and resets.
 const TRANSPARENT_1X1_PNG = (() => {
   const raw = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
   const buf = new Uint8Array(raw.length);
@@ -83,14 +97,27 @@ async function handleTile(request) {
 }
 
 async function fetchAndCache(cache, request) {
+  const { hostname } = new URL(request.url);
+  const useFallback = FALLBACK_PNG_ORIGINS.some(o => hostname.endsWith(o));
+
   let response;
   try {
     response = await fetch(request);
   } catch {
-    return new Response(TRANSPARENT_1X1_PNG, { status: 200, headers: { 'Content-Type': 'image/png' } });
+    if (useFallback) {
+      // npm engine has no onError — transparent PNG lets onLoad fire and reset d.loading.
+      return new Response(TRANSPARENT_1X1_PNG, { status: 200, headers: { 'Content-Type': 'image/png' } });
+    }
+    // Vendored engine has onError — propagate failure so onError fires and tile resets cleanly.
+    return new Response(null, { status: 503, statusText: 'tile fetch failed' });
   }
 
-  if (!response.ok) return response;
+  if (!response.ok) {
+    if (useFallback) {
+      return new Response(TRANSPARENT_1X1_PNG, { status: 200, headers: { 'Content-Type': 'image/png' } });
+    }
+    return response;
+  }
 
   const headers = new Headers(response.headers);
   headers.set('x-cached-at', String(Date.now()));
