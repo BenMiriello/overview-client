@@ -44,6 +44,9 @@ export const cloudFragmentShader = /* glsl */ `
   uniform float uThickness;
   uniform float uShadowStrength;
   uniform float uFlashIntensity;
+  uniform float uDetailFade;
+  uniform float uDensityGamma;
+  uniform float uNightAmbient;
 
   varying vec2 vUv;
   varying vec3 vWorldPos;
@@ -88,8 +91,9 @@ export const cloudFragmentShader = /* glsl */ `
 
   float sampleDensity(vec2 uv) {
     float base = texture2D(uMap, uv).a;
+    float ds = uDetailStrength * uDetailFade;
     float detail = fbm(uv * uDetailFreq + vec2(uTime * 0.0008, 0.0));
-    return base * mix(1.0 - uDetailStrength, 1.0 + uDetailStrength, detail);
+    return base * mix(1.0 - ds, 1.0 + ds, detail);
   }
 
   void main() {
@@ -99,30 +103,44 @@ export const cloudFragmentShader = /* glsl */ `
     // Parallax: march view ray inward in UV space. Each step steps further
     // along the tangent projection of the view direction; at grazing angles
     // (limb) the tangent component is large and the ray sweeps a long path.
-    vec2 viewUvStep = worldDirToUv(viewDir, n) * uThickness;
-
     float density = sampleDensity(vUv);
-    float transmittance = 1.0;
-    const int PARALLAX_STEPS = 4;
-    for (int i = 1; i <= PARALLAX_STEPS; i++) {
-      vec2 uvi = vUv + viewUvStep * float(i);
-      float di = sampleDensity(uvi);
-      transmittance *= exp(-di * 0.55);
+
+    // Parallax march fades out with zoom to avoid tessellation-correlated
+    // artifacts (the UV step depends on per-vertex normals which create a
+    // visible geometric pattern when the sphere is small on screen).
+    float parallaxFade = uDetailFade;
+    if (parallaxFade > 0.01) {
+      vec2 viewUvStep = worldDirToUv(viewDir, n) * uThickness * parallaxFade;
+      float transmittance = 1.0;
+      const int PARALLAX_STEPS = 4;
+      for (int i = 1; i <= PARALLAX_STEPS; i++) {
+        vec2 uvi = vUv + viewUvStep * float(i);
+        float di = sampleDensity(uvi);
+        transmittance *= exp(-di * 0.55);
+      }
+      float thickAlpha = 1.0 - transmittance;
+      float grazing = 1.0 - abs(dot(viewDir, n));
+      density = mix(density, max(density, thickAlpha), grazing * parallaxFade);
     }
-    float thickAlpha = 1.0 - transmittance;
-    density = max(density, thickAlpha);
+
+    density = pow(clamp(density, 0.0, 1.0), uDensityGamma);
 
     // Self-shadow: one density tap offset toward the sun in tangent UV space.
-    vec2 sunUvOffset = worldDirToUv(uSunDir, n) * 0.025;
-    float densityTowardSun = sampleDensity(vUv + sunUvOffset);
-    float selfShadow = exp(-densityTowardSun * uShadowStrength);
+    // The UV offset depends on the per-vertex normal via worldDirToUv, so it
+    // must fade with distance to avoid tessellation-correlated patterns.
+    float selfShadow = 1.0;
+    if (uDetailFade > 0.01) {
+      vec2 sunUvOffset = worldDirToUv(uSunDir, n) * 0.025 * uDetailFade;
+      float densityTowardSun = sampleDensity(vUv + sunUvOffset);
+      selfShadow = exp(-densityTowardSun * uShadowStrength);
+    }
 
     // Day/night brightness from sun direction. Slightly wider band than the
     // ground patch so the high-altitude clouds catch dusk/dawn light a bit
     // longer than the surface, which is physically correct.
     float sunDot = dot(n, uSunDir);
     float dayFactor = smoothstep(-0.15, 0.15, sunDot);
-    float brightness = mix(0.015, 1.6, dayFactor);
+    float brightness = mix(uNightAmbient, 1.6, dayFactor);
     // Self-shadow only meaningfully darkens the lit hemisphere; on the night
     // side the day factor already drives brightness to ~0.
     brightness *= mix(0.55, 1.0, selfShadow);
@@ -130,6 +148,10 @@ export const cloudFragmentShader = /* glsl */ `
     // Global lightning flash: brief additive bump driven by the lightning-flash
     // event listener in CloudLayer.ts.
     brightness += uFlashIntensity * 0.4;
+
+    // Dense clouds scatter more sunlight → appear whiter. Thin clouds
+    // appear slightly grayer. Gives visible dynamic range in "whiteness."
+    brightness *= mix(0.6, 1.0, density);
 
     vec3 color = vec3(brightness);
     float alpha = density * uOpacity;

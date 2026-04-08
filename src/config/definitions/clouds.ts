@@ -1,16 +1,17 @@
 export const CloudsConfig = {
   altitude: 0.01,
-  opacity: 0.85,
+  opacity: 0.65,
   size: 3.5,
   imagePath: '/clouds.png',
   rotationSpeed: 0,
   useLiveTexture: true,
-  liveTextureEndpoint: 'http://localhost:3001/api/clouds/2k',
+  liveTextureEndpoint: 'http://localhost:3001/api/clouds/4k',
   fallbackImagePath: '/clouds-fallback.png',
   refreshIntervalMs: 30 * 60 * 1000,
   detailStrength: 0.35,
   thickness: 0.004,
   shadowStrength: 1.2,
+  densityGamma: 2.25,
 };
 
 // Key config options that will have UI controls

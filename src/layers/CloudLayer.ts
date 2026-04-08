@@ -109,6 +109,9 @@ export class CloudLayer extends BaseLayer<void> {
           uThickness:       { value: getConfig<number>('layers.clouds.thickness') ?? 0.004 },
           uShadowStrength:  { value: getConfig<number>('layers.clouds.shadowStrength') ?? 1.2 },
           uFlashIntensity:  { value: 0 },
+          uDetailFade:      { value: 1 },
+          uDensityGamma:    { value: getConfig<number>('layers.clouds.densityGamma') ?? 1.6 },
+          uNightAmbient:    { value: 0.12 },
         },
         vertexShader: cloudVertexShader,
         fragmentShader: cloudFragmentShader,
@@ -119,7 +122,7 @@ export class CloudLayer extends BaseLayer<void> {
       });
 
       const initialAlt = CLOUD_ALT_FAR;
-      const cloudGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 48, 48);
+      const cloudGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 96, 96);
 
       this.cloudMesh = new THREE.Mesh(cloudGeometry, material);
       this.cloudMesh.scale.setScalar(1 + initialAlt);
@@ -192,6 +195,11 @@ export class CloudLayer extends BaseLayer<void> {
           (ALT_FAR_POINT - cameraAlt) / (ALT_FAR_POINT - ALT_NEAR_POINT)
         ));
         const cloudAlt = CLOUD_ALT_FAR + (CLOUD_ALT_NEAR - CLOUD_ALT_FAR) * t;
+
+        // Fade out FBM detail + parallax as we zoom out to prevent
+        // tessellation-correlated artifacts. Full at cameraAlt≤0.5, off at ≥1.0.
+        const detailFade = Math.max(0, Math.min(1, (1.0 - cameraAlt) / 0.5));
+        mat.uniforms.uDetailFade.value = detailFade;
 
         if (Math.abs(cloudAlt - this.lastCloudAlt) > 0.0001) {
           this.cloudMesh.scale.setScalar(1 + cloudAlt);
