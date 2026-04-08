@@ -3,6 +3,7 @@ import { BaseLayer } from './LayerInterface';
 import { getConfig, setConfig } from '../config';
 import { LAYERS } from '../services/renderLayers';
 import { sharedNightUniforms } from '../services/dayNightMaterial';
+import { cloudVertexShader, cloudFragmentShader } from './cloudShaders';
 
 /**
  * Creates a cloud layer around the globe
@@ -18,7 +19,9 @@ export class CloudLayer extends BaseLayer<void> {
   private occluderMesh: THREE.Mesh | null = null;
   private lastCloudAlt = -1;
   private refreshTimer: number | null = null;
-  private currentTextureUrl: string | null = null;
+  private startTime = performance.now();
+  private flashIntensity = 0;
+  private flashHandler: (() => void) | null = null;
 
   constructor() {
     super();
@@ -61,13 +64,17 @@ export class CloudLayer extends BaseLayer<void> {
   private async refreshTexture(): Promise<void> {
     if (!this.cloudMesh) return;
     try {
-      const { texture, url } = await this.loadTextureWithFallback(this.buildUrlChain());
-      const mat = this.cloudMesh.material as THREE.MeshPhongMaterial;
-      const old = mat.map;
-      mat.map = texture;
-      mat.needsUpdate = true;
+      const { texture } = await this.loadTextureWithFallback(this.buildUrlChain());
+      // Equirectangular wraps in longitude (U), clamps in latitude (V).
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      const mat = this.cloudMesh.material as THREE.ShaderMaterial;
+      const old = mat.uniforms.uMap.value as THREE.Texture | null;
+      mat.uniforms.uMap.value = texture;
       if (old) old.dispose();
-      this.currentTextureUrl = url;
     } catch (err) {
       console.error('CloudLayer: texture refresh failed:', err);
     }
@@ -82,53 +89,34 @@ export class CloudLayer extends BaseLayer<void> {
     }
 
     try {
-      // Cloud material; map is set asynchronously by refreshTexture() with the
-      // live mirror → previous → bundled-fallback chain. Start with a transparent
+      // Cloud material — Phase 2 ShaderMaterial. The base raster (uMap) is
+      // set asynchronously by refreshTexture(); we start with a transparent
       // 1x1 placeholder so the mesh exists immediately and never flashes the
-      // legacy unrealistic clouds.png.
+      // legacy unrealistic clouds.png. Tunables (uOpacity / uDetailStrength /
+      // uThickness / uShadowStrength) are pulled from config so they can be
+      // exposed in the settings panel later without touching this file.
       const placeholder = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
       placeholder.needsUpdate = true;
-      const material = new THREE.MeshPhongMaterial({
-        map: placeholder,
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uMap:             { value: placeholder },
+          uSunDir:          sharedNightUniforms.sunDir,
+          uCameraPos:       { value: new THREE.Vector3() },
+          uOpacity:         { value: getConfig<number>('layers.clouds.opacity') ?? 0.85 },
+          uTime:            { value: 0 },
+          uDetailStrength:  { value: getConfig<number>('layers.clouds.detailStrength') ?? 0.35 },
+          uDetailFreq:      { value: new THREE.Vector2(64, 32) },
+          uThickness:       { value: getConfig<number>('layers.clouds.thickness') ?? 0.004 },
+          uShadowStrength:  { value: getConfig<number>('layers.clouds.shadowStrength') ?? 1.2 },
+          uFlashIntensity:  { value: 0 },
+        },
+        vertexShader: cloudVertexShader,
+        fragmentShader: cloudFragmentShader,
         transparent: true,
-        opacity: getConfig<number>('layers.clouds.opacity') || 0.6,
-        depthWrite: false, // Don't write to depth buffer to allow objects behind to render
+        depthWrite: false,
+        depthTest: true,
         side: THREE.FrontSide,
-        alphaTest: 0.1         // Discard pixels with low alpha values
       });
-
-      // Patch the phong shader to brighten the day-lit hemisphere and dim the
-      // night side using the shared sun direction (Earth-fixed lat/lng frame).
-      // Without this the clouds use scene ambient light, which makes the day
-      // side look grey and leaves the night side too bright. Pattern mirrors
-      // services/dayNightMaterial.ts:patchTileMaterial.
-      material.onBeforeCompile = (shader) => {
-        shader.uniforms.sunDir = sharedNightUniforms.sunDir;
-        shader.vertexShader = 'varying vec3 vCloudWorldPos;\n' + shader.vertexShader;
-        shader.vertexShader = shader.vertexShader.replace(
-          '#include <worldpos_vertex>',
-          `#include <worldpos_vertex>
-          vCloudWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
-        );
-        shader.fragmentShader =
-          `varying vec3 vCloudWorldPos;
-          uniform vec3 sunDir;\n` + shader.fragmentShader;
-        shader.fragmentShader = shader.fragmentShader.replace(
-          '#include <map_fragment>',
-          `#include <map_fragment>
-          {
-            float sunDot = dot(normalize(vCloudWorldPos), sunDir);
-            // Smooth across the terminator. Earth's day/night patch uses
-            // (-0.15, 0.1); clouds catch sunlight slightly later/longer because
-            // they sit ~10 km above the surface, so widen the band toward the
-            // night side a touch.
-            float dayFactor = smoothstep(-0.15, 0.15, sunDot);
-            float brightness = mix(0.015, 1.6, dayFactor);
-            diffuseColor.rgb *= brightness;
-          }`,
-        );
-      };
-      material.customProgramCacheKey = () => 'cloud-suntint-v1';
 
       const initialAlt = CLOUD_ALT_FAR;
       const cloudGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 48, 48);
@@ -156,6 +144,12 @@ export class CloudLayer extends BaseLayer<void> {
       this.refreshTexture();
       const intervalMs = getConfig<number>('layers.clouds.refreshIntervalMs') || 30 * 60 * 1000;
       this.refreshTimer = window.setInterval(() => this.refreshTexture(), intervalMs);
+
+      // Lightning flash bump: production globe dispatches a parameter-less
+      // 'lightning-flash' event from LightningBoltEffect on each strike. Set
+      // the cloud flash uniform to 1 and let update() decay it.
+      this.flashHandler = () => { this.flashIntensity = 1; };
+      window.addEventListener('lightning-flash', this.flashHandler);
     } catch (err) {
       console.error('CloudLayer: Error during initialization:', err);
     }
@@ -166,34 +160,45 @@ export class CloudLayer extends BaseLayer<void> {
    * Rotates the clouds and checks visibility
    */
   update(): void {
-    if (this.cloudMesh) {
-      this.cloudMesh.visible = this.visible;
+    if (!this.cloudMesh) return;
+    this.cloudMesh.visible = this.visible;
+    if (!this.visible) return;
 
-      if (this.visible) {
-        const rotationSpeed = getConfig<number>('layers.clouds.rotationSpeed') || 0.002;
-        if (rotationSpeed !== 0) {
-          this.cloudMesh.rotation.y += rotationSpeed * Math.PI / 180;
+    const rotationSpeed = getConfig<number>('layers.clouds.rotationSpeed') || 0;
+    if (rotationSpeed !== 0) {
+      this.cloudMesh.rotation.y += rotationSpeed * Math.PI / 180;
+    }
+
+    const mat = this.cloudMesh.material as THREE.ShaderMaterial;
+
+    // Per-frame uniforms.
+    mat.uniforms.uTime.value = (performance.now() - this.startTime) / 1000;
+    // Decay flash bump exponentially over ~250ms.
+    if (this.flashIntensity > 0.001) {
+      this.flashIntensity *= 0.88;
+    } else {
+      this.flashIntensity = 0;
+    }
+    mat.uniforms.uFlashIntensity.value = this.flashIntensity;
+
+    if (this.globeEl) {
+      try {
+        const camera = this.globeEl.camera();
+        (mat.uniforms.uCameraPos.value as THREE.Vector3).copy(camera.position);
+
+        const globeRadius = (this.globeEl.getGlobeRadius?.() as number | undefined) ?? EARTH_RADIUS;
+        const cameraAlt = camera.position.length() / globeRadius - 1;
+        const t = Math.max(0, Math.min(1,
+          (ALT_FAR_POINT - cameraAlt) / (ALT_FAR_POINT - ALT_NEAR_POINT)
+        ));
+        const cloudAlt = CLOUD_ALT_FAR + (CLOUD_ALT_NEAR - CLOUD_ALT_FAR) * t;
+
+        if (Math.abs(cloudAlt - this.lastCloudAlt) > 0.0001) {
+          this.cloudMesh.scale.setScalar(1 + cloudAlt);
+          setConfig('layers.clouds.altitude', cloudAlt);
+          this.lastCloudAlt = cloudAlt;
         }
-
-        // Dynamically scale cloud altitude based on camera distance
-        if (this.globeEl) {
-          try {
-            const camera = this.globeEl.camera();
-            const globeRadius = (this.globeEl.getGlobeRadius?.() as number | undefined) ?? EARTH_RADIUS;
-            const cameraAlt = camera.position.length() / globeRadius - 1;
-            const t = Math.max(0, Math.min(1,
-              (ALT_FAR_POINT - cameraAlt) / (ALT_FAR_POINT - ALT_NEAR_POINT)
-            ));
-            const cloudAlt = CLOUD_ALT_FAR + (CLOUD_ALT_NEAR - CLOUD_ALT_FAR) * t;
-
-            if (Math.abs(cloudAlt - this.lastCloudAlt) > 0.0001) {
-              this.cloudMesh.scale.setScalar(1 + cloudAlt);
-              setConfig('layers.clouds.altitude', cloudAlt);
-              this.lastCloudAlt = cloudAlt;
-            }
-          } catch { /* globeEl not ready */ }
-        }
-      }
+      } catch { /* globeEl not ready */ }
     }
   }
 
@@ -210,12 +215,17 @@ export class CloudLayer extends BaseLayer<void> {
       clearInterval(this.refreshTimer);
       this.refreshTimer = null;
     }
+    if (this.flashHandler) {
+      window.removeEventListener('lightning-flash', this.flashHandler);
+      this.flashHandler = null;
+    }
     if (this.cloudMesh && this.scene) {
       this.scene.remove(this.cloudMesh);
       if (this.cloudMesh.geometry) this.cloudMesh.geometry.dispose();
       const mat = this.cloudMesh.material;
-      if (mat instanceof THREE.MeshPhongMaterial) {
-        if (mat.map) mat.map.dispose();
+      if (mat instanceof THREE.ShaderMaterial) {
+        const tex = mat.uniforms.uMap?.value as THREE.Texture | null;
+        if (tex) tex.dispose();
         mat.dispose();
       } else if (mat instanceof THREE.Material) {
         mat.dispose();
