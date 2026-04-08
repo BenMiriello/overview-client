@@ -4,6 +4,9 @@ import { StatusBar, GlobeComponent, GlobeControls } from '../components';
 import { NavigationIcons } from '../components/Navigation';
 import { LightningLayer, CloudLayer } from '../layers';
 import { GlobeLayerManager } from '../managers';
+import { loadView, loadLegacyPrefer3D } from '../components/globeViewPersistence';
+
+const restoredView = loadView();
 
 interface Hotspot {
   lat: number;
@@ -38,11 +41,20 @@ const GlobePage = () => {
   // Passed to GlobeComponent to trigger a cancellable fly-to animation
   const [flyTo, setFlyTo] = useState<{ lat: number; lng: number; altitude: number } | null>(null);
 
-  const [is3D, setIs3D] = useState(() => localStorage.getItem('globe_prefer3D') !== 'false');
-  const [isOrbiting, setIsOrbiting] = useState(false);
-  const [viewTarget, setViewTarget] = useState<'earth' | 'moon'>('earth');
+  const [is3D, setIs3D] = useState(() => {
+    if (restoredView) return restoredView.is3D;
+    const legacy = loadLegacyPrefer3D();
+    return legacy ?? true;
+  });
+  const [isOrbiting, setIsOrbiting] = useState(() => restoredView?.isOrbiting ?? false);
+  const [viewTarget, setViewTarget] = useState<'earth' | 'moon'>(() => restoredView?.viewTarget ?? 'earth');
 
   useEffect(() => {
+    // Stored view rehydrates the camera directly — skip the intro fetch + animation.
+    if (restoredView) {
+      setHotspotReady(true);
+      return;
+    }
     fetch('http://localhost:3001/api/hotspot')
       .then(res => res.json())
       .then(data => {
@@ -103,11 +115,7 @@ const GlobePage = () => {
   }, [dataStream]);
 
   const handleToggle3D = useCallback(() => {
-    setIs3D(v => {
-      const next = !v;
-      localStorage.setItem('globe_prefer3D', String(next));
-      return next;
-    });
+    setIs3D(v => !v);
   }, []);
 
   const handleToggleOrbit = useCallback(() => setIsOrbiting(v => !v), []);
@@ -140,6 +148,7 @@ const GlobePage = () => {
         isOrbiting={isOrbiting}
         onIsOrbitingChange={setIsOrbiting}
         viewTarget={viewTarget}
+        restoredView={restoredView}
       />
       <StatusBar
         connected={connected}
