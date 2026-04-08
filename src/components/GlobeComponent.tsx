@@ -8,6 +8,7 @@ import { createMoonMesh, updateMoonPosition, updateMoonOrientation, MoonGroup } 
 import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE, SUN_HALO_SCALE } from '../services/sunMesh';
 import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } from '../services/atmosphereMesh';
 import { MOON_RADIUS_SCENE } from '../services/astronomy';
+import { LAYERS } from '../services/renderLayers';
 import { StoredView, saveView } from './globeViewPersistence';
 
 const TILT_THRESHOLD_ENTER = 1.0;
@@ -20,6 +21,12 @@ const PITCH_MAX_ZOOM       = Math.PI / 3; // 60° from vertical = 30° elevation
 
 const ORBIT_SPEED_PLANET      = 0.067;
 const ORBIT_HEADING_SPEED = 2 * Math.PI / 60; // rad/s — one full revolution per 60 seconds
+
+// Moon orbit camera distance bounds, in units of MOON_RADIUS_SCENE.
+// 1.005 → ~9 km altitude in scaled units; close enough to read individual craters
+// at NASA WAC level 7 (~100 m/px).
+const MOON_MIN_DISTANCE_RATIO = 1.005;
+const MOON_MAX_DISTANCE_RATIO = 20;
 
 const NORTH_SNAP_DURATION = 1200;
 
@@ -243,6 +250,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   const animationRef     = useRef<{ cancel: () => void } | null>(null);
   const cancelIntroRef   = useRef<(() => void) | null>(null);
   const restoredViewRef  = useRef<boolean>(restoredView !== null);
+  const isOrbitingFirstRunRef = useRef(true);
 
   const closeModeState   = useRef<CloseModeState | null>(null);
   const closeModeRafRef  = useRef<number | null>(null);
@@ -292,8 +300,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     // Sun is geometrically far behind everything else (~47500 units). For the
     // additive atmosphere shell to compose its limb glow on top of the sun,
     // the sun must enter the framebuffer first.
-    sunGroup.renderOrder = -5;
-    sunGroup.traverse((obj: THREE.Object3D) => { obj.renderOrder = -5; });
+    sunGroup.renderOrder = LAYERS.SUN;
+    sunGroup.traverse((obj: THREE.Object3D) => { obj.renderOrder = LAYERS.SUN; });
     scene.add(sunGroup);
 
     const atmosphereMesh = createAtmosphereMesh();
@@ -425,13 +433,29 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       return lit * albedoScale * heightFraction;
     };
 
+    // Snapshot for gating tile-engine updatePov calls. SlippyMap recomputes
+    // its level + fetches on every updatePov, which thrashes when called every
+    // frame across multiple engines. We only call updatePov when the camera
+    // actually moved by more than a threshold since the last call.
+    const lastEngineCamPos = new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN);
+    const cameraMoved = (cam: THREE.Camera, threshold: number): boolean => {
+      if (Number.isNaN(lastEngineCamPos.x)) {
+        lastEngineCamPos.copy(cam.position);
+        return true;
+      }
+      if (cam.position.distanceToSquared(lastEngineCamPos) > threshold * threshold) {
+        lastEngineCamPos.copy(cam.position);
+        return true;
+      }
+      return false;
+    };
+
     const tick = () => {
       if (cancelled || !globeEl.current) return;
 
       const now = new Date();
       updateSunDirection(now);
 
-      const prevMoonPos = moonMesh.position.clone();
       updateMoonPosition(moonMesh, now);
       updateMoonOrientation(moonMesh, now);
       updateSunPosition(sunGroup, now);
@@ -479,16 +503,25 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         }
       });
 
-      // In close mode, OrbitControls is disabled so its 'change' event never fires
-      // and the library never calls updatePov on its own. Drive it manually here.
-      // In normal mode, OrbitControls drives updatePov via 'change' — calling it
-      // again here would double-fire _fetchNeededTiles every frame, flooding the
-      // browser with concurrent image requests that get NS_BINDING_ABORTED.
-      if (inCloseModeRef.current && dayTileEngineRef.current) dayTileEngineRef.current.updatePov(camera);
-      nightEngine.updatePov(camera);
-      if (moonMeshRef.current) {
-        moonMeshRef.current.colorEngine.updatePov(camera);
-        moonMeshRef.current.reliefEngine.updatePov(camera);
+      // Compute once — cameraMoved updates its internal lastEngineCamPos on the first true result,
+      // so all engines share the same snapshot for this tick.
+      const ENGINE_MOVE_THRESHOLD = 0.05;
+      const cameraActuallyMoved = cameraMoved(camera, ENGINE_MOVE_THRESHOLD);
+
+      // Close mode: OrbitControls disabled — controls.change never fires, drive every frame.
+      // Normal mode: controls.change → globe.gl setPointOfView → updatePov covers user-driven moves.
+      //   cameraActuallyMoved fills the gap for programmatic moves (intro animation, flyTo) that
+      //   bypass OrbitControls entirely. Double-calling during user drag is harmless — the library's
+      //   d.loading flag prevents redundant fetches.
+      if (dayTileEngineRef.current && (inCloseModeRef.current || cameraActuallyMoved)) {
+        dayTileEngineRef.current.updatePov(camera);
+      }
+      if (cameraActuallyMoved) {
+        nightEngine.updatePov(camera);
+        if (moonMeshRef.current) {
+          moonMeshRef.current.colorEngine.updatePov(camera);
+          moonMeshRef.current.reliefEngine.updatePov(camera);
+        }
       }
 
       nightEngine.traverse((child: any) => {
@@ -724,7 +757,13 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     dragVelocityRef.current = null;
     inCloseModeRef.current = true;
-    entryAnimatingRef.current = true;
+    entryAnimatingRef.current = false;
+
+    // Snap pitch to its target value immediately. The previous 500ms ramp from
+    // pitch=0 caused a visible camera-position slide on the surface tangent
+    // (driven by cameraPositionFromTarget's angleO calculation), which the user
+    // perceived as the day/night terminator "snapping" on close-mode entry.
+    closeModeState.current.pitch = targetPitch;
 
     startCloseModeLoop(controls);
 
@@ -732,22 +771,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     el.addEventListener('mousedown', onCloseMouseDown);
     el.addEventListener('wheel', onCloseWheel, { passive: false });
     el.addEventListener('touchstart', onCloseTouchStart, { passive: false });
-
-    // Animate pitch from 0 to target (2D→3D transition), using dynamic pitch so zoom can continue
-    const startTime = performance.now();
-    const DURATION = 500;
-    const animateEntry = (now: number) => {
-      if (!closeModeState.current || !inCloseModeRef.current) return;
-      const t = Math.min((now - startTime) / DURATION, 1);
-      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-      closeModeState.current.pitch = pitchFromAltitude(closeModeState.current.altitude) * ease;
-      if (t < 1) {
-        requestAnimationFrame(animateEntry);
-      } else {
-        entryAnimatingRef.current = false;
-      }
-    };
-    requestAnimationFrame(animateEntry);
   }
 
   function animateExitCloseMode(controls: any) {
@@ -825,10 +848,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     justExitedCloseModeRef.current = true;
     onIsOrbitingChange(false);
     isOrbitingRef.current = false;
-    // Sync parent — skip when flyTo triggered the exit so we don't switch to 2D mid-navigation
-    if (!flyToActiveRef.current) {
-      onIs3DChange(false);
-    }
+    // Note: do NOT touch the user's 2D/3D preference here. The 2D/3D button is
+    // a pure preference; whether tilt is actually applied is gated by altitude.
+    // Zooming out past TILT_THRESHOLD_EXIT exits close mode but the user's
+    // preference must persist so zooming back in re-enters close mode.
   }
 
   // ── Close-mode RAF loop ──────────────────────────────────────────────────
@@ -1085,12 +1108,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const currentAlt = globeEl.current.pointOfView().altitude;
 
-    // Only enter close-mode (3D) if coming from far-mode — if the user is already zoomed
-    // in close but chose 2D, respect that and fall through to the pointOfView path below.
-    if (!inCloseModeRef.current && currentAlt >= TILT_THRESHOLD_ENTER) {
+    // Only enter close-mode (3D) if user has 3D enabled AND we're coming from far-mode.
+    // Respect the user's 2D/3D preference — never override it from internal paths.
+    if (!inCloseModeRef.current && currentAlt >= TILT_THRESHOLD_ENTER && prefer3DRef.current) {
       preventReentryRef.current = false;
-      prefer3DRef.current = true;
-      onIs3DChange(true);
       enterCloseMode(controls);
     }
 
@@ -1222,6 +1243,14 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     if (!isGlobeReady || !globeEl.current) return;
     if (inMoonViewRef.current) return;
+
+    // First run after mount: do not fire the level-snap tween, since the user
+    // never toggled anything. The snap was previously firing a 1200ms no-op
+    // pointOfView tween that fought initial input and clobbered restore.
+    if (isOrbitingFirstRunRef.current) {
+      isOrbitingFirstRunRef.current = false;
+      return;
+    }
 
     if (inCloseModeRef.current) {
       if (!isOrbiting && !tiltPausedRef.current && closeModeState.current
@@ -1392,8 +1421,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (!moonOrbitState.current) return;
     const factor = Math.pow(1.001, e.deltaY);
     moonOrbitState.current.distance = Math.max(
-      MOON_RADIUS_SCENE * 1.5,
-      Math.min(MOON_RADIUS_SCENE * 20, moonOrbitState.current.distance * factor)
+      MOON_RADIUS_SCENE * MOON_MIN_DISTANCE_RATIO,
+      Math.min(MOON_RADIUS_SCENE * MOON_MAX_DISTANCE_RATIO, moonOrbitState.current.distance * factor)
     );
   };
 
@@ -1415,8 +1444,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         const newDist = Math.hypot(te.touches[1].clientX - t.clientX, te.touches[1].clientY - t.clientY);
         const scale = moonTouchRef.current.dist / newDist;
         moonOrbitState.current.distance = Math.max(
-          MOON_RADIUS_SCENE * 1.5,
-          Math.min(MOON_RADIUS_SCENE * 20, moonOrbitState.current.distance * scale)
+          MOON_RADIUS_SCENE * MOON_MIN_DISTANCE_RATIO,
+          Math.min(MOON_RADIUS_SCENE * MOON_MAX_DISTANCE_RATIO, moonOrbitState.current.distance * scale)
         );
         moonTouchRef.current.dist = newDist;
       } else if (te.touches.length === 1) {
@@ -1598,42 +1627,82 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (!restoredViewRef.current) return;
     restoredViewRef.current = false; // one-shot
 
-    let controls: any;
-    try { controls = globeEl.current.controls(); } catch { return; }
-    if (!controls) return;
+    // Defer one RAF so the library finishes its own first-frame setup before
+    // we start asserting camera state.
+    const rafId = requestAnimationFrame(() => {
+      if (!globeEl.current) return;
+      let controls: any;
+      try { controls = globeEl.current.controls(); } catch { return; }
+      if (!controls) return;
 
-    if (restoredView.viewTarget === 'moon' && restoredView.moon) {
-      // Suppress the earth/moon switching effect by marking moon as already-applied.
-      viewTargetRef.current = 'moon';
-      inMoonViewRef.current = true;
-      pauseLibrary(controls);
-      moonOrbitState.current = { ...restoredView.moon };
-      const el = controls.domElement;
-      el.addEventListener('mousedown', onMoonMouseDown);
-      el.addEventListener('wheel', onMoonWheel, { passive: false });
-      el.addEventListener('touchstart', onMoonTouchStart, { passive: false });
-      return;
-    }
+      if (restoredView.viewTarget === 'moon' && restoredView.moon) {
+        // viewTargetRef was already initialized to 'moon' from the prop, so the
+        // earth/moon switching effect already returned early — just inline the
+        // moon-view setup without the 3-second fly-in animation.
+        viewTargetRef.current = 'moon';
+        inMoonViewRef.current = true;
+        pauseLibrary(controls);
+        moonOrbitState.current = { ...restoredView.moon };
+        const el = controls.domElement;
+        el.addEventListener('mousedown', onMoonMouseDown);
+        el.addEventListener('wheel', onMoonWheel, { passive: false });
+        el.addEventListener('touchstart', onMoonTouchStart, { passive: false });
+        return;
+      }
 
-    if (restoredView.mode === 'close' && restoredView.close) {
-      const c = restoredView.close;
-      // Seed far-mode pov so enterCloseMode's altitude derivation lands near our target
-      globeEl.current.pointOfView(
-        { lat: c.targetLat, lng: c.targetLng, altitude: Math.max(c.altitude, 0.5) },
-        0
-      );
-      preventReentryRef.current = false;
-      prefer3DRef.current = true;
-      enterCloseMode(controls);
-      // Overwrite with exact stored state and skip the entry pitch ramp
-      closeModeState.current = { ...c };
-      entryAnimatingRef.current = false;
-      return;
-    }
+      if (restoredView.mode === 'close' && restoredView.close) {
+        // Force into close mode without any of enterCloseMode's animations or
+        // camera derivation. We already have the exact target/pitch/heading.
+        const c = restoredView.close;
+        prefer3DRef.current = true;
+        preventReentryRef.current = false;
+        closeModeState.current = { ...c };
+        inCloseModeRef.current = true;
+        entryAnimatingRef.current = false;
+        exitAnimatingRef.current = false;
+        dragVelocityRef.current = null;
 
-    if (restoredView.far) {
-      globeEl.current.pointOfView(restoredView.far, 0);
-    }
+        origControlsUpdateRef.current = controls.update.bind(controls);
+        controls.update = () => false;
+        controls.enabled = false;
+        controls.autoRotate = false;
+        globeEl.current.pauseAnimation?.();
+        // Kill any in-flight pov tween from the library's init/animation loop.
+        try {
+          const pov = globeEl.current.pointOfView?.();
+          if (pov) globeEl.current.pointOfView(pov, 0);
+        } catch { /* ignore */ }
+
+        // Apply once immediately for the first frame; the RAF loop takes over after.
+        try {
+          const camera = globeEl.current.camera() as THREE.Camera;
+          const earthR = globeEl.current.getGlobeRadius();
+          applyCameraState(camera, closeModeState.current, earthR);
+          renderScene();
+        } catch { /* ignore */ }
+
+        startCloseModeLoop(controls);
+
+        const el = controls.domElement;
+        el.addEventListener('mousedown', onCloseMouseDown);
+        el.addEventListener('wheel', onCloseWheel, { passive: false });
+        el.addEventListener('touchstart', onCloseTouchStart, { passive: false });
+        return;
+      }
+
+      if (restoredView.far) {
+        // Two-step: snap once to kill any in-flight library tween, then snap
+        // to the restored target. The first call ensures any TWEEN
+        // interpolating from the library's default position is overwritten.
+        try {
+          const cur = globeEl.current.pointOfView?.();
+          if (cur) globeEl.current.pointOfView(cur, 0);
+        } catch { /* ignore */ }
+        globeEl.current.pointOfView(restoredView.far, 0);
+      }
+    });
+
+    return () => cancelAnimationFrame(rafId);
   }, [isGlobeReady]);
 
   // ── Periodic save of view state ──────────────────────────────────────────
@@ -1678,6 +1747,12 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const persist = () => {
       const view = snapshot();
       if (!view) return;
+      // Refuse to save snapshots missing the essential field for the active
+      // mode — restoring such a blob would land at the library default and
+      // produce the "wrong location on reload" bug.
+      if (view.mode === 'far' && !view.far) return;
+      if (view.mode === 'close' && !view.close) return;
+      if (view.mode === 'moon' && !view.moon) return;
       const serialized = JSON.stringify(view);
       if (serialized === lastSerialized) return;
       lastSerialized = serialized;

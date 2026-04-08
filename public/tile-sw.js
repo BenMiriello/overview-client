@@ -81,8 +81,7 @@ async function handleTile(request) {
 async function fetchAndCache(cache, request) {
   let response;
   try {
-    // Bypass browser HTTP cache — we own the caching strategy via CacheStorage.
-    response = await fetch(request, { cache: 'reload' });
+    response = await fetch(request);
   } catch {
     return new Response(TRANSPARENT_1X1_PNG, { status: 200, headers: { 'Content-Type': 'image/png' } });
   }
