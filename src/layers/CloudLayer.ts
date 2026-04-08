@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BaseLayer } from './LayerInterface';
 import { getConfig, setConfig } from '../config';
 import { LAYERS } from '../services/renderLayers';
+import { sharedNightUniforms } from '../services/dayNightMaterial';
 
 /**
  * Creates a cloud layer around the globe
@@ -95,6 +96,39 @@ export class CloudLayer extends BaseLayer<void> {
         side: THREE.FrontSide,
         alphaTest: 0.1         // Discard pixels with low alpha values
       });
+
+      // Patch the phong shader to brighten the day-lit hemisphere and dim the
+      // night side using the shared sun direction (Earth-fixed lat/lng frame).
+      // Without this the clouds use scene ambient light, which makes the day
+      // side look grey and leaves the night side too bright. Pattern mirrors
+      // services/dayNightMaterial.ts:patchTileMaterial.
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.sunDir = sharedNightUniforms.sunDir;
+        shader.vertexShader = 'varying vec3 vCloudWorldPos;\n' + shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <worldpos_vertex>',
+          `#include <worldpos_vertex>
+          vCloudWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
+        );
+        shader.fragmentShader =
+          `varying vec3 vCloudWorldPos;
+          uniform vec3 sunDir;\n` + shader.fragmentShader;
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>
+          {
+            float sunDot = dot(normalize(vCloudWorldPos), sunDir);
+            // Smooth across the terminator. Earth's day/night patch uses
+            // (-0.15, 0.1); clouds catch sunlight slightly later/longer because
+            // they sit ~10 km above the surface, so widen the band toward the
+            // night side a touch.
+            float dayFactor = smoothstep(-0.15, 0.15, sunDot);
+            float brightness = mix(0.015, 1.6, dayFactor);
+            diffuseColor.rgb *= brightness;
+          }`,
+        );
+      };
+      material.customProgramCacheKey = () => 'cloud-suntint-v1';
 
       const initialAlt = CLOUD_ALT_FAR;
       const cloudGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 48, 48);
