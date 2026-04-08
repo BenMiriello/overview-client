@@ -54,11 +54,30 @@ function eqjToScene(v: { x: number; y: number; z: number }): THREE.Vector3 {
 }
 
 /**
- * Returns the moon position in scene coordinates (geocentric equatorial J2000).
+ * Returns the moon position in scene coordinates, in the Earth-fixed lat/lng
+ * frame (same convention three-globe uses for the globe surface and the
+ * day/night shader uses for its terminator). The moon ends up directly above
+ * its true sub-lunar point on Earth at distance equal to its true geocentric
+ * distance.
  */
 export function getMoonPosition(date: Date): THREE.Vector3 {
-  const moonVec = Astronomy.GeoMoon(date);
-  return eqjToScene(moonVec);
+  const observer = new Astronomy.Observer(0, 0, 0);
+  const moonEqu = Astronomy.Equator('Moon', date, observer, true, true);
+  const gast = Astronomy.SiderealTime(date);
+  let lng = (moonEqu.ra - gast) * 15;
+  if (lng > 180) lng -= 360;
+  if (lng < -180) lng += 360;
+  const lat = moonEqu.dec;
+
+  const phi = (90 - lat) * Math.PI / 180;
+  const theta = (90 - lng) * Math.PI / 180;
+  const distScene = moonEqu.dist * AU_TO_KM * KM_TO_SCENE;
+
+  return new THREE.Vector3(
+    Math.sin(phi) * Math.cos(theta) * distScene,
+    Math.cos(phi) * distScene,
+    Math.sin(phi) * Math.sin(theta) * distScene,
+  );
 }
 
 /**
@@ -72,8 +91,30 @@ export function getSunDirection(date: Date): THREE.Vector3 {
 /**
  * Returns the sun position in scene coords (for placing a distant directional light).
  */
+export const SUN_DISTANCE_SCENE = 47500;
+
+/**
+ * Sun direction in the Earth-fixed scene frame (the same convention three-globe
+ * uses to place lat/lng points on the surface and the day/night shader uses
+ * for its terminator). This rotates with Earth, so the visible sun stays
+ * aligned with the lit hemisphere of the globe.
+ *
+ * Note: this differs from `getSunDirection`, which is in the inertial J2000
+ * equatorial frame. The two differ by the sidereal rotation of Earth.
+ */
+export function getSunDirectionEarthFixed(date: Date): THREE.Vector3 {
+  const [lng, lat] = getSunLatLng(date);
+  const phi = (90 - lat) * Math.PI / 180;
+  const theta = (90 - lng) * Math.PI / 180;
+  return new THREE.Vector3(
+    Math.sin(phi) * Math.cos(theta),
+    Math.cos(phi),
+    Math.sin(phi) * Math.sin(theta),
+  ).normalize();
+}
+
 export function getSunPosition(date: Date): THREE.Vector3 {
-  return getSunDirection(date).multiplyScalar(50000);
+  return getSunDirectionEarthFixed(date).multiplyScalar(SUN_DISTANCE_SCENE);
 }
 
 /**
