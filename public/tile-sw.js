@@ -13,6 +13,12 @@
  *    this origin. Body reads on many entries block that thread and starve
  *    navigation requests. Use metadata (entry count, headers) instead.
  *
+ * 3. Never call caches.open() inside a per-request handler. caches.open() is
+ *    an async IndexedDB operation. Calling it once per tile request creates a
+ *    queue of IDB operations that serializes all tile fetches — the globe will
+ *    appear black for many seconds on initial load. Open the cache once at
+ *    module scope and await the shared promise inside handlers.
+ *
  * Recovery if the SW gets stuck: Firefox → about:debugging → This Firefox →
  * Service Workers → Unregister. Or clear all site data for the origin.
  */
@@ -23,6 +29,21 @@ const EVICT_COUNT = 400;           // drop this many oldest entries when over li
 const MAX_AGE     = 24 * 60 * 60 * 1000; // 24h
 
 const TILE_ORIGINS = ['server.arcgisonline.com', 'gibs.earthdata.nasa.gov'];
+
+// Open once at module scope — caches.open() is an IDB operation and must not
+// be called per-request (see rule 3 above).
+const tileCache = caches.open(CACHE);
+
+// Pre-decoded 1×1 transparent PNG. Returned on network error so that
+// TextureLoader's onLoad fires and three-slippy-map-globe's d.loading flag
+// clears. Without this, failed tiles leave d.loading=true permanently, the
+// tile mesh is never added to the scene, and the globe surface stays black.
+const TRANSPARENT_1X1_PNG = (() => {
+  const raw = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+  const buf = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+  return buf;
+})();
 
 self.addEventListener('install', () => self.skipWaiting());
 
@@ -43,7 +64,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 async function handleTile(request) {
-  const cache  = await caches.open(CACHE);
+  const cache  = await tileCache;
   const cached = await cache.match(request);
 
   if (cached) {
@@ -62,8 +83,8 @@ async function fetchAndCache(cache, request) {
   try {
     // Bypass browser HTTP cache — we own the caching strategy via CacheStorage.
     response = await fetch(request, { cache: 'reload' });
-  } catch (e) {
-    return new Response('', { status: 503 });
+  } catch {
+    return new Response(TRANSPARENT_1X1_PNG, { status: 200, headers: { 'Content-Type': 'image/png' } });
   }
 
   if (!response.ok) return response;
