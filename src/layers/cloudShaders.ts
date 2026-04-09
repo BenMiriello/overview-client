@@ -45,6 +45,7 @@ export const cloudFragmentShader = /* glsl */ `
   uniform float uShadowStrength;
   uniform float uFlashIntensity;
   uniform float uDetailFade;
+  uniform float uParallaxFade;
   uniform float uDensityGamma;
   uniform float uNightAmbient;
   uniform sampler2D uLayerTex;
@@ -69,7 +70,7 @@ export const cloudFragmentShader = /* glsl */ `
   float fbm(vec2 p) {
     float v = 0.0;
     float a = 0.5;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
       v += a * vnoise(p);
       p = p * 2.03 + vec2(17.0, 31.0);
       a *= 0.5;
@@ -100,7 +101,6 @@ export const cloudFragmentShader = /* glsl */ `
 
   float sampleDensity(vec2 uv) {
     float base = texture2D(uMap, uv).a;
-    base *= getLayerMask(uv);
     float ds = uDetailStrength * uDetailFade;
     float detail = fbm(uv * uDetailFreq + vec2(uTime * 0.0008, 0.0));
     return base * mix(1.0 - ds, 1.0 + ds, detail);
@@ -110,17 +110,15 @@ export const cloudFragmentShader = /* glsl */ `
     vec3 n = normalize(vWorldNormal);
     vec3 viewDir = normalize(vWorldPos - uCameraPos);
 
-    // Parallax: march view ray inward in UV space. Each step steps further
-    // along the tangent projection of the view direction; at grazing angles
-    // (limb) the tangent component is large and the ray sweeps a long path.
+    // Compute day/night early — used to gate expensive work on the night side.
+    float sunDot = dot(n, uSunDir);
+    float dayFactor = smoothstep(-0.15, 0.15, sunDot);
+
     float density = sampleDensity(vUv);
 
-    // Parallax march fades out with zoom to avoid tessellation-correlated
-    // artifacts (the UV step depends on per-vertex normals which create a
-    // visible geometric pattern when the sphere is small on screen).
-    float parallaxFade = uDetailFade;
-    if (parallaxFade > 0.01) {
-      vec2 viewUvStep = worldDirToUv(viewDir, n) * uThickness * parallaxFade;
+    // Parallax only on the low layer when zoomed in close enough to matter.
+    if (uLayerChannel < 0.5 && uParallaxFade > 0.01) {
+      vec2 viewUvStep = worldDirToUv(viewDir, n) * uThickness * uParallaxFade;
       float transmittance = 1.0;
       const int PARALLAX_STEPS = 4;
       for (int i = 1; i <= PARALLAX_STEPS; i++) {
@@ -130,26 +128,21 @@ export const cloudFragmentShader = /* glsl */ `
       }
       float thickAlpha = 1.0 - transmittance;
       float grazing = 1.0 - abs(dot(viewDir, n));
-      density = mix(density, max(density, thickAlpha), grazing * parallaxFade);
+      density = mix(density, max(density, thickAlpha), grazing * uParallaxFade);
     }
 
     density = pow(clamp(density, 0.0, 1.0), uDensityGamma);
+    density *= getLayerMask(vUv);
 
-    // Self-shadow: one density tap offset toward the sun in tangent UV space.
-    // The UV offset depends on the per-vertex normal via worldDirToUv, so it
-    // must fade with distance to avoid tessellation-correlated patterns.
+    // Self-shadow only on low layer, only on day side (night side brightness
+    // is near-zero so shadow produces no visible change).
     float selfShadow = 1.0;
-    if (uDetailFade > 0.01) {
+    if (uLayerChannel < 0.5 && uParallaxFade > 0.01 && dayFactor > 0.05) {
       vec2 sunUvOffset = worldDirToUv(uSunDir, n) * 0.025 * uDetailFade;
       float densityTowardSun = sampleDensity(vUv + sunUvOffset);
       selfShadow = exp(-densityTowardSun * uShadowStrength);
     }
 
-    // Day/night brightness from sun direction. Slightly wider band than the
-    // ground patch so the high-altitude clouds catch dusk/dawn light a bit
-    // longer than the surface, which is physically correct.
-    float sunDot = dot(n, uSunDir);
-    float dayFactor = smoothstep(-0.15, 0.15, sunDot);
     float brightness = mix(uNightAmbient, 1.6, dayFactor);
     // Self-shadow only meaningfully darkens the lit hemisphere; on the night
     // side the day factor already drives brightness to ~0.

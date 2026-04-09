@@ -80,6 +80,7 @@ export class CloudLayer extends BaseLayer<void> {
 
       const old = this.baseTexture;
       this.baseTexture = texture;
+      sharedNightUniforms.cloudTex.value = texture;
       for (const { mesh } of this.shells) {
         (mesh.material as THREE.ShaderMaterial).uniforms.uMap.value = texture;
       }
@@ -105,6 +106,7 @@ export class CloudLayer extends BaseLayer<void> {
         uShadowStrength:  { value: getConfig<number>('layers.clouds.shadowStrength') ?? 1.2 },
         uFlashIntensity:  { value: 0 },
         uDetailFade:      { value: 1 },
+        uParallaxFade:    { value: 1 },
         uDensityGamma:    { value: getConfig<number>('layers.clouds.densityGamma') ?? 2.25 },
         uNightAmbient:    { value: 0.12 },
         uLayerTex:        { value: cloudCoverService.getLayerTexture() },
@@ -177,6 +179,7 @@ export class CloudLayer extends BaseLayer<void> {
 
     let cameraPos: THREE.Vector3 | null = null;
     let detailFade = 1;
+    let parallaxFade = 1;
     let cloudAlt = CLOUD_ALT_FAR;
 
     if (this.globeEl) {
@@ -190,6 +193,7 @@ export class CloudLayer extends BaseLayer<void> {
         ));
         cloudAlt = CLOUD_ALT_FAR + (CLOUD_ALT_NEAR - CLOUD_ALT_FAR) * t;
         detailFade = Math.max(0, Math.min(1, (1.0 - cameraAlt) / 0.5));
+        parallaxFade = Math.max(0, Math.min(1, (0.6 - cameraAlt) / 0.35));
       } catch { /* globeEl not ready */ }
     }
 
@@ -198,6 +202,7 @@ export class CloudLayer extends BaseLayer<void> {
       mat.uniforms.uTime.value = time;
       mat.uniforms.uFlashIntensity.value = this.flashIntensity;
       mat.uniforms.uDetailFade.value = detailFade;
+      mat.uniforms.uParallaxFade.value = parallaxFade;
       if (cameraPos) {
         (mat.uniforms.uCameraPos.value as THREE.Vector3).copy(cameraPos);
       }

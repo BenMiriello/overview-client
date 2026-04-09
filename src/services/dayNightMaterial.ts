@@ -8,6 +8,7 @@ const NIGHT_PATCH_FLAG = '__nightTilePatched';
 
 export const sharedNightUniforms = {
   sunDir: { value: new THREE.Vector3(0, 1, 0) },
+  cloudTex: { value: null as THREE.Texture | null },
 };
 
 /**
@@ -40,6 +41,7 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.sunDir = sharedNightUniforms.sunDir;
+    shader.uniforms.cloudTex = sharedNightUniforms.cloudTex;
 
     shader.vertexShader = 'varying vec3 vWorldPosition;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
@@ -50,7 +52,8 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
 
     shader.fragmentShader =
       `varying vec3 vWorldPosition;
-      uniform vec3 sunDir;\n` + shader.fragmentShader;
+      uniform vec3 sunDir;
+      uniform sampler2D cloudTex;\n` + shader.fragmentShader;
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
@@ -59,11 +62,19 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
         ${NIGHT_FRAG_COMMON}
         float darkness = 0.88 * nightFactor;
         diffuseColor.rgb *= (1.0 - darkness);
+
+        vec3 nPos = normalize(vWorldPosition);
+        float lat = asin(clamp(nPos.y, -1.0, 1.0));
+        float lng = atan(nPos.x, nPos.z);
+        vec2 cloudUv = vec2(lng / 6.2831853 + 0.5, 0.5 - lat / 3.1415927);
+        float cloudAlpha = texture2D(cloudTex, cloudUv).a;
+        float shadowDarken = cloudAlpha * 0.35 * (1.0 - nightFactor);
+        diffuseColor.rgb *= (1.0 - shadowDarken);
       }`,
     );
   };
 
-  material.customProgramCacheKey = () => 'daynight-day-v1';
+  material.customProgramCacheKey = () => 'daynight-day-v2';
   if (!material.userData) material.userData = {};
   material.userData[DAY_PATCH_FLAG] = true;
   material.needsUpdate = true;
