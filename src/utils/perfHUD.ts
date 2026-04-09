@@ -28,6 +28,22 @@ let lastReportFrameCount = 0;
 let totalFramesSinceReport = 0;
 let allocCounters = { vec3: 0, mat4: 0 };
 let renderInfo = { calls: 0, triangles: 0, textures: 0, geometries: 0, programs: 0 };
+// Snapshot from the previous frame, used to compute per-frame deltas inside
+// frameMark. Negative deltas (e.g. textures disposed) are clamped to 0 — we
+// only track *new* uploads here, not net changes.
+let prevRenderInfo = { textures: 0, geometries: 0, programs: 0 };
+// Burst-detection window stats. Reset on report.
+let texDeltaSum = 0;
+let texDeltaPeak = 0;
+let progDeltaSum = 0;
+let progDeltaPeak = 0;
+let geoDeltaSum = 0;
+let geoDeltaPeak = 0;
+const TEX_BURST_THRESHOLD = 3;
+let burstFrameCount = 0;
+let heapWindowStartMB = 0;
+let heapWindowMinMB = 0;
+let heapWindowMaxMB = 0;
 let hudEl: HTMLDivElement | null = null;
 let installedAllocPatch = false;
 
@@ -147,6 +163,31 @@ export function frameMark(): void {
   }
   lastFrameAt = now;
 
+  // Per-frame renderInfo deltas. Negative (disposal) clamped to zero.
+  const texD = Math.max(0, renderInfo.textures - prevRenderInfo.textures);
+  const progD = Math.max(0, renderInfo.programs - prevRenderInfo.programs);
+  const geoD = Math.max(0, renderInfo.geometries - prevRenderInfo.geometries);
+  texDeltaSum += texD;
+  if (texD > texDeltaPeak) texDeltaPeak = texD;
+  progDeltaSum += progD;
+  if (progD > progDeltaPeak) progDeltaPeak = progD;
+  geoDeltaSum += geoD;
+  if (geoD > geoDeltaPeak) geoDeltaPeak = geoD;
+  if (texD >= TEX_BURST_THRESHOLD) burstFrameCount++;
+  prevRenderInfo.textures = renderInfo.textures;
+  prevRenderInfo.programs = renderInfo.programs;
+  prevRenderInfo.geometries = renderInfo.geometries;
+
+  // Heap min/max across the window — sudden drops reveal GC pauses, sudden
+  // climbs reveal allocation churn.
+  const mem = (performance as any).memory;
+  if (mem && typeof mem.usedJSHeapSize === 'number') {
+    const mb = mem.usedJSHeapSize / (1024 * 1024);
+    if (heapWindowStartMB === 0) heapWindowStartMB = mb;
+    if (heapWindowMinMB === 0 || mb < heapWindowMinMB) heapWindowMinMB = mb;
+    if (mb > heapWindowMaxMB) heapWindowMaxMB = mb;
+  }
+
   if (lastReportAt === 0) lastReportAt = now;
   if (now - lastReportAt >= REPORT_INTERVAL_MS) {
     emitReport(now);
@@ -155,6 +196,16 @@ export function frameMark(): void {
     totalFramesSinceReport = 0;
     frameSpans = new Map();
     allocCounters = { vec3: 0, mat4: 0 };
+    texDeltaSum = 0;
+    texDeltaPeak = 0;
+    progDeltaSum = 0;
+    progDeltaPeak = 0;
+    geoDeltaSum = 0;
+    geoDeltaPeak = 0;
+    burstFrameCount = 0;
+    heapWindowStartMB = 0;
+    heapWindowMinMB = 0;
+    heapWindowMaxMB = 0;
   }
 }
 
@@ -191,7 +242,20 @@ function emitReport(now: number): void {
     ? ` draw=${ri.calls} tri=${(ri.triangles / 1000).toFixed(0)}k tex=${ri.textures} geo=${ri.geometries} prog=${ri.programs}`
     : '';
 
-  const line1 = `[perf] fps=${fmt(fps, 0)} p50=${fmt(p50)} p95=${fmt(p95)} p99=${fmt(p99)} long10s=${long10s} heap=${fmt(heapMB, 0)}MB${glStr}${allocStr}`;
+  // Per-window upload deltas. Only show if anything happened in the window.
+  const deltaParts: string[] = [];
+  if (texDeltaSum > 0) deltaParts.push(`texΔ=${texDeltaSum}(pk${texDeltaPeak})`);
+  if (geoDeltaSum > 0) deltaParts.push(`geoΔ=${geoDeltaSum}(pk${geoDeltaPeak})`);
+  if (progDeltaSum > 0) deltaParts.push(`progΔ=${progDeltaSum}(pk${progDeltaPeak})`);
+  if (burstFrameCount > 0) deltaParts.push(`burst${TEX_BURST_THRESHOLD}+=${burstFrameCount}`);
+  const deltaStr = deltaParts.length ? ` ${deltaParts.join(' ')}` : '';
+
+  // Heap window summary: start→end, min/max swing.
+  const heapDeltaStr = heapWindowStartMB > 0
+    ? ` heapΔ=${(heapMB - heapWindowStartMB >= 0 ? '+' : '')}${fmt(heapMB - heapWindowStartMB, 0)}(swing${fmt(heapWindowMaxMB - heapWindowMinMB, 0)})`
+    : '';
+
+  const line1 = `[perf] fps=${fmt(fps, 0)} p50=${fmt(p50)} p95=${fmt(p95)} p99=${fmt(p99)} long10s=${long10s} heap=${fmt(heapMB, 0)}MB${heapDeltaStr}${glStr}${deltaStr}${allocStr}`;
   const line2 = spanStr ? `       ${spanStr}` : '';
 
   // eslint-disable-next-line no-console
