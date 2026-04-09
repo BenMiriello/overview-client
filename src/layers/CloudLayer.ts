@@ -4,7 +4,6 @@ import { getConfig, setConfig } from '../config';
 import { LAYERS } from '../services/renderLayers';
 import { sharedNightUniforms } from '../services/dayNightMaterial';
 import { cloudVertexShader, cloudFragmentShader } from './cloudShaders';
-import * as cloudCoverService from '../services/cloudCoverService';
 
 const EARTH_RADIUS = 100;
 const CLOUD_ALT_FAR  = 0.01;
@@ -18,9 +17,7 @@ interface CloudShell {
 }
 
 const SHELL_DEFS = [
-  { channel: 0, renderOrder: LAYERS.CLOUDS,      altMultiplier: 1.0 },
-  { channel: 1, renderOrder: LAYERS.CLOUDS_MID,   altMultiplier: 1.6 },
-  { channel: 2, renderOrder: LAYERS.CLOUDS_HIGH,  altMultiplier: 2.4 },
+  { renderOrder: LAYERS.CLOUDS, altMultiplier: 1.0 },
 ];
 
 export class CloudLayer extends BaseLayer<void> {
@@ -77,12 +74,24 @@ export class CloudLayer extends BaseLayer<void> {
       texture.minFilter = THREE.LinearMipmapLinearFilter;
       texture.magFilter = THREE.LinearFilter;
       texture.generateMipmaps = true;
+      try {
+        const renderer = this.globeEl?.renderer?.();
+        const maxAniso = renderer?.capabilities?.getMaxAnisotropy?.() ?? 1;
+        texture.anisotropy = maxAniso;
+      } catch { /* renderer not ready */ }
+
+      const img = texture.image as HTMLImageElement | undefined;
+      const w = img?.naturalWidth || 8192;
+      const h = img?.naturalHeight || 4096;
+      const texel = new THREE.Vector2(1 / w, 1 / h);
 
       const old = this.baseTexture;
       this.baseTexture = texture;
       sharedNightUniforms.cloudTex.value = texture;
       for (const { mesh } of this.shells) {
-        (mesh.material as THREE.ShaderMaterial).uniforms.uMap.value = texture;
+        const mat = mesh.material as THREE.ShaderMaterial;
+        mat.uniforms.uMap.value = texture;
+        (mat.uniforms.uTexelSize.value as THREE.Vector2).copy(texel);
       }
       if (old) old.dispose();
     } catch (err) {
@@ -90,27 +99,24 @@ export class CloudLayer extends BaseLayer<void> {
     }
   }
 
-  private createShellMaterial(layerChannel: number): THREE.ShaderMaterial {
+  private createShellMaterial(): THREE.ShaderMaterial {
     const placeholder = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
     placeholder.needsUpdate = true;
     return new THREE.ShaderMaterial({
       uniforms: {
         uMap:             { value: placeholder },
         uSunDir:          sharedNightUniforms.sunDir,
-        uCameraPos:       { value: new THREE.Vector3() },
-        uOpacity:         { value: getConfig<number>('layers.clouds.opacity') ?? 0.65 },
+        uOpacity:         { value: getConfig<number>('layers.clouds.opacity') ?? 0.55 },
         uTime:            { value: 0 },
-        uDetailStrength:  { value: getConfig<number>('layers.clouds.detailStrength') ?? 0.35 },
+        uDetailStrength:  { value: getConfig<number>('layers.clouds.detailStrength') ?? 0.10 },
         uDetailFreq:      { value: new THREE.Vector2(64, 32) },
-        uThickness:       { value: getConfig<number>('layers.clouds.thickness') ?? 0.004 },
-        uShadowStrength:  { value: getConfig<number>('layers.clouds.shadowStrength') ?? 1.2 },
         uFlashIntensity:  { value: 0 },
         uDetailFade:      { value: 1 },
-        uParallaxFade:    { value: 1 },
-        uDensityGamma:    { value: getConfig<number>('layers.clouds.densityGamma') ?? 2.25 },
+        uDensityLo:       { value: getConfig<number>('layers.clouds.densityLo') ?? 0.05 },
         uNightAmbient:    { value: 0.12 },
-        uLayerTex:        { value: cloudCoverService.getLayerTexture() },
-        uLayerChannel:    { value: layerChannel },
+        uTexelSize:       { value: new THREE.Vector2(1 / 8192, 1 / 4096) },
+        uBumpStrength:    { value: getConfig<number>('layers.clouds.bumpStrength') ?? 3.0 },
+        uReliefAmount:    { value: getConfig<number>('layers.clouds.reliefAmount') ?? 1.4 },
       },
       vertexShader: cloudVertexShader,
       fragmentShader: cloudFragmentShader,
@@ -133,7 +139,7 @@ export class CloudLayer extends BaseLayer<void> {
       this.sharedGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 96, 96);
 
       for (const def of SHELL_DEFS) {
-        const mat = this.createShellMaterial(def.channel);
+        const mat = this.createShellMaterial();
         const mesh = new THREE.Mesh(this.sharedGeometry, mat);
         mesh.scale.setScalar(1 + CLOUD_ALT_FAR * def.altMultiplier);
         mesh.renderOrder = def.renderOrder;
@@ -151,8 +157,6 @@ export class CloudLayer extends BaseLayer<void> {
       this.refreshTexture();
       const intervalMs = getConfig<number>('layers.clouds.refreshIntervalMs') || 30 * 60 * 1000;
       this.refreshTimer = window.setInterval(() => this.refreshTexture(), intervalMs);
-
-      cloudCoverService.start();
 
       this.flashHandler = () => { this.flashIntensity = 1; };
       window.addEventListener('lightning-flash', this.flashHandler);
@@ -177,15 +181,12 @@ export class CloudLayer extends BaseLayer<void> {
       this.flashIntensity = 0;
     }
 
-    let cameraPos: THREE.Vector3 | null = null;
     let detailFade = 1;
-    let parallaxFade = 1;
     let cloudAlt = CLOUD_ALT_FAR;
 
     if (this.globeEl) {
       try {
         const camera = this.globeEl.camera();
-        cameraPos = camera.position;
         const globeRadius = (this.globeEl.getGlobeRadius?.() as number | undefined) ?? EARTH_RADIUS;
         const cameraAlt = camera.position.length() / globeRadius - 1;
         const t = Math.max(0, Math.min(1,
@@ -193,7 +194,6 @@ export class CloudLayer extends BaseLayer<void> {
         ));
         cloudAlt = CLOUD_ALT_FAR + (CLOUD_ALT_NEAR - CLOUD_ALT_FAR) * t;
         detailFade = Math.max(0, Math.min(1, (1.0 - cameraAlt) / 0.5));
-        parallaxFade = Math.max(0, Math.min(1, (0.6 - cameraAlt) / 0.35));
       } catch { /* globeEl not ready */ }
     }
 
@@ -202,10 +202,6 @@ export class CloudLayer extends BaseLayer<void> {
       mat.uniforms.uTime.value = time;
       mat.uniforms.uFlashIntensity.value = this.flashIntensity;
       mat.uniforms.uDetailFade.value = detailFade;
-      mat.uniforms.uParallaxFade.value = parallaxFade;
-      if (cameraPos) {
-        (mat.uniforms.uCameraPos.value as THREE.Vector3).copy(cameraPos);
-      }
       mesh.scale.setScalar(1 + cloudAlt * altMultiplier);
     }
 
@@ -226,7 +222,6 @@ export class CloudLayer extends BaseLayer<void> {
       window.removeEventListener('lightning-flash', this.flashHandler);
       this.flashHandler = null;
     }
-    cloudCoverService.stop();
 
     for (const { mesh } of this.shells) {
       if (this.scene) this.scene.remove(mesh);
