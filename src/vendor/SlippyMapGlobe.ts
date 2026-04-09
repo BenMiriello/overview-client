@@ -323,26 +323,16 @@ export default class SlippyMapGlobe extends Group {
     this.#level = level;
     if (level === prevLevel || prevLevel === undefined) return;
 
-    this.#innerBackLayer.visible = level > 0;
-
-    // Bring active layer to front
-    this.#tilesMeta[level].forEach((d) => {
-      if (d.obj) (d.obj.material as Material & { depthWrite: boolean }).depthWrite = true;
-    });
-    // Push lower layers to background
-    if (prevLevel < level) {
-      this.#tilesMeta[prevLevel].forEach((d) => {
-        if (d.obj) (d.obj.material as Material & { depthWrite: boolean }).depthWrite = false;
-      });
-    }
-    // Remove upper layers
+    // Remove upper layers — higher-res tiles are irrelevant after zooming out.
+    // Lower-level tiles are kept as a visible fallback while new tiles load;
+    // they'll be cleaned up naturally when the user zooms back out.
     if (prevLevel > level) {
       for (let l = level + 1; l <= prevLevel; l++) {
         this.#tilesMeta[l]?.forEach((d) => {
           d.controller?.abort();
           if (d.obj) {
             this.remove(d.obj);
-            emptyObject(d.obj);
+            deallocate(d.obj);
             delete d.obj;
           }
         });
@@ -592,6 +582,16 @@ export default class SlippyMapGlobe extends Group {
             convertMercatorUV(tile.geometry.attributes.uv as BufferAttribute, yTop, yBot);
           }
           d.obj = tile;
+          // Level-based depth priority: higher-level tiles pulled toward camera so they
+          // win z-tests against lower-level fallback tiles at the same surface position.
+          // Negative offset = toward camera in clip space. Level-N tile has factor=-N,
+          // so level-3 beats level-0 (factor=0) wherever they overlap.
+          const mat = tile.material as Material & {
+            polygonOffset: boolean; polygonOffsetFactor: number; polygonOffsetUnits: number;
+          };
+          mat.polygonOffset = true;
+          mat.polygonOffsetFactor = -(this.#level ?? 0);
+          mat.polygonOffsetUnits = -(this.#level ?? 0);
         }
 
         d.loading = true;
@@ -612,8 +612,11 @@ export default class SlippyMapGlobe extends Group {
             createImageBitmap(blob, { imageOrientation: 'flipY' })
           )
           .then((bitmap) => {
-            // Discard if this tile was evicted while the fetch was in-flight.
-            if (d.obj && this.#level === capturedLevel) {
+            // Add to scene if level matches or tile is from a lower level (fallback).
+            // Lower-level tiles that complete after a level jump serve as a visible backdrop
+            // while the current level loads. Tiles from a higher level (user zoomed out) are
+            // discarded — their level was already cleaned up by the level setter.
+            if (d.obj && capturedLevel <= (this.#level ?? 0)) {
               const texture = new Texture(bitmap as unknown as HTMLImageElement);
               texture.colorSpace = SRGBColorSpace;
               texture.flipY = false;  // bitmap is already oriented for WebGL; no second flip

@@ -446,7 +446,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const globeRadius = globeEl.current.getGlobeRadius() as number;
     const nightEngine = createNightTileEngine(globeRadius);
-    nightEngine.scale.setScalar(1.001);
+    nightEngine.scale.setScalar(1.0001);
     const scene = globeEl.current.scene() as THREE.Scene;
     scene.add(nightEngine);
     nightTileEngineRef.current = nightEngine;
@@ -528,7 +528,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const SUN_OCCLUSION_RADIUS = SUN_CORE_SCALE / 2;
     const sunOccludedFraction = (camPos: THREE.Vector3, sunPos: THREE.Vector3): number => {
       const distEarth = camPos.length();
-      if (distEarth <= EARTH_R * 1.0001) return 0;
+      if (distEarth <= EARTH_R * 1.00001) return 0;
 
       const toSunX = sunPos.x - camPos.x;
       const toSunY = sunPos.y - camPos.y;
@@ -1167,7 +1167,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           if (closeModeState.current.heading > 2 * Math.PI) closeModeState.current.heading -= 2 * Math.PI;
         }
 
-        if (dragVelocityRef.current && dt > 0) {
+        if (dragVelocityRef.current && dt > 0 && !flyToActiveRef.current) {
           closeModeState.current.targetLat += dragVelocityRef.current.dlat * dt;
           closeModeState.current.targetLng += dragVelocityRef.current.dlng * dt;
           closeModeState.current.targetLat = Math.max(-85, Math.min(85, closeModeState.current.targetLat));
@@ -1398,6 +1398,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (animationRef.current) animationRef.current.cancel();
 
     flyToActiveRef.current = true;
+    // Clear any residual drag inertia — it would fight the animation and corrupt the destination
+    dragVelocityRef.current = null;
 
     let controls: any;
     try { controls = globeEl.current.controls(); } catch { flyToActiveRef.current = false; return; }
@@ -1411,8 +1413,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       enterCloseMode(controls);
     }
 
-    console.log(`[flyTo] target=${flyTo.lat.toFixed(3)},${flyTo.lng.toFixed(3)} inCloseMode=${inCloseModeRef.current} closeModeState=${closeModeState.current ? `lat=${closeModeState.current.targetLat.toFixed(3)},lng=${closeModeState.current.targetLng.toFixed(3)}` : 'null'} pov=${JSON.stringify(globeEl.current.pointOfView())}`);
-
     if (closeModeState.current) {
       // ── Close-mode path: animate closeModeState directly ──────────────────
       const startLat = closeModeState.current.targetLat;
@@ -1423,7 +1423,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       if (lngDelta > 180) lngDelta -= 360;
       if (lngDelta < -180) lngDelta += 360;
 
-      const targetAlt = Math.min(flyTo.altitude ?? 0.5, startAlt);
+      const targetAlt = flyTo.altitude ?? 0.5;
 
       const duration = 1500;
       let startTime: number | null = null;
@@ -1431,8 +1431,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       let canceled = false;
 
       const animate = (ts: number) => {
-        if (canceled) { console.log('[flyTo] animate: canceled'); return; }
-        if (!closeModeState.current) { console.log('[flyTo] animate: closeModeState null'); return; }
+        if (canceled || !closeModeState.current) return;
         startTime ??= ts;
         const t = Math.min((ts - startTime) / duration, 1);
         const p = easeInOutCubicShifted(t, 0);
@@ -1445,7 +1444,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         if (t < 1) {
           raf = requestAnimationFrame(animate);
         } else {
-          console.log(`[flyTo] complete: targetLat=${closeModeState.current.targetLat.toFixed(3)} targetLng=${closeModeState.current.targetLng.toFixed(3)}`);
           flyToActiveRef.current = false;
         }
       };
@@ -1473,7 +1471,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       if (lngDelta > 180) lngDelta -= 360;
       if (lngDelta < -180) lngDelta += 360;
 
-      const targetAlt = Math.min(flyTo.altitude ?? 0.5, start.altitude);
+      const targetAlt = flyTo.altitude ?? 0.5;
       const duration = 1500;
       let startTime: number | null = null;
       let raf: number | null = null;

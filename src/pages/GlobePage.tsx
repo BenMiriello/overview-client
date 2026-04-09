@@ -127,16 +127,9 @@ const GlobePage = () => {
     fetch('http://localhost:3001/api/hotspot')
       .then(res => res.json())
       .then(data => {
-        console.log('[hotspot] HTTP response:', data);
-        if (data) {
-          console.log(`[hotspot] flying to lat=${data.lat.toFixed(3)}, lng=${data.lng.toFixed(3)}`);
-          setFlyTo({ lat: data.lat, lng: data.lng, altitude: 0.5 });
-        } else {
-          console.log('[hotspot] server returned null, liveHotspot=', liveHotspot, 'hotspot=', hotspot);
-        }
+        if (data) setFlyTo({ lat: data.lat, lng: data.lng, altitude: 0.5 });
       })
-      .catch((err) => {
-        console.error('[hotspot] fetch failed:', err, '— falling back to liveHotspot=', liveHotspot, 'hotspot=', hotspot);
+      .catch(() => {
         const spot = liveHotspot ?? hotspot;
         if (spot) setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
       });
