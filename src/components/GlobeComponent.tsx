@@ -10,6 +10,7 @@ import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } f
 import { MOON_RADIUS_SCENE } from '../services/astronomy';
 import { LAYERS } from '../services/renderLayers';
 import { StoredView, saveView } from './globeViewPersistence';
+import { span as perfSpan, frameMark as perfFrameMark } from '../utils/perfHUD';
 
 const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
@@ -618,11 +619,12 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       if (cancelled || !globeEl.current) return;
 
       const now = new Date();
-      updateSunDirection(now);
-
-      updateMoonPosition(moonMesh, now);
-      updateMoonOrientation(moonMesh, now);
-      updateSunPosition(sunGroup, now);
+      perfSpan('astro', () => {
+        updateSunDirection(now);
+        updateMoonPosition(moonMesh, now);
+        updateMoonOrientation(moonMesh, now);
+        updateSunPosition(sunGroup, now);
+      });
 
       // When in moon view + close mode: drive camera from moon-local close state.
       if (inMoonViewRef.current && moonCloseState.current && globeEl.current) {
@@ -699,10 +701,12 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       // Patch day tiles with day/night darkening shader
       const camera = globeEl.current.camera();
       const scene = globeEl.current.scene() as THREE.Scene;
-      scene.traverse((child: any) => {
-        if (child.isMesh && child.material?.isMeshLambertMaterial && !child.material.userData?.__nightTilePatched) {
-          patchTileMaterial(child.material);
-        }
+      perfSpan('sceneTraverse', () => {
+        scene.traverse((child: any) => {
+          if (child.isMesh && child.material?.isMeshLambertMaterial && !child.material.userData?.__nightTilePatched) {
+            patchTileMaterial(child.material);
+          }
+        });
       });
 
       // Compute once — cameraMoved updates its internal lastEngineCamPos on the first true result,
@@ -716,7 +720,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       //   bypass OrbitControls entirely. Double-calling during user drag is harmless — the library's
       //   d.loading flag prevents redundant fetches.
       if (dayTileEngineRef.current && (inCloseModeRef.current || cameraActuallyMoved)) {
-        dayTileEngineRef.current.updatePov(camera);
+        perfSpan('updatePov.day', () => dayTileEngineRef.current!.updatePov(camera));
         // Synthetic cameras only needed when camera actually moved — tiles are already
         // loaded when stationary, so the extra updatePov calls would be pure overhead.
         if (inCloseModeRef.current && cameraActuallyMoved) {
@@ -739,7 +743,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         }
       }
       if (inCloseModeRef.current || cameraActuallyMoved) {
-        nightEngine.updatePov(camera);
+        perfSpan('updatePov.night', () => nightEngine.updatePov(camera));
         if (inCloseModeRef.current && cameraActuallyMoved) {
           applyHorizonTilePovs(nightEngine, camera as THREE.PerspectiveCamera,
             new THREE.Vector3(), EARTH_R);
@@ -762,13 +766,15 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         }
       }
 
-      nightEngine.traverse((child: any) => {
-        if (child.isMesh && child.material?.isMeshBasicMaterial) {
-          child.visible = false;
-        } else if (child.isMesh && child.material?.isMeshLambertMaterial) {
-          patchNightTileMaterial(child.material);
-          child.material.depthWrite = false;
-        }
+      perfSpan('nightTraverse', () => {
+        nightEngine.traverse((child: any) => {
+          if (child.isMesh && child.material?.isMeshBasicMaterial) {
+            child.visible = false;
+          } else if (child.isMesh && child.material?.isMeshLambertMaterial) {
+            patchNightTileMaterial(child.material);
+            child.material.depthWrite = false;
+          }
+        });
       });
 
       // Star visibility: modulate the sky sphere material color (which is
@@ -779,11 +785,14 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       // halo visibility (corona only shows when the sun is blocked).
       const camForSun = camera as THREE.PerspectiveCamera;
       const fovRad = (camForSun.fov * Math.PI) / 180;
-      tmpCamPos.copy(camForSun.position);
-      tmpSunPos.copy(sunGroup.position);
-      const sunOcclFraction = sunOccludedFraction(tmpCamPos, tmpSunPos);
-      updateSunHalo(sunGroup, sunOcclFraction);
-      updateAtmosphereCamera(atmosphereMesh, camForSun);
+      let sunOcclFraction = 0;
+      perfSpan('sunHalo', () => {
+        tmpCamPos.copy(camForSun.position);
+        tmpSunPos.copy(sunGroup.position);
+        sunOcclFraction = sunOccludedFraction(tmpCamPos, tmpSunPos);
+        updateSunHalo(sunGroup, sunOcclFraction);
+        updateAtmosphereCamera(atmosphereMesh, camForSun);
+      });
 
       if (!skySphere) {
         skySphere = findSkySphere();
@@ -795,35 +804,39 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         }
       }
       if (skySphere) {
-        tmpSunDir.copy(sharedNightUniforms.sunDir.value);
+        const sky = skySphere;
+        perfSpan('skyBright', () => {
+          tmpSunDir.copy(sharedNightUniforms.sunDir.value);
 
-        const earthBright = computeBrightArea(tmpCamPos, new THREE.Vector3(0, 0, 0), EARTH_R, fovRad, 0.8);
-        tmpMoonPos.copy(moonMesh.position);
-        const moonBright = computeBrightArea(tmpCamPos, tmpMoonPos, MOON_R_SCENE, fovRad, 0.66);
+          const earthBright = computeBrightArea(tmpCamPos, new THREE.Vector3(0, 0, 0), EARTH_R, fovRad, 0.8);
+          tmpMoonPos.copy(moonMesh.position);
+          const moonBright = computeBrightArea(tmpCamPos, tmpMoonPos, MOON_R_SCENE, fovRad, 0.66);
 
-        // Sun contribution: stylized fixed angular size from the halo sprite,
-        // gated by a sphere-frustum check (so it doesn't pop when only the
-        // sun's center crosses the frame edge) and scaled by the same
-        // occlusion fraction that drives the halo lerp.
-        tmpProjScreen.multiplyMatrices(camForSun.projectionMatrix, camForSun.matrixWorldInverse);
-        sunFrustum.setFromProjectionMatrix(tmpProjScreen);
-        sunSphere.center.copy(tmpSunPos);
-        let sunBright = 0;
-        if (sunFrustum.intersectsSphere(sunSphere)) {
-          const sunDist = tmpCamPos.distanceTo(tmpSunPos);
-          const sunAngularR = Math.atan((SUN_HALO_SCALE / 2) / sunDist);
-          const sunHeightFraction = Math.min(1, (2 * sunAngularR) / fovRad);
-          sunBright = sunHeightFraction * SUN_BRIGHTNESS_SCALE * (1 - sunOcclFraction);
-        }
+          // Sun contribution: stylized fixed angular size from the halo sprite,
+          // gated by a sphere-frustum check (so it doesn't pop when only the
+          // sun's center crosses the frame edge) and scaled by the same
+          // occlusion fraction that drives the halo lerp.
+          tmpProjScreen.multiplyMatrices(camForSun.projectionMatrix, camForSun.matrixWorldInverse);
+          sunFrustum.setFromProjectionMatrix(tmpProjScreen);
+          sunSphere.center.copy(tmpSunPos);
+          let sunBright = 0;
+          if (sunFrustum.intersectsSphere(sunSphere)) {
+            const sunDist = tmpCamPos.distanceTo(tmpSunPos);
+            const sunAngularR = Math.atan((SUN_HALO_SCALE / 2) / sunDist);
+            const sunHeightFraction = Math.min(1, (2 * sunAngularR) / fovRad);
+            sunBright = sunHeightFraction * SUN_BRIGHTNESS_SCALE * (1 - sunOcclFraction);
+          }
 
-        const totalBright = earthBright + moonBright + sunBright;
-        // Begin dimming once a fully-lit body covers ~10% of viewport height,
-        // fully gone once it covers ~70%.
-        const starVisibility = 1.0 - THREE.MathUtils.smoothstep(totalBright, 0.1, 0.7);
+          const totalBright = earthBright + moonBright + sunBright;
+          // Begin dimming once a fully-lit body covers ~10% of viewport height,
+          // fully gone once it covers ~70%.
+          const starVisibility = 1.0 - THREE.MathUtils.smoothstep(totalBright, 0.1, 0.7);
 
-        (skySphere.material as THREE.MeshBasicMaterial).color.setScalar(starVisibility);
+          (sky.material as THREE.MeshBasicMaterial).color.setScalar(starVisibility);
+        });
       }
 
+      perfFrameMark();
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
@@ -923,6 +936,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     }
 
     onGlobeReady(globeEl.current);
+    try { (window as any).__globeReady = true; } catch { /* ignore */ }
 
     return () => {
       controls.removeEventListener('change', checkThreshold);
@@ -2246,6 +2260,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       backgroundImageUrl="https://unpkg.com/three-globe/example/img/night-sky.png"
       animateIn={false}
       showAtmosphere={false}
+      enablePointerInteraction={false}
     />
   );
 };

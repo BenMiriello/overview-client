@@ -1,5 +1,6 @@
 import { Layer } from '../layers/LayerInterface';
 import { LayerFactory } from '../layers/LayerFactory';
+import { span as perfSpan } from '../utils/perfHUD';
 
 /**
  * Central manager for all globe layers
@@ -140,7 +141,7 @@ export class GlobeLayerManager {
 
     const animate = () => {
       const currentTime = Date.now();
-      this.updateAllLayers(currentTime);
+      perfSpan('layers', () => this.updateAllLayers(currentTime));
       this.animationFrameId = requestAnimationFrame(animate);
     };
 
