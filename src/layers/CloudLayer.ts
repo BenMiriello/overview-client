@@ -123,7 +123,7 @@ export class CloudLayer extends BaseLayer<void> {
       transparent: true,
       depthWrite: false,
       depthTest: false,
-      side: THREE.FrontSide,
+      side: THREE.DoubleSide,
     });
   }
 

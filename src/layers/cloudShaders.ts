@@ -107,11 +107,15 @@ export const cloudFragmentShader = /* glsl */ `
 
   void main() {
     vec3 n = normalize(vWorldNormal);
+    vec3 toCamera = normalize(cameraPosition - vWorldPos);
+
+    // When viewing the cloud shell from inside (below the clouds),
+    // gl_FrontFacing is false. Flip the normal so lighting works.
+    if (!gl_FrontFacing) n = -n;
 
     // Cull back-hemisphere fragments (behind the earth from camera's
     // perspective). Replaces depth-buffer occlusion so we can set
     // depthTest=false and avoid z-fighting with the earth surface.
-    vec3 toCamera = normalize(cameraPosition - vWorldPos);
     if (dot(n, toCamera) < -0.05) discard;
 
     // Linear floor remap. We deliberately do NOT use smoothstep here:
