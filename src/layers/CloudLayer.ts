@@ -6,7 +6,7 @@ import { sharedNightUniforms } from '../services/dayNightMaterial';
 import { cloudVertexShader, cloudFragmentShader } from './cloudShaders';
 
 const EARTH_RADIUS = 100;
-const CLOUD_ALT_FAR  = 0.01;
+const CLOUD_ALT_FAR  = 0.03;
 const CLOUD_ALT_NEAR = 0.003;
 const ALT_FAR_POINT  = 1.0;
 const ALT_NEAR_POINT = 0.25;

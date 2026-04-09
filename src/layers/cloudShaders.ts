@@ -110,18 +110,7 @@ export const cloudFragmentShader = /* glsl */ `
     // wherever the source crosses the upper edge AND killing relief
     // gradients in plateau regions. Linear remap preserves the source's
     // natural gradient across the whole range.
-    float dCenter = sampleDensity(vUv);
-    // Wide-radius average to dilute matteason's plateau saturation in dense
-    // convective bands. min(center, wide) only darkens plateau interiors —
-    // wispy regions have dCenter ≈ dWide so they're untouched.
-    vec2 wideStride = uTexelSize * 12.0;
-    float dWide = (
-      sampleHeight(vUv + vec2( wideStride.x, 0.0)) +
-      sampleHeight(vUv + vec2(-wideStride.x, 0.0)) +
-      sampleHeight(vUv + vec2(0.0,  wideStride.y)) +
-      sampleHeight(vUv + vec2(0.0, -wideStride.y))
-    ) * 0.25;
-    float density = mix(dCenter, min(dCenter, dWide), 0.35);
+    float density = sampleDensity(vUv);
     density = clamp((density - uDensityLo) / (1.0 - uDensityLo), 0.0, 1.0);
 
     // Local east/north tangent basis at this fragment, used for both the
@@ -160,7 +149,7 @@ export const cloudFragmentShader = /* glsl */ `
     float relief = 1.0 + (bumpDot - flatDot) * uReliefAmount;
     relief = clamp(relief, 0.7, 1.3);
 
-    float brightness = mix(uNightAmbient, 1.0, dayFactor) * relief;
+    float brightness = mix(uNightAmbient, 1.15, dayFactor) * relief;
 
     // Cast self-shadow: one tap toward the sun in heightmap space. Kept
     // subtle — a single binary "is the neighbor higher?" tap on noisy
@@ -183,26 +172,10 @@ export const cloudFragmentShader = /* glsl */ `
     // lightning-flash event listener in CloudLayer.ts.
     brightness += uFlashIntensity * 0.4;
 
-    // Dense clouds scatter more sunlight → appear whiter. Thin clouds
-    // appear noticeably grayer. Wide range so wispy and dense clouds
-    // differ in BRIGHTNESS, not just opacity. Lower floor (0.3) keeps
-    // faint wisps clearly grayish instead of bleached white.
-    brightness *= mix(0.3, 1.0, density);
-
-    // Cap before output: any value > 1.0 clips to flat white in the
-    // framebuffer, destroying density→brightness variation in dense cores.
     brightness = clamp(brightness, 0.0, 1.0);
 
-    // Alpha shape: gentle power curve, near-linear with a soft mid-lift.
-    // Avoids the cubic's dual-end compression that produced bimodal
-    // (faint OR saturated) output. Combined with a moderate opacity
-    // ceiling, this gives a wide visible range from wispy haze to
-    // mostly-but-not-fully opaque dense cores — preserving variation
-    // across the whole density range.
-    float alphaShape = pow(density, 1.15);
-
     vec3 color = vec3(brightness);
-    float alpha = alphaShape * uOpacity;
+    float alpha = density * uOpacity;
     if (alpha < 0.005) discard;
 
     gl_FragColor = vec4(color, alpha);
