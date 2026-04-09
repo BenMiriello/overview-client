@@ -27,6 +27,7 @@ let lastReportAt = 0;
 let lastReportFrameCount = 0;
 let totalFramesSinceReport = 0;
 let allocCounters = { vec3: 0, mat4: 0 };
+let renderInfo = { calls: 0, triangles: 0, textures: 0, geometries: 0, programs: 0 };
 let hudEl: HTMLDivElement | null = null;
 let installedAllocPatch = false;
 
@@ -116,6 +117,18 @@ export function span<T>(name: string, fn: () => T): T {
   }
 }
 
+// Capture THREE.WebGLRenderer.info after a render call.
+// Call this right after renderer.render(scene, camera).
+export function captureRenderInfo(renderer: any): void {
+  if (!ENABLED || !renderer?.info) return;
+  const info = renderer.info;
+  renderInfo.calls = info.render?.calls ?? 0;
+  renderInfo.triangles = info.render?.triangles ?? 0;
+  renderInfo.textures = info.memory?.textures ?? 0;
+  renderInfo.geometries = info.memory?.geometries ?? 0;
+  renderInfo.programs = info.programs?.length ?? 0;
+}
+
 // Mark the boundary of a rendered frame. Call once per main RAF tick.
 // Tracks frame time, manages history windows, and emits the report line
 // at the configured interval.
@@ -173,7 +186,12 @@ function emitReport(now: number): void {
     ? ` alloc/f vec3=${Math.round(allocCounters.vec3 / Math.max(1, totalFramesSinceReport))} mat4=${Math.round(allocCounters.mat4 / Math.max(1, totalFramesSinceReport))}`
     : '';
 
-  const line1 = `[perf] fps=${fmt(fps, 0)} p50=${fmt(p50)} p95=${fmt(p95)} p99=${fmt(p99)} long10s=${long10s} heap=${fmt(heapMB, 0)}MB${allocStr}`;
+  const ri = renderInfo;
+  const glStr = ri.calls > 0
+    ? ` draw=${ri.calls} tri=${(ri.triangles / 1000).toFixed(0)}k tex=${ri.textures} geo=${ri.geometries} prog=${ri.programs}`
+    : '';
+
+  const line1 = `[perf] fps=${fmt(fps, 0)} p50=${fmt(p50)} p95=${fmt(p95)} p99=${fmt(p99)} long10s=${long10s} heap=${fmt(heapMB, 0)}MB${glStr}${allocStr}`;
   const line2 = spanStr ? `       ${spanStr}` : '';
 
   // eslint-disable-next-line no-console

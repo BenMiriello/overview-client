@@ -10,7 +10,7 @@ import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } f
 import { MOON_RADIUS_SCENE } from '../services/astronomy';
 import { LAYERS } from '../services/renderLayers';
 import { StoredView, saveView } from './globeViewPersistence';
-import { span as perfSpan, frameMark as perfFrameMark } from '../utils/perfHUD';
+import { span as perfSpan, frameMark as perfFrameMark, captureRenderInfo } from '../utils/perfHUD';
 
 const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
@@ -598,6 +598,41 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     // actually moved by more than a threshold since the last call.
     const lastEngineCamPos = new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN);
 
+    // Per-frame back-side tile culling. SlippyMap engines never evict tiles
+    // until the LOD level changes, so panning at a fixed level accumulates
+    // tiles on the far side of the sphere — they keep getting drawn (depth-
+    // rejected by the planet) and burn draw calls + setProgram binds. We
+    // skip the binds entirely by toggling mesh.visible based on a horizon
+    // test in the engine's local frame.
+    //
+    // Math: tile passes if its bounding-sphere centroid `c` (in engine-local
+    // coords) satisfies `c · camLocal > R · |c|`. For tiles whose centroid
+    // sits on a sphere of radius R this reduces to the standard horizon test
+    // `c · camLocal > R²`. Limb tolerance (0.95) keeps tiles whose corners
+    // may still be visible even when the centroid has just crossed under.
+    const tmpCullCam = new THREE.Vector3();
+    const cullEngineTiles = (engine: THREE.Object3D, sphereR: number, cam: THREE.Camera) => {
+      tmpCullCam.copy(cam.position);
+      engine.worldToLocal(tmpCullCam);
+      const limbTol = 0.95;
+      const kids = engine.children;
+      for (let i = 0; i < kids.length; i++) {
+        const mesh = kids[i] as THREE.Mesh;
+        if (!(mesh as any).isMesh || !mesh.geometry) continue;
+        if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
+        const c = mesh.geometry.boundingSphere!.center;
+        let cLen = (mesh.userData as any).__cullCLen as number | undefined;
+        if (cLen === undefined) {
+          cLen = c.length();
+          (mesh.userData as any).__cullCLen = cLen;
+        }
+        // Skip full-sphere children (e.g. SlippyMap's _innerBackLayer): their
+        // centroid sits at the origin so the horizon test is meaningless.
+        if (cLen < sphereR * 0.1) continue;
+        mesh.visible = c.dot(tmpCullCam) > sphereR * cLen * limbTol;
+      }
+    };
+
     // Recovery watchdog for the npm Earth day engine (react-globe.gl / three-slippy-map-globe).
     // That engine has no onError callback, so failed fetches leave tiles permanently stuck
     // (d.loading=true, blank texture). When child count stops changing in close mode,
@@ -765,6 +800,15 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           }
         }
       }
+
+      perfSpan('cullTiles', () => {
+        if (dayTileEngineRef.current) cullEngineTiles(dayTileEngineRef.current, EARTH_R, camera);
+        cullEngineTiles(nightEngine, EARTH_R, camera);
+        if (moonMeshRef.current) {
+          cullEngineTiles(moonMeshRef.current.colorEngine, MOON_R_SCENE, camera);
+          cullEngineTiles(moonMeshRef.current.reliefEngine, MOON_R_SCENE, camera);
+        }
+      });
 
       perfSpan('nightTraverse', () => {
         nightEngine.traverse((child: any) => {
@@ -1646,7 +1690,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const renderer = globeEl.current.renderer();
       const scene = globeEl.current.scene();
       const camera = globeEl.current.camera();
-      renderer.render(scene, camera);
+      perfSpan('render', () => renderer.render(scene, camera));
+      captureRenderInfo(renderer);
     } catch { /* ignore */ }
   }
 
