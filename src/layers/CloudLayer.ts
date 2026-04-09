@@ -122,7 +122,7 @@ export class CloudLayer extends BaseLayer<void> {
       fragmentShader: cloudFragmentShader,
       transparent: true,
       depthWrite: false,
-      depthTest: true,
+      depthTest: false,
       side: THREE.FrontSide,
     });
   }
@@ -146,13 +146,6 @@ export class CloudLayer extends BaseLayer<void> {
         this.scene.add(mesh);
         this.shells.push({ mesh, altMultiplier: def.altMultiplier });
       }
-
-      this.occluderMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(EARTH_RADIUS, 32, 32),
-        new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.BackSide })
-      );
-      this.occluderMesh.renderOrder = LAYERS.CLOUD_OCCLUDER;
-      this.scene.add(this.occluderMesh);
 
       this.refreshTexture();
       const intervalMs = getConfig<number>('layers.clouds.refreshIntervalMs') || 30 * 60 * 1000;
@@ -237,8 +230,8 @@ export class CloudLayer extends BaseLayer<void> {
       this.baseTexture.dispose();
       this.baseTexture = null;
     }
-    if (this.occluderMesh && this.scene) {
-      this.scene.remove(this.occluderMesh);
+    if (this.occluderMesh) {
+      if (this.scene) this.scene.remove(this.occluderMesh);
       if (this.occluderMesh.geometry) this.occluderMesh.geometry.dispose();
       if (this.occluderMesh.material instanceof THREE.Material) this.occluderMesh.material.dispose();
       this.occluderMesh = null;

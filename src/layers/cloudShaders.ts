@@ -24,10 +24,12 @@
 export const cloudVertexShader = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vWorldNormal;
+  varying vec3 vWorldPos;
 
   void main() {
     vUv = uv;
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vWorldPos = worldPos.xyz;
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
@@ -52,6 +54,7 @@ export const cloudFragmentShader = /* glsl */ `
 
   varying vec2 vUv;
   varying vec3 vWorldNormal;
+  varying vec3 vWorldPos;
 
   float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -104,6 +107,12 @@ export const cloudFragmentShader = /* glsl */ `
 
   void main() {
     vec3 n = normalize(vWorldNormal);
+
+    // Cull back-hemisphere fragments (behind the earth from camera's
+    // perspective). Replaces depth-buffer occlusion so we can set
+    // depthTest=false and avoid z-fighting with the earth surface.
+    vec3 toCamera = normalize(cameraPosition - vWorldPos);
+    if (dot(n, toCamera) < -0.05) discard;
 
     // Linear floor remap. We deliberately do NOT use smoothstep here:
     // a sigmoid saturates the dense end, producing a visible contour line
