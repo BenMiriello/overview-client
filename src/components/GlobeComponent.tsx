@@ -611,6 +611,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     // `c · camLocal > R²`. Limb tolerance (0.95) keeps tiles whose corners
     // may still be visible even when the centroid has just crossed under.
     const tmpCullCam = new THREE.Vector3();
+    let lastEvictAt = 0;
+    const EVICT_INTERVAL_MS = 1000;
+    const EVICT_AGE_MS = 30_000;
     const cullEngineTiles = (engine: THREE.Object3D, sphereR: number, cam: THREE.Camera) => {
       tmpCullCam.copy(cam.position);
       engine.worldToLocal(tmpCullCam);
@@ -629,7 +632,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         // Skip full-sphere children (e.g. SlippyMap's _innerBackLayer): their
         // centroid sits at the origin so the horizon test is meaningless.
         if (cLen < sphereR * 0.1) continue;
-        mesh.visible = c.dot(tmpCullCam) > sphereR * cLen * limbTol;
+        const vis = c.dot(tmpCullCam) > sphereR * cLen * limbTol;
+        mesh.visible = vis;
+        if (vis) (mesh.userData as any).__lastVisibleAt = Date.now();
       }
     };
 
@@ -809,6 +814,20 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           cullEngineTiles(moonMeshRef.current.reliefEngine, MOON_R_SCENE, camera);
         }
       });
+
+      const evictNow = Date.now();
+      if (evictNow - lastEvictAt > EVICT_INTERVAL_MS) {
+        lastEvictAt = evictNow;
+        perfSpan('evict', () => {
+          const pred = (m: THREE.Mesh) =>
+            !m.visible && evictNow - ((m.userData as any).__lastVisibleAt ?? 0) > EVICT_AGE_MS;
+          nightEngine.evictTiles(pred);
+          if (moonMeshRef.current) {
+            moonMeshRef.current.colorEngine.evictTiles(pred);
+            moonMeshRef.current.reliefEngine.evictTiles(pred);
+          }
+        });
+      }
 
       perfSpan('nightTraverse', () => {
         nightEngine.traverse((child: any) => {

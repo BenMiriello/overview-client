@@ -28,6 +28,7 @@ import {
   Vector3,
   Frustum,
   Matrix4,
+  Sphere,
   SRGBColorSpace,
   Material,
   Texture,
@@ -65,16 +66,25 @@ interface TileMeta {
   lat: number;
   latLen: number;
   centroid?: { x: number; y: number; z: number };
-  hullPnts?: Vector3[];
+  tileRadius?: number;
   obj?: Mesh;
   loading?: boolean;
   controller?: AbortController;
+  _sortDot?: number;
 }
 
 interface TileMetaLevel extends Array<TileMeta> {
   octree?: ReturnType<typeof octree>;
   record?: Record<string, TileMeta>;
 }
+
+// Scratch objects reused across updatePov / fetchNeededTiles calls to avoid
+// per-frame allocation churn. Never store references to these externally.
+const _tmpMat4 = new Matrix4();
+const _tmpVec3A = new Vector3();
+const _tmpVec3B = new Vector3();
+const _tmpVec3C = new Vector3();
+const _tmpSphere = new Sphere();
 
 // ── Math helpers (inlined from d3-geo / d3-scale) ─────────────────────────
 
@@ -267,6 +277,9 @@ export default class SlippyMapGlobe extends Group {
   #isInView?: (d: TileMeta) => boolean;
   #camera?: Camera;
   #innerBackLayer: Mesh;
+  #lastPovX = NaN;
+  #lastPovY = NaN;
+  #lastPovZ = NaN;
 
   constructor(radius: number, opts: SlippyMapOptions = {}) {
     super();
@@ -359,40 +372,44 @@ export default class SlippyMapGlobe extends Group {
     if (!camera || !(camera instanceof Camera)) return;
     this.#camera = camera;
 
+    const cp = camera.position;
+    if (Math.abs(cp.x - this.#lastPovX) < 0.001 &&
+        Math.abs(cp.y - this.#lastPovY) < 0.001 &&
+        Math.abs(cp.z - this.#lastPovZ) < 0.001) {
+      return;
+    }
+    this.#lastPovX = cp.x;
+    this.#lastPovY = cp.y;
+    this.#lastPovZ = cp.z;
+
     let frustum: Frustum | undefined;
     this.#isInView = (d: TileMeta): boolean => {
-      if (!d.hullPnts) {
-        const { gx } = gridDims(this.level, this.#isMercator);
-        const lngLen = 360 / gx;
-        const { lng, lat, latLen } = d;
-        const lng0 = lng - lngLen / 2;
-        const lng1 = lng + lngLen / 2;
-        const lat0 = lat - latLen / 2;
-        const lat1 = lat + latLen / 2;
-        d.hullPnts = ([
-          [lat, lng],
-          [lat0, lng0],
-          [lat1, lng0],
-          [lat0, lng1],
-          [lat1, lng1],
-        ] as [number, number][])
-          .map(([la, ln]) => polar2Cartesian(la, ln, this.#radius))
-          .map(({ x, y, z }) => new Vector3(x, y, z));
-      }
       if (!frustum) {
         frustum = new Frustum();
         camera.updateMatrix();
         camera.updateMatrixWorld();
         frustum.setFromProjectionMatrix(
-          new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+          _tmpMat4.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
         );
       }
-      return d.hullPnts.some((pos) => frustum!.containsPoint(pos.clone().applyMatrix4(this.matrixWorld)));
+      if (d.tileRadius === undefined) {
+        const { gx } = gridDims(this.level, this.#isMercator);
+        const halfLngRad = (180 / gx) * Math.PI / 180;
+        const halfLatRad = (d.latLen / 2) * Math.PI / 180;
+        const halfDiag = Math.sqrt(halfLngRad * halfLngRad + halfLatRad * halfLatRad);
+        // Exact chord from centroid to farthest corner: 2R·sin(θ/2).
+        // R·sin(θ) underestimates by ~17% for level-2 tiles (halfDiag ≈ 1.1 rad).
+        d.tileRadius = 2 * this.#radius * Math.sin(halfDiag / 2);
+      }
+      const c = d.centroid!;
+      _tmpVec3A.set(c.x, c.y, c.z).applyMatrix4(this.matrixWorld);
+      _tmpSphere.set(_tmpVec3A, d.tileRadius);
+      return frustum.intersectsSphere(_tmpSphere);
     };
 
     if (this.tileUrl) {
-      const pov = camera.position.clone();
-      const distToGlobeCenter = pov.distanceTo(this.getWorldPosition(new Vector3()));
+      const pov = _tmpVec3B.copy(camera.position);
+      const distToGlobeCenter = pov.distanceTo(this.getWorldPosition(_tmpVec3C));
       const cameraDistance = (distToGlobeCenter - this.#radius) / this.#radius;
       const rawIdx = this.thresholds.findIndex((t) => t && t <= cameraDistance);
       const rawLevel = Math.min(this.maxLevel, Math.max(this.minLevel, rawIdx < 0 ? this.thresholds.length : rawIdx));
@@ -422,6 +439,29 @@ export default class SlippyMapGlobe extends Group {
   get loadingCount(): number {
     if (this.#level === undefined || !this.#tilesMeta[this.#level]) return 0;
     return this.#tilesMeta[this.#level].filter((d) => d.loading).length;
+  }
+
+  /**
+   * Evict tiles matching `pred`. Aborts in-flight fetches, disposes
+   * geometry/material/texture, removes from scene graph, and clears
+   * the meta entry so the engine will refetch on demand.
+   */
+  evictTiles(pred: (tile: Mesh) => boolean): number {
+    let count = 0;
+    for (const levelTiles of Object.values(this.#tilesMeta)) {
+      for (const d of levelTiles) {
+        if (d.obj && pred(d.obj)) {
+          d.controller?.abort();
+          this.remove(d.obj);
+          deallocate(d.obj);
+          delete d.obj;
+          delete d.loading;
+          delete d.controller;
+          count++;
+        }
+      }
+    }
+    return count;
   }
 
   #buildMetaLevel(level: number): void {
@@ -455,7 +495,7 @@ export default class SlippyMapGlobe extends Group {
     let tiles: TileMeta[] = this.#tilesMeta[this.#level];
 
     if (this.#camera) {
-      const povPos = this.worldToLocal(this.#camera.position.clone());
+      const povPos = this.worldToLocal(_tmpVec3B.copy(this.#camera.position));
       const fullLevel = this.#tilesMeta[this.#level];
       if (fullLevel.octree) {
         // Correct search radius: the farthest visible surface point is at the geometric horizon,
@@ -540,20 +580,27 @@ export default class SlippyMapGlobe extends Group {
     // Camera look direction in local space — used to sort tiles by screen-center proximity.
     let camLookLocal: Vector3 | null = null;
     if (this.#camera && (this.#camera as any).quaternion) {
-      const worldLook = new Vector3(0, 0, -1).applyQuaternion((this.#camera as any).quaternion);
-      camLookLocal = this.worldToLocal(this.#camera.position.clone().add(worldLook)).normalize();
+      const worldLook = _tmpVec3A.set(0, 0, -1).applyQuaternion((this.#camera as any).quaternion);
+      camLookLocal = this.worldToLocal(_tmpVec3B.copy(this.#camera.position).add(worldLook)).normalize();
     }
 
-    tiles
+    const candidates = tiles
       .filter((d) => !d.obj && !d.loading)
-      .filter(this.#isInView ?? (() => true))
-      .sort((a, b) => {
-        if (!camLookLocal || !a.centroid || !b.centroid) return 0;
-        const dotA = new Vector3(a.centroid.x, a.centroid.y, a.centroid.z).normalize().dot(camLookLocal);
-        const dotB = new Vector3(b.centroid.x, b.centroid.y, b.centroid.z).normalize().dot(camLookLocal);
-        return dotB - dotA;  // larger dot = closer to screen center = higher priority
-      })
-      .slice(0, slots)
+      .filter(this.#isInView ?? (() => true));
+
+    if (camLookLocal) {
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i].centroid;
+        if (!c) { candidates[i]._sortDot = 0; continue; }
+        const len = Math.sqrt(c.x * c.x + c.y * c.y + c.z * c.z);
+        candidates[i]._sortDot = len > 0
+          ? (c.x * camLookLocal.x + c.y * camLookLocal.y + c.z * camLookLocal.z) / len
+          : 0;
+      }
+      candidates.sort((a, b) => (b._sortDot ?? 0) - (a._sortDot ?? 0));
+    }
+
+    candidates.slice(0, slots)
       .forEach((d) => {
         const { x, y, lng, lat, latLen } = d;
         const { gx } = gridDims(this.#level!, this.#isMercator);
