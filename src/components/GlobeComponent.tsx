@@ -21,9 +21,10 @@ const MOON_TILT_THRESHOLD_ENTER = 1.0;
 const MOON_TILT_THRESHOLD_EXIT  = 1.15;
 const MOON_MIN_ALTITUDE         = 0.001;
 
-
-const PITCH_NEAR_THRESHOLD = 0;
-const PITCH_MAX_ZOOM       = Math.PI / 3; // 60° from vertical = 30° elevation at max zoom
+// Camera pitch tuning — all values in degrees for readability
+const MIN_ELEVATION_DEG    = 22.5;   // lowest viewing angle above horizon at max zoom
+const FULL_TILT_ALT        = 0.005; // altitude where min elevation is reached (cloud-ground midpoint)
+const PITCH_MAX_ZOOM       = (90 - MIN_ELEVATION_DEG) * Math.PI / 180;
 
 const ORBIT_SPEED_PLANET      = 0.067;
 const ORBIT_HEADING_SPEED = 2 * Math.PI / 60; // rad/s — one full revolution per 60 seconds
@@ -99,11 +100,11 @@ function cartesianToLatLng(v: THREE.Vector3): { lat: number; lng: number } {
 }
 
 function pitchFromAltitude(altitude: number): number {
-  const t = Math.max(0, Math.min(1,
-    (TILT_THRESHOLD_ENTER - altitude) / (TILT_THRESHOLD_ENTER - MIN_ALTITUDE)
-  ));
-  const tEased = t * t; // quadratic: slow to tilt near threshold, progressively steeper close to ground
-  return PITCH_NEAR_THRESHOLD + (PITCH_MAX_ZOOM - PITCH_NEAR_THRESHOLD) * tEased;
+  if (altitude >= TILT_THRESHOLD_ENTER) return 0;
+  if (altitude <= FULL_TILT_ALT) return PITCH_MAX_ZOOM;
+  const t = Math.log(TILT_THRESHOLD_ENTER / altitude)
+          / Math.log(TILT_THRESHOLD_ENTER / FULL_TILT_ALT);
+  return PITCH_MAX_ZOOM * (1 - (1 - t) * (1 - t));
 }
 
 function raySphereIntersect(
@@ -760,7 +761,22 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       //   bypass OrbitControls entirely. Double-calling during user drag is harmless — the library's
       //   d.loading flag prevents redundant fetches.
       if (dayTileEngineRef.current && (inCloseModeRef.current || cameraActuallyMoved)) {
-        perfSpan('updatePov.day', () => dayTileEngineRef.current!.updatePov(camera));
+        perfSpan('updatePov.day', () => {
+          // The day engine (#isInView) uses a 5-point hull containsPoint test (npm package,
+          // unmodifiable). At level 2–4, tiles 22–90° wide can straddle the frustum boundary
+          // with all hull points outside → never fetched → blank zones at screen edges.
+          // Pre-call with a wider frustum so those edge tiles pass the hull test and load.
+          if (!inCloseModeRef.current) {
+            const perspCam = camera as THREE.PerspectiveCamera;
+            if (perspCam.fov !== undefined) {
+              const synth = perspCam.clone() as THREE.PerspectiveCamera;
+              synth.fov = Math.min(175, perspCam.fov + 75);
+              synth.updateProjectionMatrix();
+              dayTileEngineRef.current!.updatePov(synth);
+            }
+          }
+          dayTileEngineRef.current!.updatePov(camera);
+        });
         // Synthetic cameras only needed when camera actually moved — tiles are already
         // loaded when stationary, so the extra updatePov calls would be pure overhead.
         if (inCloseModeRef.current && cameraActuallyMoved) {
@@ -1438,9 +1454,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const startLng = closeModeState.current.targetLng;
       const startAlt = closeModeState.current.altitude;
 
-      let lngDelta = flyTo.lng - startLng;
-      if (lngDelta > 180) lngDelta -= 360;
-      if (lngDelta < -180) lngDelta += 360;
+      // Normalize to shortest angular path — works even when startLng has
+      // accumulated many full rotations of panning (single ±360 is insufficient).
+      const lngDelta = (((flyTo.lng - startLng) % 360) + 540) % 360 - 180;
+
+      console.log(`[flyTo] target=lat:${flyTo.lat.toFixed(2)},lng:${flyTo.lng.toFixed(2)} startLng=${startLng.toFixed(2)} lngDelta=${lngDelta.toFixed(2)} endLng=${(startLng+lngDelta).toFixed(2)}`);
 
       const targetAlt = flyTo.altitude ?? 0.5;
 
@@ -1486,9 +1504,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const start = globeEl.current.pointOfView();
       globeEl.current.pointOfView(start, 0); // reset OrbitControls damping
 
-      let lngDelta = flyTo.lng - start.lng;
-      if (lngDelta > 180) lngDelta -= 360;
-      if (lngDelta < -180) lngDelta += 360;
+      const lngDelta = (((flyTo.lng - start.lng) % 360) + 540) % 360 - 180;
 
       const targetAlt = flyTo.altitude ?? 0.5;
       const duration = 1500;
