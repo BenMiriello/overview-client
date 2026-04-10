@@ -619,10 +619,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       cam.getWorldPosition(tmpCullCam);
       engine.worldToLocal(tmpCullCam);
       const D = tmpCullCam.length();
-      // Horizon plane threshold: R²/D is the distance from the globe center to the
-      // tangent plane (the farthest visible depth along the camera direction).
-      // A tile is culled only if its nearest edge in the camera direction is behind this plane.
-      const horizonThreshold = (sphereR * sphereR / D) * 0.95;
+      // horizonCos = cos(arccos(R/D)) = R/D — the cosine of the angle to the visible horizon.
+      const horizonCos = sphereR / D;
+      const sinHorizon = Math.sqrt(Math.max(0, 1 - horizonCos * horizonCos));
       const kids = engine.children;
       for (let i = 0; i < kids.length; i++) {
         const mesh = kids[i] as THREE.Mesh;
@@ -638,12 +637,27 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         // Skip full-sphere children (e.g. SlippyMap's _innerBackLayer): their
         // centroid sits at the origin so the horizon test is meaningless.
         if (cLen < sphereR * 0.1) continue;
-        // Project centroid onto the camera direction, then add the bounding sphere
-        // radius as a buffer. Without the radius term, large tiles (polar caps,
-        // equatorial bands) whose bounding sphere center points tangentially to the
-        // camera are incorrectly culled even when their near edge is fully visible.
-        const dotCA = c.dot(tmpCullCam) / D;
-        const vis = dotCA + bs.radius > horizonThreshold;
+
+        // Tile angular radius from the law of cosines on the triangle
+        // (globe origin, bounding-sphere centroid, farthest tile vertex).
+        // All tile vertices lie on the sphere of radius sphereR, so:
+        //   bsRadius² = sphereR² + cLen² - 2·sphereR·cLen·cos(tileAngularRadius)
+        // → cos(tileAngularRadius) = (sphereR² + cLen² - bsRadius²) / (2·sphereR·cLen)
+        // This correctly maps the 3D bounding sphere to an angular footprint on the
+        // globe surface, unlike the old "dotCA + bsRadius" formula which treated bsRadius
+        // as a Z-direction offset and produced large false-positives at close altitudes.
+        const tileAngleCos = Math.max(-1, Math.min(1,
+          (sphereR * sphereR + cLen * cLen - bs.radius * bs.radius) / (2 * sphereR * cLen)
+        ));
+        const sinTileAngle = Math.sqrt(Math.max(0, 1 - tileAngleCos * tileAngleCos));
+
+        // A tile is visible if angle(centroid, camera) < horizonAngle + tileAngularRadius.
+        // In cosine form: cos(angle) > cos(horizonAngle + tileAngularRadius)
+        //   = cosH·cosT − sinH·sinT  (angle-addition formula)
+        // 5% buffer (× 0.95) so limb tiles don't pop out before they're fully loaded.
+        const limitCos = (horizonCos * tileAngleCos - sinHorizon * sinTileAngle) * 0.95;
+        const cDotCam = c.dot(tmpCullCam) / (cLen * D); // cos(angle between centroid and camera)
+        const vis = cDotCam > limitCos;
         mesh.visible = vis;
         if (vis) (mesh.userData as any).__lastVisibleAt = Date.now();
       }

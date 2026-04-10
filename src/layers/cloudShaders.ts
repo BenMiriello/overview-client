@@ -110,18 +110,11 @@ export const cloudFragmentShader = /* glsl */ `
     vec3 n = normalize(vWorldNormal);
     vec3 toCamera = normalize(cameraPosition - vWorldPos);
 
+    // Discard back faces entirely. The cloud shell is viewed from outside only.
+    if (!gl_FrontFacing) discard;
+
     // Front faces: standard back-hemisphere cull (behind the earth).
-    if (gl_FrontFacing && dot(n, toCamera) < -0.05) discard;
-
-    // Back faces: only render when camera is inside the cloud shell.
-    if (!gl_FrontFacing && length(cameraPosition) > length(vWorldPos) + 1.0) discard;
-
-    // Back faces: only render fragments roughly overhead. Without this
-    // restriction, back faces between the camera and the earth create a
-    // dark semi-transparent overlay (they shade as nighttime because the
-    // flipped normal is opposite the sun). Cutoff at ~80° from directly
-    // above prevents back faces near/below the horizon from rendering.
-    if (!gl_FrontFacing && dot(normalize(cameraPosition), normalize(vWorldPos)) < 0.15) discard;
+    if (dot(n, toCamera) < -0.05) discard;
 
     // Linear floor remap. We deliberately do NOT use smoothstep here:
     // a sigmoid saturates the dense end, producing a visible contour line
