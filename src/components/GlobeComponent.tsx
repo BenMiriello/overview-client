@@ -3,7 +3,7 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
-import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
+import { updateSunDirection, patchNightTileMaterial, createDayTileEngine, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
 import { createMoonMesh, updateMoonPosition, updateMoonOrientation, MoonGroup } from '../services/moonMesh';
 import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE, SUN_HALO_SCALE } from '../services/sunMesh';
 import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } from '../services/atmosphereMesh';
@@ -59,6 +59,7 @@ interface GlobeComponentProps {
   isOrbiting: boolean;
   onIsOrbitingChange: (val: boolean) => void;
   viewTarget?: 'earth' | 'moon';
+  cloudsEnabled?: boolean;
   restoredView?: StoredView | null;
 }
 
@@ -402,6 +403,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   isOrbiting,
   onIsOrbitingChange,
   viewTarget = 'earth',
+  cloudsEnabled = true,
   restoredView = null,
 }) => {
   const globeEl          = useRef<any>(null);
@@ -427,15 +429,12 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   const justExitedCloseModeRef = useRef(false);
   const flyToActiveRef         = useRef(false);
   useEffect(() => { prefer3DRef.current = is3D; }, [is3D]);
+  const cloudsEnabledRef = useRef(cloudsEnabled);
+  useEffect(() => { cloudsEnabledRef.current = cloudsEnabled; }, [cloudsEnabled]);
 
   const dragVelocityRef  = useRef<{ dlat: number; dlng: number } | null>(null);
 
-  const tileEngineRef    = useRef<THREE.Object3D | null>(null);
-  // The ThreeSlippyMapGlobe instance inside the globe group — needed to call
-  // updatePov() ourselves when OrbitControls is disabled (close mode), since
-  // the library only calls it from the controls 'change' event.
   const dayTileEngineRef = useRef<any>(null);
-
   const nightTileEngineRef = useRef<THREE.Object3D | null>(null);
   const moonMeshRef = useRef<MoonGroup | null>(null);
 
@@ -446,9 +445,14 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     let rafId: number;
 
     const globeRadius = globeEl.current.getGlobeRadius() as number;
+    const scene = globeEl.current.scene() as THREE.Scene;
+
+    const dayEngine = createDayTileEngine(globeRadius);
+    scene.add(dayEngine);
+    dayTileEngineRef.current = dayEngine;
+
     const nightEngine = createNightTileEngine(globeRadius);
     nightEngine.scale.setScalar(1.0001);
-    const scene = globeEl.current.scene() as THREE.Scene;
     scene.add(nightEngine);
     nightTileEngineRef.current = nightEngine;
 
@@ -494,7 +498,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const sunFrustum = new THREE.Frustum();
     const sunSphere = new THREE.Sphere(new THREE.Vector3(), SUN_HALO_SCALE / 2);
     const tmpProjScreen = new THREE.Matrix4();
-    const synthDayCam = new THREE.PerspectiveCamera();
 
     // Returns true if the segment from `camPos` to `sunPos` passes through a
     // sphere at the origin with radius `EARTH_R`. Standard ray-sphere
@@ -664,11 +667,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       }
     };
 
-    // Recovery watchdog for the npm Earth day engine (react-globe.gl / three-slippy-map-globe).
-    // That engine has no onError callback, so failed fetches leave tiles permanently stuck
-    // (d.loading=true, blank texture). When child count stops changing in close mode,
-    // the engine is likely stuck — clearTiles() resets all tile state.
-    const dayEngineWatchdog = { lastCount: -1, lastChangedAt: Date.now() };
     const cameraMoved = (cam: THREE.Camera, threshold: number): boolean => {
       if (Number.isNaN(lastEngineCamPos.x)) {
         lastEngineCamPos.copy(cam.position);
@@ -680,10 +678,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       }
       return false;
     };
-
-    // Tracks the last stable level for the npm day engine. The npm engine has no
-    // hysteresis — we implement it here to prevent level thrashing near thresholds.
-    let dayStableLevel: number | null = null;
 
     const tick = () => {
       if (cancelled || !globeEl.current) return;
@@ -768,117 +762,18 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         } catch { /* ignore */ }
       }
 
-      // Patch day tiles with day/night darkening shader
       const camera = globeEl.current.camera();
-      const scene = globeEl.current.scene() as THREE.Scene;
-      perfSpan('sceneTraverse', () => {
-        scene.traverse((child: any) => {
-          if (child.isMesh && child.material?.isMeshLambertMaterial && !child.material.userData?.__nightTilePatched) {
-            patchTileMaterial(child.material);
-          }
-        });
-      });
 
       // Compute once — cameraMoved updates its internal lastEngineCamPos on the first true result,
       // so all engines share the same snapshot for this tick.
       const ENGINE_MOVE_THRESHOLD = 0.05;
       const cameraActuallyMoved = cameraMoved(camera, ENGINE_MOVE_THRESHOLD);
 
-      // Close mode: OrbitControls disabled — controls.change never fires, drive every frame.
-      // Normal mode: controls.change → globe.gl setPointOfView → updatePov covers user-driven moves.
-      //   cameraActuallyMoved fills the gap for programmatic moves (intro animation, flyTo) that
-      //   bypass OrbitControls entirely. Double-calling during user drag is harmless — the library's
-      //   d.loading flag prevents redundant fetches.
       if (dayTileEngineRef.current && (inCloseModeRef.current || cameraActuallyMoved)) {
-        perfSpan('updatePov.day', () => {
-          if (!inCloseModeRef.current) {
-            const perspCam = camera as THREE.PerspectiveCamera;
-            if (perspCam.fov !== undefined) {
-              const D = camera.position.length();
-              const distFromSurface = (D - EARTH_R) / EARTH_R;
-
-              // Altitude-adaptive FOV: arccos(R/D) is the horizon angle. synthFov covers
-              // the full visible hemisphere + 5° so edge tiles' hull points pass the npm
-              // engine's containsPoint frustum test at any altitude.
-              const visAngleDeg = D > EARTH_R
-                ? Math.acos(EARTH_R / D) * (180 / Math.PI)
-                : 89;
-              const synthFov = Math.min(179, visAngleDeg * 2 + 10);
-
-              // Client-side hysteresis: the npm engine has none — OrbitControls inertia
-              // oscillates near level thresholds, causing the engine to remove all tiles
-              // of the old level before new ones arrive, blanking the globe each bounce.
-              const HYSTERESIS = 0.05;
-              const thresholds: number[] = dayTileEngineRef.current!.thresholds;
-              const curLevel = dayStableLevel ?? dayTileEngineRef.current!.level;
-              const rawIdx = thresholds.findIndex((t: number) => t && t <= distFromSurface);
-              const rawLevel = Math.min(17, Math.max(0, rawIdx < 0 ? thresholds.length : rawIdx));
-
-              let targetLevel = rawLevel;
-              if (rawLevel !== curLevel) {
-                const isZoomingIn = rawLevel > curLevel;
-                const boundaryIdx = isZoomingIn ? curLevel : rawLevel;
-                const boundary = thresholds[boundaryIdx] ?? 0;
-                const shouldSwitch = isZoomingIn
-                  ? distFromSurface < boundary * (1 - HYSTERESIS)
-                  : distFromSurface > boundary * (1 + HYSTERESIS);
-                if (!shouldSwitch) targetLevel = curLevel;
-              }
-              dayStableLevel = targetLevel;
-
-              // Single camera combining both fixes: wide FOV (edge tiles) + hysteresis
-              // altitude (level lock). One call instead of two — the npm engine has no
-              // position-change early-return, so a second real-camera call would recompute
-              // the level from the real altitude and undo the hysteresis.
-              synthDayCam.fov = synthFov;
-              synthDayCam.aspect = perspCam.aspect;
-              synthDayCam.near = perspCam.near;
-              synthDayCam.far = perspCam.far;
-              const synth = synthDayCam;
-              if (targetLevel !== rawLevel) {
-                // Hysteresis zone: clamp altitude so the engine's level stays stable.
-                // At level <= renderAllCap (6), #isInView passes all tiles regardless of
-                // frustum, so the shifted position doesn't affect which tiles are fetched.
-                const isZoomingIn = rawLevel > targetLevel;
-                const boundary = thresholds[isZoomingIn ? targetLevel : rawLevel] ?? distFromSurface;
-                const safeDistFromSurface = boundary * (isZoomingIn ? 1.025 : 0.975);
-                synth.position.copy(camera.position).normalize().multiplyScalar(
-                  EARTH_R * (1 + safeDistFromSurface)
-                );
-                synth.quaternion.copy(camera.quaternion);
-              } else {
-                // Stable level: real position with exact view matrix for correct frustum.
-                synth.position.copy(camera.position);
-                synth.quaternion.copy(camera.quaternion);
-                synth.matrixWorld.copy(camera.matrixWorld);
-                synth.matrixWorldInverse.copy(camera.matrixWorldInverse);
-              }
-              synth.updateProjectionMatrix();
-              dayTileEngineRef.current!.updatePov(synth);
-            }
-          } else {
-            dayTileEngineRef.current!.updatePov(camera);
-          }
-        });
-        // Synthetic cameras only needed when camera actually moved — tiles are already
-        // loaded when stationary, so the extra updatePov calls would be pure overhead.
+        perfSpan('updatePov.day', () => dayTileEngineRef.current!.updatePov(camera));
         if (inCloseModeRef.current && cameraActuallyMoved) {
           applyHorizonTilePovs(dayTileEngineRef.current, camera as THREE.PerspectiveCamera,
             new THREE.Vector3(), EARTH_R);
-        }
-
-        // Watchdog: if in close mode and the tile child count hasn't changed in 30s,
-        // the engine is likely stuck with blank tiles. clearTiles() resets all state
-        // so tiles can be re-fetched fresh.
-        if (inCloseModeRef.current) {
-          const count = dayTileEngineRef.current.children.length;
-          if (count !== dayEngineWatchdog.lastCount) {
-            dayEngineWatchdog.lastCount = count;
-            dayEngineWatchdog.lastChangedAt = Date.now();
-          } else if (Date.now() - dayEngineWatchdog.lastChangedAt > 30_000) {
-            dayTileEngineRef.current.clearTiles();
-            dayEngineWatchdog.lastChangedAt = Date.now();
-          }
         }
       }
       if (inCloseModeRef.current || cameraActuallyMoved) {
@@ -920,6 +815,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         perfSpan('evict', () => {
           const pred = (m: THREE.Mesh) =>
             !m.visible && evictNow - ((m.userData as any).__lastVisibleAt ?? 0) > EVICT_AGE_MS;
+          if (dayTileEngineRef.current) dayTileEngineRef.current.evictTiles(pred);
           nightEngine.evictTiles(pred);
           if (moonMeshRef.current) {
             moonMeshRef.current.colorEngine.evictTiles(pred);
@@ -1006,6 +902,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
+      scene.remove(dayEngine);
+      dayEngine.clearTiles();
+      dayTileEngineRef.current = null;
       scene.remove(nightEngine);
       nightEngine.clearTiles();
       nightTileEngineRef.current = null;
@@ -1070,25 +969,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.domElement.addEventListener('mousedown', stopIntroAnimation);
     controls.domElement.addEventListener('wheel', stopIntroAnimation, { passive: true });
     controls.domElement.addEventListener('touchstart', stopIntroAnimation);
-
-    const scene = globeEl.current.scene() as any;
-    if (scene) {
-      scene.traverse((obj: any) => {
-        if (typeof obj.globeTileEngineUrl === 'function') {
-          tileEngineRef.current = obj;
-          obj.globeTileEngineUrl(
-            (x: number, y: number, level: number) =>
-              `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`
-          );
-          obj.globeTileEngineMaxLevel(17);
-          // Cache the ThreeSlippyMapGlobe instance so the tick loop can call
-          // updatePov() when OrbitControls is disabled (see dayTileEngineRef).
-          obj.traverse((child: any) => {
-            if (Array.isArray(child.thresholds)) dayTileEngineRef.current = child;
-          });
-        }
-      });
-    }
 
     if (!layerManagerRef.current) {
       const manager = new GlobeLayerManager();
@@ -2372,6 +2252,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         viewTarget: viewTargetRef.current,
         is3D: prefer3DRef.current,
         isOrbiting: isOrbitingRef.current,
+        cloudsEnabled: cloudsEnabledRef.current,
         mode,
       };
 

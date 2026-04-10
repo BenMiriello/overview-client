@@ -1,4 +1,4 @@
-import { Flame, RotateCcw, Moon, Earth } from 'lucide-react';
+import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff } from 'lucide-react';
 import './GlobeControls.css';
 
 interface Hotspot {
@@ -18,6 +18,8 @@ interface GlobeControlsProps {
   onGoToHotspot?: () => void;
   viewTarget?: 'earth' | 'moon';
   onToggleViewTarget?: () => void;
+  cloudsEnabled?: boolean;
+  onToggleClouds?: () => void;
 }
 
 interface CtrlBtnProps {
@@ -51,6 +53,8 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   onGoToHotspot,
   viewTarget = 'earth',
   onToggleViewTarget,
+  cloudsEnabled = true,
+  onToggleClouds,
 }) => {
   const hotspotClass = [
     'globe-ctrl-btn',
@@ -94,6 +98,14 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
           <Moon size={16} />
         : <Earth size={16} />
         }
+      </CtrlBtn>
+      <CtrlBtn
+        className={`globe-ctrl-btn ${cloudsEnabled ? 'active' : ''}`}
+        onClick={onToggleClouds}
+        ariaLabel={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
+        tooltip={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
+      >
+        {cloudsEnabled ? <Cloud size={16} /> : <CloudOff size={16} />}
       </CtrlBtn>
       <CtrlBtn
         className={`globe-ctrl-btn ${is3D ? 'active' : ''}`}

@@ -48,6 +48,7 @@ const GlobePage = () => {
   });
   const [isOrbiting, setIsOrbiting] = useState(() => restoredView?.isOrbiting ?? false);
   const [viewTarget, setViewTarget] = useState<'earth' | 'moon'>(() => restoredView?.viewTarget ?? 'earth');
+  const [cloudsEnabled, setCloudsEnabled] = useState(() => restoredView?.cloudsEnabled ?? true);
 
   useEffect(() => {
     // Stored view rehydrates the camera directly — skip the intro fetch + animation.
@@ -91,8 +92,8 @@ const GlobePage = () => {
     const id = setInterval(() => {
       if (!globeEl.current) return;
       const { lat, lng, altitude } = globeEl.current.pointOfView();
-      // Threshold scales with zoom: farther out → wider acceptance
-      const threshold = Math.max(20, altitude * 15);
+      // Threshold scales with zoom: 3° when close (~330 km), up to 30° when far out
+      const threshold = Math.max(3, Math.min(30, altitude * 15));
       const viewing = angularDistance(lat, lng, activeHotspot.lat, activeHotspot.lng) < threshold;
       setIsViewingHotspot(viewing);
       if (viewing) setHasNewHotspot(false);
@@ -105,9 +106,15 @@ const GlobePage = () => {
     globeEl.current = globe;
   }, []);
 
+  const cloudsEnabledRef = useRef(cloudsEnabled);
+  cloudsEnabledRef.current = cloudsEnabled;
+
   const handleLayerManagerReady = useCallback((manager: GlobeLayerManager) => {
     layerManagerRef.current = manager;
-    manager.createLayer<CloudLayer>('clouds', 'clouds');
+    const cloudLayer = manager.createLayer<CloudLayer>('clouds', 'clouds');
+    if (cloudLayer) {
+      cloudLayer.setCloudsEnabled(cloudsEnabledRef.current);
+    }
     const lightningLayer = manager.createLayer<LightningLayer>('lightning', 'lightning');
     if (lightningLayer) {
       lightningLayer.setDataStream(dataStream);
@@ -121,17 +128,23 @@ const GlobePage = () => {
   const handleToggleOrbit = useCallback(() => setIsOrbiting(v => !v), []);
   const handleToggleViewTarget = useCallback(() => setViewTarget(v => v === 'earth' ? 'moon' : 'earth'), []);
 
+  const handleToggleClouds = useCallback(() => {
+    setCloudsEnabled(v => {
+      const next = !v;
+      layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setCloudsEnabled(next);
+      return next;
+    });
+  }, []);
+
   const handleGoToHotspot = useCallback(() => {
     setHasNewHotspot(false);
-    fetch('http://localhost:3001/api/hotspot')
-      .then(res => res.json())
-      .then(data => {
-        if (data) setFlyTo({ lat: data.lat, lng: data.lng, altitude: 0.5 });
-      })
-      .catch(() => {
-        const spot = liveHotspot ?? hotspot;
-        if (spot) setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
-      });
+    const spot = liveHotspot ?? hotspot;
+    if (spot) {
+      console.log(`[hotspot] flying to lat=${spot.lat.toFixed(2)}, lng=${spot.lng.toFixed(2)}, count=${spot.count}`);
+      setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
+    } else {
+      console.warn('[hotspot] no hotspot available');
+    }
   }, [liveHotspot, hotspot]);
 
   return (
@@ -147,6 +160,7 @@ const GlobePage = () => {
         isOrbiting={isOrbiting}
         onIsOrbitingChange={setIsOrbiting}
         viewTarget={viewTarget}
+        cloudsEnabled={cloudsEnabled}
         restoredView={restoredView}
       />
       <StatusBar
@@ -166,6 +180,8 @@ const GlobePage = () => {
         onGoToHotspot={handleGoToHotspot}
         viewTarget={viewTarget}
         onToggleViewTarget={handleToggleViewTarget}
+        cloudsEnabled={cloudsEnabled}
+        onToggleClouds={handleToggleClouds}
       />
       <NavigationIcons currentPage="globe" />
     </div>

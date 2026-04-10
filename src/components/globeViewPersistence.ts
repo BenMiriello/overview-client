@@ -34,6 +34,7 @@ export interface StoredView {
   viewTarget: 'earth' | 'moon';
   is3D: boolean;
   isOrbiting: boolean;
+  cloudsEnabled?: boolean;
   mode: 'far' | 'close' | 'moon' | 'moonClose';
   far?: FarSnapshot;
   close?: CloseSnapshot;

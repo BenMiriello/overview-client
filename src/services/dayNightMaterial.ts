@@ -143,8 +143,25 @@ export function patchNightTileMaterial(material: THREE.MeshLambertMaterial): voi
   material.needsUpdate = true;
 }
 
+const ARCGIS_URL = (x: number, y: number, level: number) =>
+  `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`;
+
 const GIBS_URL = (x: number, y: number, level: number) =>
   `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/${level}/${y}/${x}.png`;
+
+/**
+ * Creates a tile engine for ArcGIS day tiles. Tiles are patched with the
+ * day/night darkening shader at material creation time — no 1-frame flash.
+ */
+export function createDayTileEngine(radius: number): SlippyMapGlobe {
+  return createTiledPlanetEngine({
+    radius,
+    tileUrl: ARCGIS_URL,
+    maxLevel: 17,
+    projection: 'mercator',
+    patchMaterial: patchTileMaterial,
+  });
+}
 
 /**
  * Creates a tile engine for GIBS Black Marble night tiles. Tiles are patched

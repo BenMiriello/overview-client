@@ -31,6 +31,10 @@ export class CloudLayer extends BaseLayer<void> {
   private flashIntensity = 0;
   private flashWorldPos = new THREE.Vector3();
   private flashHandler: ((e: Event) => void) | null = null;
+  private userCloudsEnabled = true;
+  private fadeOpacity = 1.0;
+  private fadeTarget = 1.0;
+  private lastUpdateTime = -1;
 
   constructor() {
     super();
@@ -181,7 +185,10 @@ export class CloudLayer extends BaseLayer<void> {
     }
     if (!this.visible) return;
 
-    const time = (performance.now() - this.startTime) / 1000;
+    const nowMs = performance.now();
+    const time = (nowMs - this.startTime) / 1000;
+    const dt = this.lastUpdateTime >= 0 ? (nowMs - this.lastUpdateTime) / 1000 : 0;
+    this.lastUpdateTime = nowMs;
 
     if (this.flashIntensity > 0.001) {
       this.flashIntensity *= 0.75;
@@ -225,14 +232,37 @@ export class CloudLayer extends BaseLayer<void> {
         ));
         cloudAlt = CLOUD_ALT_FAR + (CLOUD_ALT_NEAR - CLOUD_ALT_FAR) * t;
         detailFade = Math.max(0, Math.min(1, (1.0 - cameraAlt) / 0.5));
+
+        this.fadeTarget = (cameraAlt >= ALT_FAR_POINT || this.userCloudsEnabled) ? 1.0 : 0.0;
       } catch { /* globeEl not ready */ }
     }
+
+    // Animate fade opacity toward target (0.5-second linear fade)
+    if (this.fadeOpacity !== this.fadeTarget && dt > 0) {
+      const step = dt * 3.0;
+      if (this.fadeOpacity < this.fadeTarget) {
+        this.fadeOpacity = Math.min(this.fadeTarget, this.fadeOpacity + step);
+      } else {
+        this.fadeOpacity = Math.max(this.fadeTarget, this.fadeOpacity - step);
+      }
+    }
+
+    // Skip rendering entirely when fully faded out
+    if (this.fadeOpacity <= 0) {
+      for (const { mesh } of this.shells) {
+        mesh.visible = false;
+      }
+      return;
+    }
+
+    const baseOpacity = getConfig<number>('layers.clouds.opacity') ?? 0.55;
 
     sharedNightUniforms.flashFalloff.value = groundFalloff;
 
     for (const { mesh, altMultiplier } of this.shells) {
       const mat = mesh.material as THREE.ShaderMaterial;
       mat.uniforms.uTime.value = time;
+      mat.uniforms.uOpacity.value = baseOpacity * this.fadeOpacity;
       mat.uniforms.uFlashIntensity.value = this.flashIntensity;
       (mat.uniforms.uFlashWorldPos.value as THREE.Vector3).copy(this.flashWorldPos);
       mat.uniforms.uFlashFalloff.value = cloudFalloff;
@@ -244,6 +274,14 @@ export class CloudLayer extends BaseLayer<void> {
       setConfig('layers.clouds.altitude', cloudAlt);
       this.lastCloudAlt = cloudAlt;
     }
+  }
+
+  setCloudsEnabled(enabled: boolean): void {
+    this.userCloudsEnabled = enabled;
+  }
+
+  isCloudsEnabled(): boolean {
+    return this.userCloudsEnabled;
   }
 
   addData(_data: void): void {}
