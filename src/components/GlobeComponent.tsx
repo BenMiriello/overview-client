@@ -963,6 +963,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       if (inCloseModeRef.current) return;
       if (inMoonViewRef.current) return;
       if (!globeEl.current) return;
+      if (flyToActiveRef.current) return; // don't auto-enter close mode mid fly-to
       const { altitude } = globeEl.current.pointOfView();
       if (altitude >= TILT_THRESHOLD_EXIT) {
         preventReentryRef.current = false;
@@ -1067,6 +1068,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     }
 
     const targetPitch = pitchFromAltitude(altitude);
+    console.log(`[enterCloseMode] camera=(${targetLat.toFixed(2)},${targetLng.toFixed(2)}) alt=${altitude.toFixed(3)} hit=${!!hit}`);
     closeModeState.current = {
       targetLat,
       targetLng,
@@ -1167,6 +1169,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   function exitCloseMode(controls: any) {
     if (!inCloseModeRef.current) return;
+    console.log(`[exitCloseMode] targetLng=${closeModeState.current?.targetLng?.toFixed(2)} flyToActive=${flyToActiveRef.current}`);
+    console.trace('[exitCloseMode] stack');
 
     stopCloseModeLoop();
 
@@ -1500,7 +1504,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       let canceled = false;
 
       const animate = (ts: number) => {
-        if (canceled || !closeModeState.current) return;
+        if (canceled) return;
+        if (!closeModeState.current) { console.log('[flyTo-3d] cancelled: closeModeState nulled'); return; }
         startTime ??= ts;
         const t = Math.min((ts - startTime) / duration, 1);
         const p = easeInOutCubicShifted(t, 0);
@@ -1532,7 +1537,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       };
     } else {
       // ── 2D fallback: user is zoomed in close but in 2D mode — respect it ──
-      flyToActiveRef.current = false;
+      // Keep flyToActiveRef=true so checkThreshold doesn't enter close mode mid-animation.
       const start = globeEl.current.pointOfView();
       globeEl.current.pointOfView(start, 0); // reset OrbitControls damping
 
@@ -1555,7 +1560,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           lng:      start.lng      + lngDelta                * p,
           altitude: start.altitude + (targetAlt - start.altitude) * p,
         }, 0);
-        if (t < 1) raf = requestAnimationFrame(animate);
+        if (t < 1) {
+          raf = requestAnimationFrame(animate);
+        } else {
+          flyToActiveRef.current = false;
+        }
       };
 
       const tid = setTimeout(() => {
@@ -1565,6 +1574,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       animationRef.current = {
         cancel: () => {
           canceled = true;
+          flyToActiveRef.current = false;
           clearTimeout(tid);
           if (raf !== null) { cancelAnimationFrame(raf); raf = null; }
         },
