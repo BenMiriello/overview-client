@@ -616,15 +616,20 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const EVICT_INTERVAL_MS = 1000;
     const EVICT_AGE_MS = 30_000;
     const cullEngineTiles = (engine: THREE.Object3D, sphereR: number, cam: THREE.Camera) => {
-      tmpCullCam.copy(cam.position);
+      cam.getWorldPosition(tmpCullCam);
       engine.worldToLocal(tmpCullCam);
-      const limbTol = 0.95;
+      const D = tmpCullCam.length();
+      // Horizon plane threshold: R²/D is the distance from the globe center to the
+      // tangent plane (the farthest visible depth along the camera direction).
+      // A tile is culled only if its nearest edge in the camera direction is behind this plane.
+      const horizonThreshold = (sphereR * sphereR / D) * 0.95;
       const kids = engine.children;
       for (let i = 0; i < kids.length; i++) {
         const mesh = kids[i] as THREE.Mesh;
         if (!(mesh as any).isMesh || !mesh.geometry) continue;
         if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
-        const c = mesh.geometry.boundingSphere!.center;
+        const bs = mesh.geometry.boundingSphere!;
+        const c = bs.center;
         let cLen = (mesh.userData as any).__cullCLen as number | undefined;
         if (cLen === undefined) {
           cLen = c.length();
@@ -633,7 +638,12 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         // Skip full-sphere children (e.g. SlippyMap's _innerBackLayer): their
         // centroid sits at the origin so the horizon test is meaningless.
         if (cLen < sphereR * 0.1) continue;
-        const vis = c.dot(tmpCullCam) > sphereR * cLen * limbTol;
+        // Project centroid onto the camera direction, then add the bounding sphere
+        // radius as a buffer. Without the radius term, large tiles (polar caps,
+        // equatorial bands) whose bounding sphere center points tangentially to the
+        // camera are incorrectly culled even when their near edge is fully visible.
+        const dotCA = c.dot(tmpCullCam) / D;
+        const vis = dotCA + bs.radius > horizonThreshold;
         mesh.visible = vis;
         if (vis) (mesh.userData as any).__lastVisibleAt = Date.now();
       }
@@ -655,6 +665,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       }
       return false;
     };
+
+    // Tracks the last stable level for the npm day engine. The npm engine has no
+    // hysteresis — we implement it here to prevent level thrashing near thresholds.
+    let dayStableLevel: number | null = null;
 
     const tick = () => {
       if (cancelled || !globeEl.current) return;
@@ -762,20 +776,70 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       //   d.loading flag prevents redundant fetches.
       if (dayTileEngineRef.current && (inCloseModeRef.current || cameraActuallyMoved)) {
         perfSpan('updatePov.day', () => {
-          // The day engine (#isInView) uses a 5-point hull containsPoint test (npm package,
-          // unmodifiable). At level 2–4, tiles 22–90° wide can straddle the frustum boundary
-          // with all hull points outside → never fetched → blank zones at screen edges.
-          // Pre-call with a wider frustum so those edge tiles pass the hull test and load.
           if (!inCloseModeRef.current) {
             const perspCam = camera as THREE.PerspectiveCamera;
             if (perspCam.fov !== undefined) {
-              const synth = perspCam.clone() as THREE.PerspectiveCamera;
-              synth.fov = Math.min(175, perspCam.fov + 75);
+              const D = camera.position.length();
+              const distFromSurface = (D - EARTH_R) / EARTH_R;
+
+              // Altitude-adaptive FOV: arccos(R/D) is the horizon angle. synthFov covers
+              // the full visible hemisphere + 5° so edge tiles' hull points pass the npm
+              // engine's containsPoint frustum test at any altitude.
+              const visAngleDeg = D > EARTH_R
+                ? Math.acos(EARTH_R / D) * (180 / Math.PI)
+                : 89;
+              const synthFov = Math.min(179, visAngleDeg * 2 + 10);
+
+              // Client-side hysteresis: the npm engine has none — OrbitControls inertia
+              // oscillates near level thresholds, causing the engine to remove all tiles
+              // of the old level before new ones arrive, blanking the globe each bounce.
+              const HYSTERESIS = 0.05;
+              const thresholds: number[] = dayTileEngineRef.current!.thresholds;
+              const curLevel = dayStableLevel ?? dayTileEngineRef.current!.level;
+              const rawIdx = thresholds.findIndex((t: number) => t && t <= distFromSurface);
+              const rawLevel = Math.min(17, Math.max(0, rawIdx < 0 ? thresholds.length : rawIdx));
+
+              let targetLevel = rawLevel;
+              if (rawLevel !== curLevel) {
+                const isZoomingIn = rawLevel > curLevel;
+                const boundaryIdx = isZoomingIn ? curLevel : rawLevel;
+                const boundary = thresholds[boundaryIdx] ?? 0;
+                const shouldSwitch = isZoomingIn
+                  ? distFromSurface < boundary * (1 - HYSTERESIS)
+                  : distFromSurface > boundary * (1 + HYSTERESIS);
+                if (!shouldSwitch) targetLevel = curLevel;
+              }
+              dayStableLevel = targetLevel;
+
+              // Single camera combining both fixes: wide FOV (edge tiles) + hysteresis
+              // altitude (level lock). One call instead of two — the npm engine has no
+              // position-change early-return, so a second real-camera call would recompute
+              // the level from the real altitude and undo the hysteresis.
+              const synth = new THREE.PerspectiveCamera(synthFov, perspCam.aspect, perspCam.near, perspCam.far);
+              if (targetLevel !== rawLevel) {
+                // Hysteresis zone: clamp altitude so the engine's level stays stable.
+                // At level <= renderAllCap (6), #isInView passes all tiles regardless of
+                // frustum, so the shifted position doesn't affect which tiles are fetched.
+                const isZoomingIn = rawLevel > targetLevel;
+                const boundary = thresholds[isZoomingIn ? targetLevel : rawLevel] ?? distFromSurface;
+                const safeDistFromSurface = boundary * (isZoomingIn ? 1.025 : 0.975);
+                synth.position.copy(camera.position).normalize().multiplyScalar(
+                  EARTH_R * (1 + safeDistFromSurface)
+                );
+                synth.quaternion.copy(camera.quaternion);
+              } else {
+                // Stable level: real position with exact view matrix for correct frustum.
+                synth.position.copy(camera.position);
+                synth.quaternion.copy(camera.quaternion);
+                synth.matrixWorld.copy(camera.matrixWorld);
+                synth.matrixWorldInverse.copy(camera.matrixWorldInverse);
+              }
               synth.updateProjectionMatrix();
               dayTileEngineRef.current!.updatePov(synth);
             }
+          } else {
+            dayTileEngineRef.current!.updatePov(camera);
           }
-          dayTileEngineRef.current!.updatePov(camera);
         });
         // Synthetic cameras only needed when camera actually moved — tiles are already
         // loaded when stationary, so the extra updatePov calls would be pure overhead.
@@ -1189,6 +1253,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   function startCloseModeLoop(controls: any) {
     let lastTime: number | null = null;
+    let prevFlyActive = flyToActiveRef.current;
 
     const tick = (now: number) => {
       if (!inCloseModeRef.current || !closeModeState.current || !globeEl.current) return;
@@ -1217,6 +1282,13 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
       const camera = globeEl.current.camera() as THREE.Camera;
       const earthR = globeEl.current.getGlobeRadius();
+
+      const flyNow = flyToActiveRef.current;
+      if (prevFlyActive && !flyNow && closeModeState.current) {
+        console.log(`[flyTo-render] targetLng=${closeModeState.current.targetLng.toFixed(4)} targetLat=${closeModeState.current.targetLat.toFixed(4)}`);
+      }
+      prevFlyActive = flyNow;
+
       applyCameraState(camera, closeModeState.current, earthR);
       renderScene();
 
@@ -1481,6 +1553,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         if (t < 1) {
           raf = requestAnimationFrame(animate);
         } else {
+          console.log(`[flyTo-done] actual targetLng=${closeModeState.current?.targetLng.toFixed(4)} targetLat=${closeModeState.current?.targetLat.toFixed(4)}`);
           flyToActiveRef.current = false;
         }
       };

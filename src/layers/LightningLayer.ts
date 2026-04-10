@@ -6,9 +6,6 @@ import { PointMarkerEffect } from '../effects/PointMarkerEffect';
 import { getConfig, setConfig } from '../config';
 import { DataStream } from '../services/dataStreams/interfaces';
 
-/**
- * Layer that displays lightning strikes on the globe
- */
 export class LightningLayer extends BaseLayer<LightningStrike> {
   private lightningBoltEffects: Map<string, LightningBoltEffect> = new Map();
   private markerEffects: Map<string, PointMarkerEffect> = new Map();

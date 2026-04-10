@@ -203,7 +203,7 @@ export function simulateBolt(input: SimulationInput, existingAtmosphere?: Atmosp
     addChannelPoint(fieldCtx, head.position);
   }
 
-  console.log(`[Simulation] Spawning ${initialHeads.length} leaders from charge peaks`);
+  // console.log(`[Simulation] Spawning ${initialHeads.length} leaders from charge peaks`);
 
   const state: GrowthState = {
     activeHeads: initialHeads,
@@ -340,8 +340,8 @@ export function simulateBolt(input: SimulationInput, existingAtmosphere?: Atmosp
     const key = `${bucket}-${bucket + 9}`;
     stepBuckets[key] = (stepBuckets[key] || 0) + 1;
   }
-  console.log('[Simulation] Branch segments by step range:', stepBuckets);
-  console.log(`[Simulation] Total: ${finalSegments.length} segs, ${branchSegments.length} branch segs, ${state.currentStep} steps`);
+  // console.log('[Simulation] Branch segments by step range:', stepBuckets);
+  // console.log(`[Simulation] Total: ${finalSegments.length} segs, ${branchSegments.length} branch segs, ${state.currentStep} steps`);
 
   // Serialize atmosphere data for visualization
   const atmosphereData = {

@@ -29,7 +29,8 @@ export class CloudLayer extends BaseLayer<void> {
   private refreshTimer: number | null = null;
   private startTime = performance.now();
   private flashIntensity = 0;
-  private flashHandler: (() => void) | null = null;
+  private flashWorldPos = new THREE.Vector3();
+  private flashHandler: ((e: Event) => void) | null = null;
 
   constructor() {
     super();
@@ -111,6 +112,7 @@ export class CloudLayer extends BaseLayer<void> {
         uDetailStrength:  { value: getConfig<number>('layers.clouds.detailStrength') ?? 0.10 },
         uDetailFreq:      { value: new THREE.Vector2(64, 32) },
         uFlashIntensity:  { value: 0 },
+        uFlashWorldPos:   { value: new THREE.Vector3() },
         uDetailFade:      { value: 1 },
         uDensityLo:       { value: getConfig<number>('layers.clouds.densityLo') ?? 0.05 },
         uNightAmbient:    { value: 0.12 },
@@ -151,7 +153,19 @@ export class CloudLayer extends BaseLayer<void> {
       const intervalMs = getConfig<number>('layers.clouds.refreshIntervalMs') || 30 * 60 * 1000;
       this.refreshTimer = window.setInterval(() => this.refreshTexture(), intervalMs);
 
-      this.flashHandler = () => { this.flashIntensity = 1; };
+      this.flashHandler = (e: Event) => {
+        this.flashIntensity = 1;
+        const detail = (e as CustomEvent).detail;
+        if (detail?.lat != null && detail?.lng != null) {
+          const phi = (90 - detail.lat) * Math.PI / 180;
+          const theta = (90 - detail.lng) * Math.PI / 180;
+          this.flashWorldPos.set(
+            Math.sin(phi) * Math.cos(theta),
+            Math.cos(phi),
+            Math.sin(phi) * Math.sin(theta),
+          ).multiplyScalar(EARTH_RADIUS);
+        }
+      };
       window.addEventListener('lightning-flash', this.flashHandler);
     } catch (err) {
       console.error('CloudLayer: Error during initialization:', err);
@@ -173,6 +187,8 @@ export class CloudLayer extends BaseLayer<void> {
     } else {
       this.flashIntensity = 0;
     }
+    sharedNightUniforms.flashIntensity.value = this.flashIntensity;
+    sharedNightUniforms.flashWorldPos.value.copy(this.flashWorldPos);
 
     let detailFade = 1;
     let cloudAlt = CLOUD_ALT_FAR;
@@ -194,6 +210,7 @@ export class CloudLayer extends BaseLayer<void> {
       const mat = mesh.material as THREE.ShaderMaterial;
       mat.uniforms.uTime.value = time;
       mat.uniforms.uFlashIntensity.value = this.flashIntensity;
+      (mat.uniforms.uFlashWorldPos.value as THREE.Vector3).copy(this.flashWorldPos);
       mat.uniforms.uDetailFade.value = detailFade;
       mesh.scale.setScalar(1 + cloudAlt * altMultiplier);
     }

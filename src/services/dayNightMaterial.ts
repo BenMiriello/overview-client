@@ -9,6 +9,8 @@ const NIGHT_PATCH_FLAG = '__nightTilePatched';
 export const sharedNightUniforms = {
   sunDir: { value: new THREE.Vector3(0, 1, 0) },
   cloudTex: { value: null as THREE.Texture | null },
+  flashIntensity: { value: 0 },
+  flashWorldPos: { value: new THREE.Vector3() },
 };
 
 /**
@@ -42,6 +44,8 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.sunDir = sharedNightUniforms.sunDir;
     shader.uniforms.cloudTex = sharedNightUniforms.cloudTex;
+    shader.uniforms.flashIntensity = sharedNightUniforms.flashIntensity;
+    shader.uniforms.flashWorldPos = sharedNightUniforms.flashWorldPos;
 
     shader.vertexShader = 'varying vec3 vWorldPosition;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
@@ -53,7 +57,9 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
     shader.fragmentShader =
       `varying vec3 vWorldPosition;
       uniform vec3 sunDir;
-      uniform sampler2D cloudTex;\n` + shader.fragmentShader;
+      uniform sampler2D cloudTex;
+      uniform float flashIntensity;
+      uniform vec3 flashWorldPos;\n` + shader.fragmentShader;
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
@@ -67,14 +73,27 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
         float lat = asin(clamp(nPos.y, -1.0, 1.0));
         float lng = atan(nPos.x, nPos.z);
         vec2 cloudUv = vec2(lng / 6.2831853 + 0.5, 0.5 - lat / 3.1415927);
-        float cloudAlpha = texture2D(cloudTex, cloudUv).a;
-        float shadowDarken = cloudAlpha * 0.35 * (1.0 - nightFactor);
+
+        vec3 cEastRaw = cross(vec3(0.0, 1.0, 0.0), nPos);
+        float cEastLen = length(cEastRaw);
+        vec3 cEast  = cEastLen > 0.001 ? cEastRaw / cEastLen : vec3(1.0, 0.0, 0.0);
+        vec3 cNorth = cross(nPos, cEast);
+        float cosLat = max(0.08, cEastLen);
+        float sunE = dot(sunDir, cEast);
+        float sunN = dot(sunDir, cNorth);
+        vec2 sunUvOff = vec2(sunE / (cosLat * 6.2831853), -sunN / 3.1415927) * 0.008;
+        float cloudAlpha = texture2D(cloudTex, cloudUv + sunUvOff).a;
+        float shadowDarken = cloudAlpha * 0.5 * (1.0 - nightFactor);
         diffuseColor.rgb *= (1.0 - shadowDarken);
+
+        float flashDist = length(vWorldPosition - flashWorldPos);
+        float groundFlash = flashIntensity * (1.0 - smoothstep(0.0, 0.16, flashDist));
+        diffuseColor.rgb += vec3(0.8, 0.85, 1.0) * groundFlash * 0.3;
       }`,
     );
   };
 
-  material.customProgramCacheKey = () => 'daynight-day-v2';
+  material.customProgramCacheKey = () => 'daynight-day-v3';
   if (!material.userData) material.userData = {};
   material.userData[DAY_PATCH_FLAG] = true;
   material.needsUpdate = true;

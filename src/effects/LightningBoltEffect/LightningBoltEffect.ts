@@ -148,7 +148,9 @@ export class LightningBoltEffect {
     ) {
       this.screenFlashFired = true;
       this.screenFlash = new ScreenFlashEffect(0.15);
-      window.dispatchEvent(new Event('lightning-flash'));
+      window.dispatchEvent(new CustomEvent('lightning-flash', {
+        detail: { lat: this.config.lat, lng: this.config.lng },
+      }));
     }
 
     if (this.screenFlash && !this.screenFlash.update()) {

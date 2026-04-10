@@ -45,6 +45,7 @@ export const cloudFragmentShader = /* glsl */ `
   uniform float uDetailStrength;
   uniform vec2  uDetailFreq;
   uniform float uFlashIntensity;
+  uniform vec3  uFlashWorldPos;
   uniform float uDetailFade;
   uniform float uDensityLo;
   uniform float uNightAmbient;
@@ -109,14 +110,18 @@ export const cloudFragmentShader = /* glsl */ `
     vec3 n = normalize(vWorldNormal);
     vec3 toCamera = normalize(cameraPosition - vWorldPos);
 
-    // When viewing the cloud shell from inside (below the clouds),
-    // gl_FrontFacing is false. Flip the normal so lighting works.
-    if (!gl_FrontFacing) n = -n;
+    // Front faces: standard back-hemisphere cull (behind the earth).
+    if (gl_FrontFacing && dot(n, toCamera) < -0.05) discard;
 
-    // Cull back-hemisphere fragments (behind the earth from camera's
-    // perspective). Replaces depth-buffer occlusion so we can set
-    // depthTest=false and avoid z-fighting with the earth surface.
-    if (dot(n, toCamera) < -0.05) discard;
+    // Back faces: only render when camera is inside the cloud shell.
+    if (!gl_FrontFacing && length(cameraPosition) > length(vWorldPos) + 1.0) discard;
+
+    // Back faces: only render fragments roughly overhead. Without this
+    // restriction, back faces between the camera and the earth create a
+    // dark semi-transparent overlay (they shade as nighttime because the
+    // flipped normal is opposite the sun). Cutoff at ~80° from directly
+    // above prevents back faces near/below the horizon from rendering.
+    if (!gl_FrontFacing && dot(normalize(cameraPosition), normalize(vWorldPos)) < 0.15) discard;
 
     // Linear floor remap. We deliberately do NOT use smoothstep here:
     // a sigmoid saturates the dense end, producing a visible contour line
@@ -181,9 +186,10 @@ export const cloudFragmentShader = /* glsl */ `
     float rim = (1.0 - abs(flatDot)) * smoothstep(-0.05, 0.15, flatDot);
     brightness += rim * 0.35 * smoothstep(0.4, 0.7, density);
 
-    // Global lightning flash: brief additive bump driven by the
-    // lightning-flash event listener in CloudLayer.ts.
-    brightness += uFlashIntensity * 0.4;
+    // Positional lightning flash: localized glow around the strike point.
+    float flashDist = length(vWorldPos - uFlashWorldPos);
+    float flashGlow = uFlashIntensity * (1.0 - smoothstep(0.0, 0.16, flashDist));
+    brightness += flashGlow * 0.6;
 
     brightness = clamp(brightness, 0.0, 1.0);
 

@@ -123,7 +123,6 @@ const GlobePage = () => {
 
   const handleGoToHotspot = useCallback(() => {
     setHasNewHotspot(false);
-    // Always re-fetch fresh hotspot — WS sends cached value on connect which can be stale
     fetch('http://localhost:3001/api/hotspot')
       .then(res => res.json())
       .then(data => {
