@@ -63,7 +63,7 @@ const GlobePage = () => {
       setHotspotReady(true);
       return;
     }
-    fetch('http://localhost:3001/api/hotspot')
+    fetch(`${import.meta.env.VITE_SERVER_URL}/api/hotspot`)
       .then(res => res.json())
       .then(data => {
         if (data) {
@@ -78,7 +78,7 @@ const GlobePage = () => {
   }, []);
 
   const { connectionStatus, lastUpdate, dataStream, subscribe } = useLightningData({
-    url: 'ws://localhost:3001'
+    url: import.meta.env.VITE_SERVER_URL.replace(/^http/, 'ws')
   });
 
   // Listen for server-pushed hotspot updates on the shared WS connection
@@ -102,13 +102,10 @@ const GlobePage = () => {
       // In close mode (3D/pitched), pointOfView() returns the camera nadir which
       // is offset from the ground target by the pitch angle. Use cameraTargetRef
       // (the actual look-at ground point) when available; fall back to pov in far mode.
-      const ctRef = cameraTargetRef.current;
-      const camLat = ctRef?.lat ?? pov.lat;
-      const camLng = ctRef?.lng ?? pov.lng;
+      const camLat = cameraTargetRef.current?.lat ?? pov.lat;
+      const camLng = cameraTargetRef.current?.lng ?? pov.lng;
       const threshold = Math.max(3, Math.min(30, pov.altitude * 15));
-      const dist = angularDistance(camLat, camLng, activeHotspot.lat, activeHotspot.lng);
-      const viewing = dist < threshold;
-      console.log(`[view-chk] ctRef=${ctRef ? `(${ctRef.lat.toFixed(2)},${ctRef.lng.toFixed(2)})` : 'null'} pov=(${pov.lat.toFixed(2)},${pov.lng.toFixed(2)}) alt=${pov.altitude.toFixed(3)} hs=(${activeHotspot.lat.toFixed(2)},${activeHotspot.lng.toFixed(2)}) dist=${dist.toFixed(1)}° thr=${threshold.toFixed(1)}° viewing=${viewing}`);
+      const viewing = angularDistance(camLat, camLng, activeHotspot.lat, activeHotspot.lng) < threshold;
       setIsViewingHotspot(viewing);
       if (viewing) setHasNewHotspot(false);
     }, 500);

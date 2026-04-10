@@ -5,7 +5,7 @@ export const CloudsConfig = {
   imagePath: '/clouds.png',
   rotationSpeed: 0,
   useLiveTexture: true,
-  liveTextureEndpoint: 'http://localhost:3001/api/clouds/8k',
+  liveTextureEndpoint: `${import.meta.env.VITE_SERVER_URL}/api/clouds/8k`,
   fallbackImagePath: '/clouds-fallback.png',
   refreshIntervalMs: 30 * 60 * 1000,
   detailStrength: 0.10,
