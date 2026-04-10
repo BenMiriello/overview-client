@@ -110,11 +110,24 @@ export const cloudFragmentShader = /* glsl */ `
     vec3 n = normalize(vWorldNormal);
     vec3 toCamera = normalize(cameraPosition - vWorldPos);
 
-    // Discard back faces entirely. The cloud shell is viewed from outside only.
-    if (!gl_FrontFacing) discard;
-
-    // Front faces: standard back-hemisphere cull (behind the earth).
-    if (dot(n, toCamera) < -0.05) discard;
+    if (!gl_FrontFacing) {
+      // Only render the inner cloud surface when the camera is inside the shell.
+      if (length(cameraPosition) > length(vWorldPos) + 1.0) discard;
+      // Discard back-face fragments below the camera's visual horizon — where the
+      // Earth would occlude them. depthTest:false means we can't rely on the depth
+      // buffer, so we replicate the occlusion geometrically.
+      //
+      // The horizon from a camera at distance D is the cone of directions where
+      // dot(camUp, dir) = -sqrt(1 - R²/D²)  (tangent to the Earth sphere).
+      // Directions with dot < that threshold go below the horizon into the Earth.
+      float camDist = length(cameraPosition);
+      vec3 toFrag = normalize(vWorldPos - cameraPosition);
+      float horizonDot = -sqrt(max(0.0, 1.0 - (100.0 * 100.0) / (camDist * camDist)));
+      if (dot(normalize(cameraPosition), toFrag) < horizonDot) discard;
+    } else {
+      // Front faces: discard back-hemisphere fragments (behind the earth).
+      if (dot(n, toCamera) < -0.05) discard;
+    }
 
     // Linear floor remap. We deliberately do NOT use smoothstep here:
     // a sigmoid saturates the dense end, producing a visible contour line
