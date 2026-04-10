@@ -9,6 +9,7 @@ const NIGHT_PATCH_FLAG = '__nightTilePatched';
 export const sharedNightUniforms = {
   sunDir: { value: new THREE.Vector3(0, 1, 0) },
   cloudTex: { value: null as THREE.Texture | null },
+  cloudShadowEnabled: { value: 1.0 },
   flashIntensity: { value: 0 },
   flashWorldPos: { value: new THREE.Vector3() },
   flashFalloff: { value: 15.0 },
@@ -47,6 +48,7 @@ export function patchTileMaterial(material: THREE.Material): void {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.sunDir = sharedNightUniforms.sunDir;
     shader.uniforms.cloudTex = sharedNightUniforms.cloudTex;
+    shader.uniforms.cloudShadowEnabled = sharedNightUniforms.cloudShadowEnabled;
     shader.uniforms.flashIntensity = sharedNightUniforms.flashIntensity;
     shader.uniforms.flashWorldPos = sharedNightUniforms.flashWorldPos;
     shader.uniforms.flashFalloff = sharedNightUniforms.flashFalloff;
@@ -62,6 +64,7 @@ export function patchTileMaterial(material: THREE.Material): void {
       `varying vec3 vWorldPosition;
       uniform vec3 sunDir;
       uniform sampler2D cloudTex;
+      uniform float cloudShadowEnabled;
       uniform float flashIntensity;
       uniform vec3 flashWorldPos;
       uniform float flashFalloff;\n` + shader.fragmentShader;
@@ -88,9 +91,10 @@ export function patchTileMaterial(material: THREE.Material): void {
         float cosLat = max(0.08, cEastLen);
         float sunE = dot(sunDir, cEast);
         float sunN = dot(sunDir, cNorth);
-        vec2 sunUvOff = vec2(sunE / (cosLat * 6.2831853), sunN / 3.1415927) * 0.008;
+        float sunElev = max(0.1, dot(nPos, sunDir));
+        vec2 sunUvOff = vec2(sunE / (cosLat * 6.2831853), sunN / 3.1415927) * (0.012 / sunElev);
         float cloudAlpha = texture2D(cloudTex, cloudUv + sunUvOff).a;
-        float shadowDarken = cloudAlpha * 0.7 * (1.0 - nightFactor);
+        float shadowDarken = cloudAlpha * 0.7 * (1.0 - nightFactor) * cloudShadowEnabled;
         diffuseColor.rgb *= (1.0 - shadowDarken);
 
         float flashDist = length(vWorldPosition - flashWorldPos);
@@ -101,7 +105,7 @@ export function patchTileMaterial(material: THREE.Material): void {
   };
 
   const matType = (material as any).isMeshPhongMaterial ? 'phong' : 'lambert';
-  material.customProgramCacheKey = () => `daynight-day-${matType}-v4`;
+  material.customProgramCacheKey = () => `daynight-day-${matType}-v5`;
   if (!material.userData) material.userData = {};
   material.userData[DAY_PATCH_FLAG] = true;
   material.needsUpdate = true;
@@ -158,16 +162,16 @@ const GIBS_URL = (x: number, y: number, level: number) =>
  * Creates a tile engine for ArcGIS day tiles. Tiles are patched with the
  * day/night darkening shader at material creation time — no 1-frame flash.
  */
-// Threshold table targeting ~85% of pixel-matched resolution for FOV=50, 1080p.
-// The upstream default (8/2^i) is ~3.5x too conservative, yielding tiles 2 levels
-// below what the screen can display.
-const TILE_THRESHOLDS = [...new Array(30)].map((_, i) => 24 / Math.pow(2, i));
+// Threshold table: 16/2^i balances resolution quality against memory and bandwidth.
+// The upstream default (8/2^i) is too conservative; 24/2^i was too aggressive,
+// loading high-res tiles from altitudes where the extra detail isn't visible.
+const TILE_THRESHOLDS = [...new Array(30)].map((_, i) => 16 / Math.pow(2, i));
 
 export function createDayTileEngine(radius: number): SlippyMapGlobe {
   const engine = createTiledPlanetEngine({
     radius,
     tileUrl: ARCGIS_URL,
-    maxLevel: 17,
+    maxLevel: 14,
     projection: 'mercator',
     patchMaterial: patchTileMaterial,
   });

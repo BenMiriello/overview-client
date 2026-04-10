@@ -343,11 +343,10 @@ export default class SlippyMapGlobe extends Group {
     this.#level = level;
     if (level === prevLevel || prevLevel === undefined) return;
 
-    // On zoom-out, keep tiles one level above as visual fallback while new
-    // tiles load (polygonOffset ensures they win z-tests where they overlap).
-    // Scan through maxLevel (not just prevLevel) to catch orphaned tiles from
-    // earlier cascading transitions — e.g. 10→8 keeps level 9, then 8→5 must
-    // also evict that orphaned level 9.
+    // On zoom-out, keep level+1 tiles as visual fallback while new tiles load,
+    // but push them BEHIND the current level in depth. Without this adjustment,
+    // fallback tiles have more negative polygonOffset (from their original level)
+    // and render IN FRONT of current tiles, causing z-fighting at tile edges.
     if (prevLevel > level) {
       for (let l = level + 2; l <= this.maxLevel; l++) {
         this.#tilesMeta[l]?.forEach((d) => {
@@ -359,10 +358,16 @@ export default class SlippyMapGlobe extends Group {
           }
         });
       }
-      // Stop in-flight fetches for the fallback level — those tiles are only
-      // kept if already loaded, we don't need new ones.
       this.#tilesMeta[level + 1]?.forEach((d) => {
         if (d.loading) d.controller?.abort();
+        if (d.obj) {
+          const mat = d.obj.material as Material & {
+            polygonOffsetFactor: number;
+            polygonOffsetUnits: number;
+          };
+          mat.polygonOffsetFactor = 1;
+          mat.polygonOffsetUnits = 1;
+        }
       });
     }
     this.#fetchNeededTiles(true);

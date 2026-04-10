@@ -249,6 +249,7 @@ export class CloudLayer extends BaseLayer<void> {
 
     // Skip rendering entirely when fully faded out
     if (this.fadeOpacity <= 0) {
+      sharedNightUniforms.cloudShadowEnabled.value = 0.0;
       for (const { mesh } of this.shells) {
         mesh.visible = false;
       }
@@ -257,6 +258,7 @@ export class CloudLayer extends BaseLayer<void> {
 
     const baseOpacity = getConfig<number>('layers.clouds.opacity') ?? 0.55;
 
+    sharedNightUniforms.cloudShadowEnabled.value = this.fadeOpacity;
     sharedNightUniforms.flashFalloff.value = groundFalloff;
 
     for (const { mesh, altMultiplier } of this.shells) {
@@ -278,6 +280,7 @@ export class CloudLayer extends BaseLayer<void> {
 
   setCloudsEnabled(enabled: boolean): void {
     this.userCloudsEnabled = enabled;
+    sharedNightUniforms.cloudShadowEnabled.value = enabled ? 1.0 : 0.0;
   }
 
   isCloudsEnabled(): boolean {
