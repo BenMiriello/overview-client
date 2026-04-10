@@ -166,11 +166,7 @@
     transform: none;
 }
 
-/* New hotspot: scale up 15% until dismissed */
-.globe-ctrl-btn.hotspot-btn.new-hotspot {
-    transform: scale(1.15);
-}
-
+/* New hotspot: hover scales normally; bright styling signals the new event */
 .globe-ctrl-btn.hotspot-btn.new-hotspot:hover {
-    transform: scale(1.15);
+    transform: scale(1.2);
 }
