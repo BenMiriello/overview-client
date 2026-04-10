@@ -450,7 +450,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const scene = globeEl.current.scene() as THREE.Scene;
 
     const dayEngine = createDayTileEngine(globeRadius);
-    scene.add(dayEngine);
     dayTileEngineRef.current = dayEngine;
 
     const nightEngine = createNightTileEngine(globeRadius);
@@ -914,7 +913,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
-      scene.remove(dayEngine);
+      dayEngine.parent?.remove(dayEngine);
       dayEngine.clearTiles();
       dayTileEngineRef.current = null;
       scene.remove(nightEngine);
@@ -981,6 +980,25 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.domElement.addEventListener('mousedown', stopIntroAnimation);
     controls.domElement.addEventListener('wheel', stopIntroAnimation, { passive: true });
     controls.domElement.addEventListener('touchstart', stopIntroAnimation);
+
+    // Replace the npm tile engine inside react-globe.gl's globe group with our
+    // vendored engine. This puts tiles in the same coordinate space as the base
+    // globe mesh — no z-fighting, no scale hacks. The base image fills tile gaps.
+    const scene = globeEl.current.scene() as any;
+    if (scene) {
+      scene.traverse((obj: any) => {
+        if (obj.__globeObjType === 'globe') {
+          const npmEngine = obj.children.find((c: any) => Array.isArray(c.thresholds));
+          if (npmEngine) {
+            npmEngine.clearTiles?.();
+            obj.remove(npmEngine);
+          }
+          if (dayTileEngineRef.current) {
+            obj.add(dayTileEngineRef.current);
+          }
+        }
+      });
+    }
 
     if (!layerManagerRef.current) {
       const manager = new GlobeLayerManager();
