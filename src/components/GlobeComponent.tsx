@@ -61,6 +61,7 @@ interface GlobeComponentProps {
   viewTarget?: 'earth' | 'moon';
   cloudsEnabled?: boolean;
   restoredView?: StoredView | null;
+  onEarthViewReady?: () => void;
 }
 
 // Target-primary state: the ground point (targetLat/targetLng) is the invariant.
@@ -405,6 +406,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   viewTarget = 'earth',
   cloudsEnabled = true,
   restoredView = null,
+  onEarthViewReady,
 }) => {
   const globeEl          = useRef<any>(null);
   const layerManagerRef  = useRef<GlobeLayerManager | null>(null);
@@ -2127,6 +2129,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           inMoonViewRef.current = false;
           resumeLibrary(controls);
           moonViewAnimRef.current = null;
+          onEarthViewReady?.();
         }
       };
 
@@ -2137,6 +2140,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           if (raf !== null) cancelAnimationFrame(raf);
           inMoonViewRef.current = false;
           resumeLibrary(controls);
+          onEarthViewReady?.();
         },
       };
     }

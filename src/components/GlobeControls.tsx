@@ -56,30 +56,36 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   cloudsEnabled = true,
   onToggleClouds,
 }) => {
+  const isMoonView = viewTarget === 'moon';
+  const hasData = !!hotspot;
+
   const hotspotClass = [
     'globe-ctrl-btn',
     'hotspot-btn',
-    isViewingHotspot ? 'viewing' : '',
-    hasNewHotspot ? 'new-hotspot' : '',
+    isMoonView || !hasData ? 'inactive' : '',
+    !isMoonView && hasData && isViewingHotspot ? 'viewing' : '',
+    !isMoonView && hasData && hasNewHotspot ? 'new-hotspot' : '',
   ].filter(Boolean).join(' ');
 
-  const hotspotTooltip = isViewingHotspot
-    ? "You're already viewing the most active hotspot. Click to re-center."
-    : 'Go to the most active hotspot';
+  const hotspotTooltip = isMoonView
+    ? 'View the latest lightning hotspots on Earth'
+    : !hasData
+      ? 'Gathering more data to determine the current hotspot location'
+      : isViewingHotspot
+        ? "You're already viewing the most active hotspot. Click to re-center."
+        : 'Go to the most active hotspot';
 
   return (
     <div className="globe-controls">
-      {hotspot && (
-        <CtrlBtn
-          className={hotspotClass}
-          onClick={onGoToHotspot}
-          ariaLabel="Go to hotspot"
-          tooltip={hotspotTooltip}
-          leftAlignTooltip
-        >
-          <Flame size={16} />
-        </CtrlBtn>
-      )}
+      <CtrlBtn
+        className={hotspotClass}
+        onClick={onGoToHotspot}
+        ariaLabel="Go to hotspot"
+        tooltip={hotspotTooltip}
+        leftAlignTooltip
+      >
+        <Flame size={16} />
+      </CtrlBtn>
       <CtrlBtn
         className={`globe-ctrl-btn ${isOrbiting ? 'active' : ''}`}
         onClick={onToggleOrbit}

@@ -41,6 +41,9 @@ const GlobePage = () => {
   // Passed to GlobeComponent to trigger a cancellable fly-to animation
   const [flyTo, setFlyTo] = useState<{ lat: number; lng: number; altitude: number } | null>(null);
 
+  // Hotspot fly-to deferred until the moon→earth transition finishes
+  const pendingFlyAfterEarthRef = useRef<{ lat: number; lng: number } | null>(null);
+
   const [is3D, setIs3D] = useState(() => {
     if (restoredView) return restoredView.is3D;
     const legacy = loadLegacyPrefer3D();
@@ -136,16 +139,28 @@ const GlobePage = () => {
     });
   }, []);
 
+  const handleEarthViewReady = useCallback(() => {
+    if (pendingFlyAfterEarthRef.current) {
+      const spot = pendingFlyAfterEarthRef.current;
+      pendingFlyAfterEarthRef.current = null;
+      setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
+    }
+  }, []);
+
   const handleGoToHotspot = useCallback(() => {
     setHasNewHotspot(false);
     const spot = liveHotspot ?? hotspot;
-    if (spot) {
-      console.log(`[hotspot] flying to lat=${spot.lat.toFixed(2)}, lng=${spot.lng.toFixed(2)}, count=${spot.count}`);
-      setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
-    } else {
-      console.warn('[hotspot] no hotspot available');
+    if (!spot) return;
+
+    if (viewTarget === 'moon') {
+      pendingFlyAfterEarthRef.current = spot;
+      setViewTarget('earth');
+      return;
     }
-  }, [liveHotspot, hotspot]);
+
+    console.log(`[hotspot] flying to lat=${spot.lat.toFixed(2)}, lng=${spot.lng.toFixed(2)}, count=${spot.count}`);
+    setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
+  }, [liveHotspot, hotspot, viewTarget]);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
@@ -162,6 +177,7 @@ const GlobePage = () => {
         viewTarget={viewTarget}
         cloudsEnabled={cloudsEnabled}
         restoredView={restoredView}
+        onEarthViewReady={handleEarthViewReady}
       />
       <StatusBar
         connected={connected}
