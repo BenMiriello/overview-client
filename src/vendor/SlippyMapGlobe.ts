@@ -85,6 +85,7 @@ const _tmpVec3A = new Vector3();
 const _tmpVec3B = new Vector3();
 const _tmpVec3C = new Vector3();
 const _tmpSphere = new Sphere();
+const _tmpFrustum = new Frustum();
 
 // ── Math helpers (inlined from d3-geo / d3-scale) ─────────────────────────
 
@@ -280,6 +281,8 @@ export default class SlippyMapGlobe extends Group {
   #lastPovX = NaN;
   #lastPovY = NaN;
   #lastPovZ = NaN;
+  #lastFetchAt = 0;
+  #frustumReady = false;
 
   constructor(radius: number, opts: SlippyMapOptions = {}) {
     super();
@@ -351,7 +354,7 @@ export default class SlippyMapGlobe extends Group {
         });
       }
     }
-    this.#fetchNeededTiles();
+    this.#fetchNeededTiles(true);
   }
 
   clearTiles = (): void => {
@@ -382,15 +385,15 @@ export default class SlippyMapGlobe extends Group {
     this.#lastPovY = cp.y;
     this.#lastPovZ = cp.z;
 
-    let frustum: Frustum | undefined;
+    this.#frustumReady = false;
     this.#isInView = (d: TileMeta): boolean => {
-      if (!frustum) {
-        frustum = new Frustum();
+      if (!this.#frustumReady) {
         camera.updateMatrix();
         camera.updateMatrixWorld();
-        frustum.setFromProjectionMatrix(
+        _tmpFrustum.setFromProjectionMatrix(
           _tmpMat4.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
         );
+        this.#frustumReady = true;
       }
       if (d.tileRadius === undefined) {
         const { gx } = gridDims(this.level, this.#isMercator);
@@ -404,7 +407,7 @@ export default class SlippyMapGlobe extends Group {
       const c = d.centroid!;
       _tmpVec3A.set(c.x, c.y, c.z).applyMatrix4(this.matrixWorld);
       _tmpSphere.set(_tmpVec3A, d.tileRadius);
-      return frustum.intersectsSphere(_tmpSphere);
+      return _tmpFrustum.intersectsSphere(_tmpSphere);
     };
 
     if (this.tileUrl) {
@@ -485,8 +488,15 @@ export default class SlippyMapGlobe extends Group {
       .addAll(levelMeta);
   }
 
-  #fetchNeededTiles(): void {
+  #fetchNeededTiles(force = false): void {
     if (!this.tileUrl || this.#level === undefined || !this.#tilesMeta[this.#level]) return;
+    if (!force) {
+      const now = performance.now();
+      if (now - this.#lastFetchAt < 100) return;
+      this.#lastFetchAt = now;
+    } else {
+      this.#lastFetchAt = performance.now();
+    }
     const renderAllCap = this.#isMercator
       ? MAX_LEVEL_TO_RENDER_ALL_TILES_MERCATOR
       : MAX_LEVEL_TO_RENDER_ALL_TILES_EQUIRECT;
@@ -585,7 +595,7 @@ export default class SlippyMapGlobe extends Group {
     }
 
     const candidates = tiles
-      .filter((d) => !d.obj && !d.loading)
+      .filter((d) => (!d.obj || !d.obj.parent) && !d.loading)
       .filter(this.#isInView ?? (() => true));
 
     if (camLookLocal) {
@@ -675,13 +685,17 @@ export default class SlippyMapGlobe extends Group {
             d.loading = false;
             delete d.controller;
           })
-          .catch(() => {
-            // Always clean up geometry — both on abort and on fetch errors.
-            // Keeping d.obj after abort would leave the tile in a permanent "has geometry
-            // but no texture, not in scene" state, making it invisible and unfetchable.
-            if (d.obj) { deallocate(d.obj); delete d.obj; }
-            d.loading = false;
-            delete d.controller;
+          .catch((err) => {
+            if (err?.name === 'AbortError') {
+              // Keep geometry alive so it doesn't need to be re-created on re-fetch.
+              // The candidate filter picks up tiles with obj but no parent (not in scene).
+              d.loading = false;
+              delete d.controller;
+            } else {
+              if (d.obj) { deallocate(d.obj); delete d.obj; }
+              d.loading = false;
+              delete d.controller;
+            }
           });
       });
   }

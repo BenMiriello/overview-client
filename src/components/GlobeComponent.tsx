@@ -494,6 +494,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const sunFrustum = new THREE.Frustum();
     const sunSphere = new THREE.Sphere(new THREE.Vector3(), SUN_HALO_SCALE / 2);
     const tmpProjScreen = new THREE.Matrix4();
+    const synthDayCam = new THREE.PerspectiveCamera();
 
     // Returns true if the segment from `camPos` to `sunPos` passes through a
     // sphere at the origin with radius `EARTH_R`. Standard ray-sphere
@@ -829,7 +830,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
               // altitude (level lock). One call instead of two — the npm engine has no
               // position-change early-return, so a second real-camera call would recompute
               // the level from the real altitude and undo the hysteresis.
-              const synth = new THREE.PerspectiveCamera(synthFov, perspCam.aspect, perspCam.near, perspCam.far);
+              synthDayCam.fov = synthFov;
+              synthDayCam.aspect = perspCam.aspect;
+              synthDayCam.near = perspCam.near;
+              synthDayCam.far = perspCam.far;
+              const synth = synthDayCam;
               if (targetLevel !== rawLevel) {
                 // Hysteresis zone: clamp altitude so the engine's level stays stable.
                 // At level <= renderAllCap (6), #isInView passes all tiles regardless of
