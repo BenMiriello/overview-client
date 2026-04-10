@@ -37,9 +37,11 @@ const NIGHT_FRAG_COMMON = `
 `;
 
 /**
- * Patches a day tile's MeshLambertMaterial to darken the night side.
+ * Patches a day tile's material to darken the night side.
+ * Works with MeshLambertMaterial and MeshPhongMaterial (both use the same
+ * shader include hooks: worldpos_vertex and map_fragment).
  */
-export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
+export function patchTileMaterial(material: THREE.Material): void {
   if (material.userData?.[DAY_PATCH_FLAG]) return;
 
   material.onBeforeCompile = (shader) => {
@@ -96,7 +98,8 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
     );
   };
 
-  material.customProgramCacheKey = () => 'daynight-day-v3';
+  const matType = (material as any).isMeshPhongMaterial ? 'phong' : 'lambert';
+  material.customProgramCacheKey = () => `daynight-day-${matType}-v3`;
   if (!material.userData) material.userData = {};
   material.userData[DAY_PATCH_FLAG] = true;
   material.needsUpdate = true;
@@ -154,13 +157,23 @@ const GIBS_URL = (x: number, y: number, level: number) =>
  * day/night darkening shader at material creation time — no 1-frame flash.
  */
 export function createDayTileEngine(radius: number): SlippyMapGlobe {
-  return createTiledPlanetEngine({
+  const engine = createTiledPlanetEngine({
     radius,
     tileUrl: ARCGIS_URL,
     maxLevel: 17,
     projection: 'mercator',
     patchMaterial: patchTileMaterial,
   });
+  // Show the inner back layer (black sphere at 0.99*radius). The factory hides
+  // it, but the day engine is the only visible surface — gaps between tile patches
+  // must show black, not transparent (which would reveal the scene background).
+  engine.children.forEach((child) => {
+    const m = child as THREE.Mesh;
+    if (m.isMesh && (m.material as THREE.Material & { isMeshBasicMaterial?: boolean })?.isMeshBasicMaterial) {
+      m.visible = true;
+    }
+  });
+  return engine;
 }
 
 /**

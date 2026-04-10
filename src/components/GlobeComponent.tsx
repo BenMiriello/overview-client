@@ -3,7 +3,7 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
-import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createDayTileEngine, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
+import { updateSunDirection, patchNightTileMaterial, createDayTileEngine, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
 import { createMoonMesh, updateMoonPosition, updateMoonOrientation, MoonGroup } from '../services/moonMesh';
 import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE, SUN_HALO_SCALE } from '../services/sunMesh';
 import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } from '../services/atmosphereMesh';
@@ -763,17 +763,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         } catch { /* ignore */ }
       }
 
-      // Patch the base globe mesh (react-globe.gl's blue marble) with the night shader
-      // so it matches the vendored day tiles on the dark side — prevents contrast at tile edges.
       const camera = globeEl.current.camera();
-      const scene = globeEl.current.scene() as THREE.Scene;
-      perfSpan('sceneTraverse', () => {
-        scene.traverse((child: any) => {
-          if (child.isMesh && child.material?.isMeshLambertMaterial && !child.material.userData?.__nightTilePatched) {
-            patchTileMaterial(child.material);
-          }
-        });
-      });
 
       // Compute once — cameraMoved updates its internal lastEngineCamPos on the first true result,
       // so all engines share the same snapshot for this tick.
@@ -982,17 +972,27 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.domElement.addEventListener('touchstart', stopIntroAnimation);
 
     // Replace the npm tile engine inside react-globe.gl's globe group with our
-    // vendored engine. This puts tiles in the same coordinate space as the base
-    // globe mesh — no z-fighting, no scale hacks. The base image fills tile gaps.
+    // vendored engine, and hide the base globe mesh (blue marble). The npm engine
+    // worked the same way: globeObj hidden, tiles are the only visible surface,
+    // with a black back layer at 0.99*radius for sub-pixel gap coverage.
+    // Two surfaces at the same radius = z-fighting; one surface = no z-fighting.
     const scene = globeEl.current.scene() as any;
     if (scene) {
       scene.traverse((obj: any) => {
         if (obj.__globeObjType === 'globe') {
+          // Hide the base globe mesh — vendored tiles replace it entirely
+          for (const child of [...obj.children]) {
+            if (child.isMesh) {
+              child.visible = false;
+            }
+          }
+          // Remove npm tile engine
           const npmEngine = obj.children.find((c: any) => Array.isArray(c.thresholds));
           if (npmEngine) {
             npmEngine.clearTiles?.();
             obj.remove(npmEngine);
           }
+          // Insert vendored engine
           if (dayTileEngineRef.current) {
             obj.add(dayTileEngineRef.current);
           }
