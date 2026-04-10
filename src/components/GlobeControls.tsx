@@ -1,4 +1,7 @@
-import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff } from 'lucide-react';
+import { useState } from 'react';
+import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff, Info } from 'lucide-react';
+import { ConnectionStatus } from '../services/dataStreams/hooks';
+import { LightningLayer } from '../layers';
 import './GlobeControls.css';
 
 interface Hotspot {
@@ -20,6 +23,9 @@ interface GlobeControlsProps {
   onToggleViewTarget?: () => void;
   cloudsEnabled?: boolean;
   onToggleClouds?: () => void;
+  connectionStatus?: ConnectionStatus;
+  lastUpdate?: string;
+  lightningLayer?: LightningLayer | null;
 }
 
 interface CtrlBtnProps {
@@ -55,7 +61,11 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   onToggleViewTarget,
   cloudsEnabled = true,
   onToggleClouds,
+  connectionStatus,
+  lastUpdate,
+  lightningLayer,
 }) => {
+  const [infoVisible, setInfoVisible] = useState(false);
   const isMoonView = viewTarget === 'moon';
   const hasData = !!hotspot;
 
@@ -75,25 +85,16 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         ? "You're already viewing the most active hotspot. Click to re-center."
         : 'Go to the most active hotspot';
 
+  const infoText = (() => {
+    if (connectionStatus === 'connected') {
+      return `Connected | Lightning: ${lightningLayer?.getActiveLightningBoltCount() ?? 0} | Markers: ${lightningLayer?.getMarkerCount() ?? 0} | ${lastUpdate}`;
+    }
+    if (connectionStatus === 'reconnecting') return 'Reconnecting to server...';
+    return 'Disconnected from server';
+  })();
+
   return (
     <div className="globe-controls">
-      <CtrlBtn
-        className={hotspotClass}
-        onClick={onGoToHotspot}
-        ariaLabel="Go to hotspot"
-        tooltip={hotspotTooltip}
-        leftAlignTooltip
-      >
-        <Flame size={16} />
-      </CtrlBtn>
-      <CtrlBtn
-        className={`globe-ctrl-btn ${isOrbiting ? 'active' : ''}`}
-        onClick={onToggleOrbit}
-        ariaLabel={isOrbiting ? 'Stop orbit' : 'Start orbit'}
-        tooltip={isOrbiting ? 'Stop auto-rotation' : 'Start auto-rotation'}
-      >
-        <RotateCcw size={16} />
-      </CtrlBtn>
       <CtrlBtn
         className="globe-ctrl-btn active"
         onClick={onToggleViewTarget}
@@ -114,6 +115,23 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         {cloudsEnabled ? <Cloud size={16} /> : <CloudOff size={16} />}
       </CtrlBtn>
       <CtrlBtn
+        className={hotspotClass}
+        onClick={onGoToHotspot}
+        ariaLabel="Go to hotspot"
+        tooltip={hotspotTooltip}
+        leftAlignTooltip
+      >
+        <Flame size={16} />
+      </CtrlBtn>
+      <CtrlBtn
+        className={`globe-ctrl-btn ${isOrbiting ? 'active' : ''}`}
+        onClick={onToggleOrbit}
+        ariaLabel={isOrbiting ? 'Stop orbit' : 'Start orbit'}
+        tooltip={isOrbiting ? 'Stop auto-rotation' : 'Start auto-rotation'}
+      >
+        <RotateCcw size={16} />
+      </CtrlBtn>
+      <CtrlBtn
         className={`globe-ctrl-btn ${is3D ? 'active' : ''}`}
         onClick={onToggle3D}
         ariaLabel={is3D ? 'Switch to 2D view' : 'Switch to 3D view'}
@@ -121,6 +139,17 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
       >
         {is3D ? '3D' : '2D'}
       </CtrlBtn>
+      <CtrlBtn
+        className={`globe-ctrl-btn ${infoVisible ? 'active' : ''}`}
+        onClick={() => setInfoVisible(v => !v)}
+        ariaLabel={infoVisible ? 'Hide info' : 'Show info'}
+        tooltip={infoVisible ? 'Hide connection info' : 'Show connection info'}
+      >
+        <Info size={16} />
+      </CtrlBtn>
+      <div className={`globe-controls-info${infoVisible ? ' visible' : ''}`}>
+        {infoText}
+      </div>
     </div>
   );
 };

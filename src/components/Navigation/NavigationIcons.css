@@ -1,36 +1,39 @@
-.nav-icon {
+.nav-icons-group {
     position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    z-index: 1000;
+}
+
+.nav-icon {
     width: 40px;
     height: 40px;
     background: rgba(0, 0, 0, 0.3);
-    border-radius: 50%;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
-    transition: transform 0.2s ease, color 0.2s ease;
+    transition: transform 0.2s ease, color 0.2s ease, background 0.2s ease;
     backdrop-filter: blur(4px);
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: #808080;
 }
 
 .nav-icon:hover {
-    transform: scale(1.2);
+    transform: scale(1.1);
     background: rgba(0, 0, 0, 0.5);
     color: #fff;
 }
 
-.globe-icon {
-    top: 20px;
-    left: 20px;
+.nav-icon.active {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.5);
+    color: #fff;
 }
 
-.lightning-icon {
-    top: 20px;
-    right: 20px;
-}
-
-.bibliography-icon {
-    bottom: 20px;
-    right: 20px;
+.nav-icon.active:hover {
+    background: rgba(255, 255, 255, 0.22);
 }

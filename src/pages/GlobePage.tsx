@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { useLightningData } from '../services/dataStreams/hooks';
-import { StatusBar, GlobeComponent, GlobeControls } from '../components';
+import { GlobeComponent, GlobeControls } from '../components';
 import { NavigationIcons } from '../components/Navigation';
 import { LightningLayer, CloudLayer } from '../layers';
 import { GlobeLayerManager } from '../managers';
@@ -77,7 +77,7 @@ const GlobePage = () => {
       .finally(() => setHotspotReady(true));
   }, []);
 
-  const { connected, connectionStatus, lastUpdate, dataStream, subscribe } = useLightningData({
+  const { connectionStatus, lastUpdate, dataStream, subscribe } = useLightningData({
     url: 'ws://localhost:3001'
   });
 
@@ -102,10 +102,13 @@ const GlobePage = () => {
       // In close mode (3D/pitched), pointOfView() returns the camera nadir which
       // is offset from the ground target by the pitch angle. Use cameraTargetRef
       // (the actual look-at ground point) when available; fall back to pov in far mode.
-      const camLat = cameraTargetRef.current?.lat ?? pov.lat;
-      const camLng = cameraTargetRef.current?.lng ?? pov.lng;
+      const ctRef = cameraTargetRef.current;
+      const camLat = ctRef?.lat ?? pov.lat;
+      const camLng = ctRef?.lng ?? pov.lng;
       const threshold = Math.max(3, Math.min(30, pov.altitude * 15));
-      const viewing = angularDistance(camLat, camLng, activeHotspot.lat, activeHotspot.lng) < threshold;
+      const dist = angularDistance(camLat, camLng, activeHotspot.lat, activeHotspot.lng);
+      const viewing = dist < threshold;
+      console.log(`[view-chk] ctRef=${ctRef ? `(${ctRef.lat.toFixed(2)},${ctRef.lng.toFixed(2)})` : 'null'} pov=(${pov.lat.toFixed(2)},${pov.lng.toFixed(2)}) alt=${pov.altitude.toFixed(3)} hs=(${activeHotspot.lat.toFixed(2)},${activeHotspot.lng.toFixed(2)}) dist=${dist.toFixed(1)}° thr=${threshold.toFixed(1)}° viewing=${viewing}`);
       setIsViewingHotspot(viewing);
       if (viewing) setHasNewHotspot(false);
     }, 500);
@@ -188,12 +191,6 @@ const GlobePage = () => {
         onEarthViewReady={handleEarthViewReady}
         cameraTargetRef={cameraTargetRef}
       />
-      <StatusBar
-        connected={connected}
-        connectionStatus={connectionStatus}
-        lastUpdate={lastUpdate}
-        lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
-      />
       <GlobeControls
         is3D={is3D}
         isOrbiting={isOrbiting}
@@ -207,6 +204,9 @@ const GlobePage = () => {
         onToggleViewTarget={handleToggleViewTarget}
         cloudsEnabled={cloudsEnabled}
         onToggleClouds={handleToggleClouds}
+        connectionStatus={connectionStatus}
+        lastUpdate={lastUpdate}
+        lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
       />
       <NavigationIcons currentPage="globe" />
     </div>

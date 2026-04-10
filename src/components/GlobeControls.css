@@ -1,11 +1,33 @@
 .globe-controls {
     position: fixed;
-    bottom: 46px;
-    left: 10px;
+    bottom: 20px;
+    left: 20px;
     display: flex;
     flex-direction: row;
+    align-items: center;
     gap: 8px;
     z-index: 1000;
+}
+
+.globe-controls-info {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+    white-space: nowrap;
+    background: rgba(15, 15, 20, 0.88);
+    backdrop-filter: blur(6px);
+    color: #e8e8e8;
+    font-size: 12px;
+    font-family: 'Roboto', sans-serif;
+    font-weight: 400;
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.globe-controls-info.visible {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .globe-ctrl-btn {
