@@ -44,6 +44,10 @@ const GlobePage = () => {
   // Hotspot fly-to deferred until the moon→earth transition finishes
   const pendingFlyAfterEarthRef = useRef<{ lat: number; lng: number } | null>(null);
 
+  // Camera ground target in close mode — updated every frame by GlobeComponent.
+  // Use this instead of pointOfView() which returns nadir offset by pitch.
+  const cameraTargetRef = useRef<{ lat: number; lng: number } | null>(null);
+
   const [is3D, setIs3D] = useState(() => {
     if (restoredView) return restoredView.is3D;
     const legacy = loadLegacyPrefer3D();
@@ -94,10 +98,14 @@ const GlobePage = () => {
 
     const id = setInterval(() => {
       if (!globeEl.current) return;
-      const { lat, lng, altitude } = globeEl.current.pointOfView();
-      // Threshold scales with zoom: 3° when close (~330 km), up to 30° when far out
-      const threshold = Math.max(3, Math.min(30, altitude * 15));
-      const viewing = angularDistance(lat, lng, activeHotspot.lat, activeHotspot.lng) < threshold;
+      const pov = globeEl.current.pointOfView();
+      // In close mode (3D/pitched), pointOfView() returns the camera nadir which
+      // is offset from the ground target by the pitch angle. Use cameraTargetRef
+      // (the actual look-at ground point) when available; fall back to pov in far mode.
+      const camLat = cameraTargetRef.current?.lat ?? pov.lat;
+      const camLng = cameraTargetRef.current?.lng ?? pov.lng;
+      const threshold = Math.max(3, Math.min(30, pov.altitude * 15));
+      const viewing = angularDistance(camLat, camLng, activeHotspot.lat, activeHotspot.lng) < threshold;
       setIsViewingHotspot(viewing);
       if (viewing) setHasNewHotspot(false);
     }, 500);
@@ -178,6 +186,7 @@ const GlobePage = () => {
         cloudsEnabled={cloudsEnabled}
         restoredView={restoredView}
         onEarthViewReady={handleEarthViewReady}
+        cameraTargetRef={cameraTargetRef}
       />
       <StatusBar
         connected={connected}

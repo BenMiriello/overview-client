@@ -62,6 +62,10 @@ interface GlobeComponentProps {
   cloudsEnabled?: boolean;
   restoredView?: StoredView | null;
   onEarthViewReady?: () => void;
+  // Populated in close-mode with the camera ground target; null in far-mode.
+  // Use this instead of pointOfView() when you need the actual lat/lng target,
+  // because pointOfView() returns the camera nadir which is offset by pitch.
+  cameraTargetRef?: React.MutableRefObject<{ lat: number; lng: number } | null>;
 }
 
 // Target-primary state: the ground point (targetLat/targetLng) is the invariant.
@@ -407,6 +411,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   cloudsEnabled = true,
   restoredView = null,
   onEarthViewReady,
+  cameraTargetRef,
 }) => {
   const globeEl          = useRef<any>(null);
   const layerManagerRef  = useRef<GlobeLayerManager | null>(null);
@@ -1168,6 +1173,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     closeModeState.current = null;
     inCloseModeRef.current = false;
+    if (cameraTargetRef) cameraTargetRef.current = null;
     preventReentryRef.current = true;
     justExitedCloseModeRef.current = true;
     onIsOrbitingChange(false);
@@ -1220,6 +1226,14 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
       applyCameraState(camera, closeModeState.current, earthR);
       renderScene();
+
+      if (cameraTargetRef) {
+        cameraTargetRef.current = {
+          lat: closeModeState.current.targetLat,
+          // Normalize accumulated lng back to [-180,180] for consumers
+          lng: ((closeModeState.current.targetLng % 360) + 540) % 360 - 180,
+        };
+      }
 
       closeModeRafRef.current = requestAnimationFrame(tick);
     };
