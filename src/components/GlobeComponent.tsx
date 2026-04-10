@@ -3,7 +3,7 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
-import { updateSunDirection, patchNightTileMaterial, createDayTileEngine, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
+import { updateSunDirection, patchTileMaterial, patchNightTileMaterial, createDayTileEngine, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
 import { createMoonMesh, updateMoonPosition, updateMoonOrientation, MoonGroup } from '../services/moonMesh';
 import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE, SUN_HALO_SCALE } from '../services/sunMesh';
 import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } from '../services/atmosphereMesh';
@@ -762,7 +762,17 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         } catch { /* ignore */ }
       }
 
+      // Patch the base globe mesh (react-globe.gl's blue marble) with the night shader
+      // so it matches the vendored day tiles on the dark side — prevents contrast at tile edges.
       const camera = globeEl.current.camera();
+      const scene = globeEl.current.scene() as THREE.Scene;
+      perfSpan('sceneTraverse', () => {
+        scene.traverse((child: any) => {
+          if (child.isMesh && child.material?.isMeshLambertMaterial && !child.material.userData?.__nightTilePatched) {
+            patchTileMaterial(child.material);
+          }
+        });
+      });
 
       // Compute once — cameraMoved updates its internal lastEngineCamPos on the first true result,
       // so all engines share the same snapshot for this tick.
