@@ -1843,14 +1843,30 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const cam = globeEl.current.camera() as THREE.Camera;
     const camLocal = moonMesh.worldToLocal(cam.position.clone());
     if (camLocal.lengthSq() < 1e-9) return;
-    const T_local = camLocal.clone().normalize().multiplyScalar(MOON_RADIUS_SCENE);
+    const T_unit = camLocal.clone().normalize();
+    const T_local = T_unit.clone().multiplyScalar(MOON_RADIUS_SCENE);
     const { lat, lng } = moonCartesian2Polar(T_local);
+
+    // Compute heading so close-mode's camera up matches orbit mode's up=(0,1,0) world-space,
+    // preventing a visible rotation snap at the threshold crossing.
+    const upLocal = new THREE.Vector3(0, 1, 0).applyQuaternion(moonMesh.quaternion.clone().conjugate());
+    const upTangent = upLocal.sub(T_unit.clone().multiplyScalar(upLocal.dot(T_unit)));
+    let heading = 0;
+    if (upTangent.lengthSq() > 1e-6) {
+      upTangent.normalize();
+      const localY = new THREE.Vector3(0, 1, 0);
+      let eastAtT = new THREE.Vector3().crossVectors(localY, T_unit);
+      if (eastAtT.lengthSq() < 1e-6) eastAtT.set(1, 0, 0);
+      eastAtT.normalize();
+      const northAtT = new THREE.Vector3().crossVectors(T_unit, eastAtT).normalize();
+      heading = Math.atan2(upTangent.dot(eastAtT), upTangent.dot(northAtT));
+    }
 
     moonCloseState.current = {
       targetLat: lat,
       targetLng: lng,
       altitude,
-      heading: 0,
+      heading,
       pitch: pitchFromAltitude(altitude),
     };
     moonOrbitState.current = null;
