@@ -12,9 +12,8 @@
 //               perturbed normal is Lambertian-shaded against the sun
 //               direction to give per-fragment 3D relief that does not
 //               ghost (no view-direction parallax, no multi-shell stack).
-//   shadow    = one density tap offset toward the sun direction. If the
-//               point toward the sun is taller, current point is in cast
-//               shadow. Sells cloud-over-cloud occlusion.
+//   shadow    = cloud shadows on the ground are handled by the surface
+//               shader (dayNightMaterial), not the cloud shell.
 //   day/night = same flat-normal sun-dot brightness ramp the phong patch
 //               used in Phase 1, kept separate from the relief term so the
 //               terminator stays smooth.
@@ -81,18 +80,6 @@ export const cloudFragmentShader = /* glsl */ `
     return v;
   }
 
-  // Project a world-space direction onto the local equirectangular UV plane
-  // at this fragment. East/north basis is built from the world up axis and
-  // the surface normal. The cosLat clamp avoids singularities at the poles.
-  vec2 worldDirToUv(vec3 dir, vec3 n) {
-    vec3 east  = normalize(cross(vec3(0.0, 1.0, 0.0), n));
-    vec3 north = cross(n, east);
-    float dE = dot(dir, east);
-    float dN = dot(dir, north);
-    float cosLat = max(0.08, sqrt(max(0.0, 1.0 - n.y * n.y)));
-    return vec2(dE / (cosLat * 6.2831853), -dN / 3.1415927);
-  }
-
   float sampleHeight(vec2 uv) {
     return texture2D(uMap, uv).a;
   }
@@ -138,8 +125,8 @@ export const cloudFragmentShader = /* glsl */ `
     float density = sampleDensity(vUv);
     density = clamp((density - uDensityLo) / (1.0 - uDensityLo), 0.0, 1.0);
 
-    // Local east/north tangent basis at this fragment, used for both the
-    // relief gradient and the cast-shadow sun projection below.
+    // Local east/north tangent basis at this fragment, used for the
+    // relief gradient.
     vec3 east  = normalize(cross(vec3(0.0, 1.0, 0.0), n));
     vec3 north = cross(n, east);
 
@@ -175,16 +162,6 @@ export const cloudFragmentShader = /* glsl */ `
     relief = clamp(relief, 0.7, 1.3);
 
     float brightness = mix(uNightAmbient, 1.15, dayFactor) * relief;
-
-    // Cast self-shadow: one tap toward the sun in heightmap space. Kept
-    // subtle — a single binary "is the neighbor higher?" tap on noisy
-    // satellite data produces speckled blob shadows if the contribution
-    // is too strong, so the multiplier range is narrow.
-    vec2 sunUvOffset = worldDirToUv(uSunDir, n) * 0.012;
-    float heightTowardSun = sampleHeight(vUv + sunUvOffset);
-    float centerHeight    = sampleHeight(vUv);
-    float castShadow = max(0.0, heightTowardSun - centerHeight);
-    brightness *= mix(1.0, 0.85, castShadow * dayFactor);
 
     // Rim light at the terminator: bright sunset cloud-top crescent.
     // Brightness only, no hue change (color tinting deferred). Gated by
