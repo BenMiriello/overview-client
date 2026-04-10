@@ -113,6 +113,7 @@ export class CloudLayer extends BaseLayer<void> {
         uDetailFreq:      { value: new THREE.Vector2(64, 32) },
         uFlashIntensity:  { value: 0 },
         uFlashWorldPos:   { value: new THREE.Vector3() },
+        uFlashFalloff:    { value: 20000.0 },
         uDetailFade:      { value: 1 },
         uDensityLo:       { value: getConfig<number>('layers.clouds.densityLo') ?? 0.05 },
         uNightAmbient:    { value: 0.12 },
@@ -154,7 +155,7 @@ export class CloudLayer extends BaseLayer<void> {
       this.refreshTimer = window.setInterval(() => this.refreshTexture(), intervalMs);
 
       this.flashHandler = (e: Event) => {
-        this.flashIntensity = 1;
+        this.flashIntensity = 2.0;
         const detail = (e as CustomEvent).detail;
         if (detail?.lat != null && detail?.lng != null) {
           const phi = (90 - detail.lat) * Math.PI / 180;
@@ -183,7 +184,7 @@ export class CloudLayer extends BaseLayer<void> {
     const time = (performance.now() - this.startTime) / 1000;
 
     if (this.flashIntensity > 0.001) {
-      this.flashIntensity *= 0.88;
+      this.flashIntensity *= 0.75;
     } else {
       this.flashIntensity = 0;
     }
@@ -193,11 +194,32 @@ export class CloudLayer extends BaseLayer<void> {
     let detailFade = 1;
     let cloudAlt = CLOUD_ALT_FAR;
 
+    // Reference camera distance for falloff scaling (altitude ≈ 0.2 → dist ≈ 120).
+    // Falloff ∝ 1/dist² so glow world-radius scales with apparent globe size.
+    const REF_DIST = 120;
+    let cloudFalloff = 20000.0;
+    let groundFalloff = 15.0;
+
     if (this.globeEl) {
       try {
         const camera = this.globeEl.camera();
         const globeRadius = (this.globeEl.getGlobeRadius?.() as number | undefined) ?? EARTH_RADIUS;
-        const cameraAlt = camera.position.length() / globeRadius - 1;
+        const camDist = camera.position.length();
+        const cameraAlt = camDist / globeRadius - 1;
+
+        // Suppress glow entirely at extreme zoom (moon distance)
+        if (cameraAlt >= 5.0) {
+          this.flashIntensity = 0;
+          sharedNightUniforms.flashIntensity.value = 0;
+        }
+
+        // Scale falloff so glow appears proportional to globe screen size.
+        // Clamp to 3x expansion maximum to avoid runaway at mid zoom.
+        const distRatio = REF_DIST / Math.max(camDist, REF_DIST);
+        const scale = Math.max(distRatio * distRatio, 1 / 9);
+        cloudFalloff = 20000.0 * scale;
+        groundFalloff = 15.0 * scale;
+
         const t = Math.max(0, Math.min(1,
           (ALT_FAR_POINT - cameraAlt) / (ALT_FAR_POINT - ALT_NEAR_POINT)
         ));
@@ -206,11 +228,14 @@ export class CloudLayer extends BaseLayer<void> {
       } catch { /* globeEl not ready */ }
     }
 
+    sharedNightUniforms.flashFalloff.value = groundFalloff;
+
     for (const { mesh, altMultiplier } of this.shells) {
       const mat = mesh.material as THREE.ShaderMaterial;
       mat.uniforms.uTime.value = time;
       mat.uniforms.uFlashIntensity.value = this.flashIntensity;
       (mat.uniforms.uFlashWorldPos.value as THREE.Vector3).copy(this.flashWorldPos);
+      mat.uniforms.uFlashFalloff.value = cloudFalloff;
       mat.uniforms.uDetailFade.value = detailFade;
       mesh.scale.setScalar(1 + cloudAlt * altMultiplier);
     }

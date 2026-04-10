@@ -143,14 +143,15 @@ export class LightningBoltEffect {
     if (
       state.phase === AnimationPhase.RETURN_STROKE &&
       state.strokeCount === 0 &&
-      !this.screenFlashFired &&
-      this.config.enableScreenFlash
+      !this.screenFlashFired
     ) {
       this.screenFlashFired = true;
-      this.screenFlash = new ScreenFlashEffect(0.15);
       window.dispatchEvent(new CustomEvent('lightning-flash', {
         detail: { lat: this.config.lat, lng: this.config.lng },
       }));
+      if (this.config.enableScreenFlash) {
+        this.screenFlash = new ScreenFlashEffect(0.15);
+      }
     }
 
     if (this.screenFlash && !this.screenFlash.update()) {

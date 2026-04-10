@@ -46,6 +46,7 @@ export const cloudFragmentShader = /* glsl */ `
   uniform vec2  uDetailFreq;
   uniform float uFlashIntensity;
   uniform vec3  uFlashWorldPos;
+  uniform float uFlashFalloff;
   uniform float uDetailFade;
   uniform float uDensityLo;
   uniform float uNightAmbient;
@@ -193,8 +194,11 @@ export const cloudFragmentShader = /* glsl */ `
     brightness += rim * 0.35 * smoothstep(0.4, 0.7, density);
 
     // Positional lightning flash: localized glow around the strike point.
-    float flashDist = length(vWorldPos - uFlashWorldPos);
-    float flashGlow = uFlashIntensity * (1.0 - smoothstep(0.0, 0.16, flashDist));
+    // Use angular distance (dot product) to avoid the ~3-unit altitude offset
+    // between the surface flash pos and the cloud shell dominating Euclidean distance.
+    // Gaussian gives bright center that diffuses out rather than a sharp ring.
+    float cosAngle = dot(normalize(vWorldPos), normalize(uFlashWorldPos));
+    float flashGlow = uFlashIntensity * exp(-max(0.0, 1.0 - cosAngle) * uFlashFalloff);
     brightness += flashGlow * 0.6;
 
     brightness = clamp(brightness, 0.0, 1.0);

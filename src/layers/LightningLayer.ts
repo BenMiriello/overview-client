@@ -58,11 +58,22 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   }
 
   addData(strike: LightningStrike): void {
-    if (getConfig<boolean>('layers.lightning.showLightningBolt')) {
+    const altitude = this.getCameraAltitude();
+
+    // Very far (moon): skip everything — markers would be invisible clutter
+    if (altitude >= 5.0) return;
+
+    if (getConfig<boolean>('layers.lightning.showLightningBolt') && altitude < 1.5) {
       this.createLightningBoltEffect(strike);
       // Marker is created after bolt animation completes (in update())
       this.pendingMarkers.set(strike.id, strike);
     } else {
+      // At medium zoom skip the bolt simulation but still trigger the glow flash
+      if (altitude >= 1.5) {
+        window.dispatchEvent(new CustomEvent('lightning-flash', {
+          detail: { lat: strike.lat, lng: strike.lng },
+        }));
+      }
       this.createMarkerEffect(strike);
     }
 
@@ -185,9 +196,21 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
       const nearDistance = 150;
       const farDistance = 1000;
       const t = Math.max(0, Math.min(1, (distance - nearDistance) / (farDistance - nearDistance)));
-      return 1.0 + t * 2.0;
+      // Thin lines at distance so bolt width stays proportional to apparent bolt length.
+      return 1.0 - t * 0.75;
     } catch {
       return 1.0;
+    }
+  }
+
+  private getCameraAltitude(): number {
+    if (!this.globeEl) return Infinity;
+    try {
+      const camera = this.globeEl.camera();
+      const globeRadius = (this.globeEl.getGlobeRadius?.() as number | undefined) ?? 100;
+      return camera.position.length() / globeRadius - 1;
+    } catch {
+      return Infinity;
     }
   }
 

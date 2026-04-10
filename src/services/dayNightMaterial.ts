@@ -11,6 +11,7 @@ export const sharedNightUniforms = {
   cloudTex: { value: null as THREE.Texture | null },
   flashIntensity: { value: 0 },
   flashWorldPos: { value: new THREE.Vector3() },
+  flashFalloff: { value: 15.0 },
 };
 
 /**
@@ -46,6 +47,7 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
     shader.uniforms.cloudTex = sharedNightUniforms.cloudTex;
     shader.uniforms.flashIntensity = sharedNightUniforms.flashIntensity;
     shader.uniforms.flashWorldPos = sharedNightUniforms.flashWorldPos;
+    shader.uniforms.flashFalloff = sharedNightUniforms.flashFalloff;
 
     shader.vertexShader = 'varying vec3 vWorldPosition;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
@@ -59,7 +61,8 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
       uniform vec3 sunDir;
       uniform sampler2D cloudTex;
       uniform float flashIntensity;
-      uniform vec3 flashWorldPos;\n` + shader.fragmentShader;
+      uniform vec3 flashWorldPos;
+      uniform float flashFalloff;\n` + shader.fragmentShader;
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
@@ -87,8 +90,8 @@ export function patchTileMaterial(material: THREE.MeshLambertMaterial): void {
         diffuseColor.rgb *= (1.0 - shadowDarken);
 
         float flashDist = length(vWorldPosition - flashWorldPos);
-        float groundFlash = flashIntensity * (1.0 - smoothstep(0.0, 0.16, flashDist));
-        diffuseColor.rgb += vec3(0.8, 0.85, 1.0) * groundFlash * 0.3;
+        float groundFlash = flashIntensity * exp(-flashDist * flashDist * flashFalloff);
+        diffuseColor.rgb += vec3(0.8, 0.85, 1.0) * groundFlash * 0.7;
       }`,
     );
   };
