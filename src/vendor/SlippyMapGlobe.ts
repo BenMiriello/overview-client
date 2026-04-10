@@ -283,6 +283,10 @@ export default class SlippyMapGlobe extends Group {
   #lastPovZ = NaN;
   #lastFetchAt = 0;
   #frustumReady = false;
+  // Tiles discovered by all updatePov calls this frame. Accumulated across
+  // multiple cameras (real + synthetic), then used by flushAborts() to cancel
+  // only tiles that NO camera considers needed.
+  #frameNeededKeys = new Set<string>();
 
   constructor(radius: number, opts: SlippyMapOptions = {}) {
     super();
@@ -339,11 +343,13 @@ export default class SlippyMapGlobe extends Group {
     this.#level = level;
     if (level === prevLevel || prevLevel === undefined) return;
 
-    // Remove upper layers — higher-res tiles are irrelevant after zooming out.
-    // Lower-level tiles are kept as a visible fallback while new tiles load;
-    // they'll be cleaned up naturally when the user zooms back out.
+    // On zoom-out, keep tiles one level above as visual fallback while new
+    // tiles load (polygonOffset ensures they win z-tests where they overlap).
+    // Scan through maxLevel (not just prevLevel) to catch orphaned tiles from
+    // earlier cascading transitions — e.g. 10→8 keeps level 9, then 8→5 must
+    // also evict that orphaned level 9.
     if (prevLevel > level) {
-      for (let l = level + 1; l <= prevLevel; l++) {
+      for (let l = level + 2; l <= this.maxLevel; l++) {
         this.#tilesMeta[l]?.forEach((d) => {
           d.controller?.abort();
           if (d.obj) {
@@ -353,6 +359,11 @@ export default class SlippyMapGlobe extends Group {
           }
         });
       }
+      // Stop in-flight fetches for the fallback level — those tiles are only
+      // kept if already loaded, we don't need new ones.
+      this.#tilesMeta[level + 1]?.forEach((d) => {
+        if (d.loading) d.controller?.abort();
+      });
     }
     this.#fetchNeededTiles(true);
   }
@@ -371,19 +382,19 @@ export default class SlippyMapGlobe extends Group {
     this.#tilesMeta = {};
   };
 
-  updatePov(camera: Camera): void {
+  updatePov(camera: Camera, forceFetch = false): void {
     if (!camera || !(camera instanceof Camera)) return;
     this.#camera = camera;
 
     const cp = camera.position;
-    if (Math.abs(cp.x - this.#lastPovX) < 0.001 &&
+    const posUnchanged = Math.abs(cp.x - this.#lastPovX) < 0.001 &&
         Math.abs(cp.y - this.#lastPovY) < 0.001 &&
-        Math.abs(cp.z - this.#lastPovZ) < 0.001) {
-      return;
+        Math.abs(cp.z - this.#lastPovZ) < 0.001;
+    if (!posUnchanged) {
+      this.#lastPovX = cp.x;
+      this.#lastPovY = cp.y;
+      this.#lastPovZ = cp.z;
     }
-    this.#lastPovX = cp.x;
-    this.#lastPovY = cp.y;
-    this.#lastPovZ = cp.z;
 
     this.#frustumReady = false;
     this.#isInView = (d: TileMeta): boolean => {
@@ -411,31 +422,51 @@ export default class SlippyMapGlobe extends Group {
     };
 
     if (this.tileUrl) {
-      const pov = _tmpVec3B.copy(camera.position);
-      const distToGlobeCenter = pov.distanceTo(this.getWorldPosition(_tmpVec3C));
-      const cameraDistance = (distToGlobeCenter - this.#radius) / this.#radius;
-      const rawIdx = this.thresholds.findIndex((t) => t && t <= cameraDistance);
-      const rawLevel = Math.min(this.maxLevel, Math.max(this.minLevel, rawIdx < 0 ? this.thresholds.length : rawIdx));
+      if (!posUnchanged) {
+        const pov = _tmpVec3B.copy(camera.position);
+        const distToGlobeCenter = pov.distanceTo(this.getWorldPosition(_tmpVec3C));
+        const cameraDistance = (distToGlobeCenter - this.#radius) / this.#radius;
+        const rawIdx = this.thresholds.findIndex((t) => t && t <= cameraDistance);
+        const rawLevel = Math.min(this.maxLevel, Math.max(this.minLevel, rawIdx < 0 ? this.thresholds.length : rawIdx));
 
-      // Hysteresis: only switch levels when clearly past the threshold boundary.
-      // Prevents thrashing when the camera hovers near a transition point, which
-      // causes the level setter to evict and re-create tiles every frame.
-      const LEVEL_HYSTERESIS = 0.05;
-      const curLevel = this.#level ?? rawLevel;
-      let targetLevel = rawLevel;
-      if (rawLevel !== curLevel) {
-        const isZoomingIn = rawLevel > curLevel;
-        // The boundary lives at thresholds[curLevel] (zoom in) or thresholds[rawLevel] (zoom out).
-        const boundaryIdx = isZoomingIn ? curLevel : rawLevel;
-        const boundary = this.thresholds[boundaryIdx] ?? 0;
-        const shouldSwitch = isZoomingIn
-          ? cameraDistance < boundary * (1 - LEVEL_HYSTERESIS)
-          : cameraDistance > boundary * (1 + LEVEL_HYSTERESIS);
-        if (!shouldSwitch) targetLevel = curLevel;
+        // Hysteresis: only switch levels when clearly past the threshold boundary.
+        // Prevents thrashing when the camera hovers near a transition point, which
+        // causes the level setter to evict and re-create tiles every frame.
+        const LEVEL_HYSTERESIS = 0.05;
+        const curLevel = this.#level ?? rawLevel;
+        let targetLevel = rawLevel;
+        if (rawLevel !== curLevel) {
+          const isZoomingIn = rawLevel > curLevel;
+          // The boundary lives at thresholds[curLevel] (zoom in) or thresholds[rawLevel] (zoom out).
+          const boundaryIdx = isZoomingIn ? curLevel : rawLevel;
+          const boundary = this.thresholds[boundaryIdx] ?? 0;
+          const shouldSwitch = isZoomingIn
+            ? cameraDistance < boundary * (1 - LEVEL_HYSTERESIS)
+            : cameraDistance > boundary * (1 + LEVEL_HYSTERESIS);
+          if (!shouldSwitch) targetLevel = curLevel;
+        }
+        this.level = targetLevel;
       }
-      this.level = targetLevel;
-      this.#fetchNeededTiles();
+      this.#fetchNeededTiles(forceFetch);
     }
+  }
+
+  /**
+   * Abort in-flight fetches for tiles that no camera requested this frame.
+   * Call once per frame AFTER all updatePov calls (real + synthetic) have run.
+   * This gives every camera a chance to register its needed tiles before any
+   * are cancelled.
+   */
+  flushAborts(): void {
+    if (this.#level === undefined || !this.#tilesMeta[this.#level]) return;
+    const needed = this.#frameNeededKeys;
+    if (needed.size === 0) return;
+    this.#tilesMeta[this.#level].forEach((d: TileMeta) => {
+      if (d.loading && d.controller && !needed.has(`${d.x}_${d.y}`)) {
+        d.controller.abort();
+      }
+    });
+    this.#frameNeededKeys = new Set();
   }
 
   /** Count of tiles at the current level whose fetch is in-flight. Useful for detecting stuck state. */
@@ -492,7 +523,7 @@ export default class SlippyMapGlobe extends Group {
     if (!this.tileUrl || this.#level === undefined || !this.#tilesMeta[this.#level]) return;
     if (!force) {
       const now = performance.now();
-      if (now - this.#lastFetchAt < 100) return;
+      if (now - this.#lastFetchAt < 16) return;
       this.#lastFetchAt = now;
     } else {
       this.#lastFetchAt = performance.now();
@@ -517,14 +548,12 @@ export default class SlippyMapGlobe extends Group {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tiles = (fullLevel.octree as any).findAllWithinRadius(povPos.x, povPos.y, povPos.z, searchRadius);
 
-        // Abort in-flight fetches for tiles that are no longer in the candidate set.
-        // This frees connection slots immediately so new tiles can start loading.
-        const neededSet = new Set(tiles.map((d: TileMeta) => `${d.x}_${d.y}`));
-        fullLevel.forEach((d: TileMeta) => {
-          if (d.loading && d.controller && !neededSet.has(`${d.x}_${d.y}`)) {
-            d.controller.abort();
-          }
-        });
+        // Accumulate into the frame's needed set — flushAborts() uses the combined
+        // set from ALL cameras to decide what to cancel.
+        for (let i = 0; i < tiles.length; i++) {
+          const d = tiles[i];
+          this.#frameNeededKeys.add(`${d.x}_${d.y}`);
+        }
       } else {
         // Tiles populated dynamically (high-level path)
         const povCoords = cartesian2Polar(povPos);
@@ -566,13 +595,10 @@ export default class SlippyMapGlobe extends Group {
           tiles = selTiles;
         }
 
-        // Abort in-flight fetches for tiles that left the bbox — same as the octree path above.
-        const neededSetDyn = new Set(tiles.map((d: TileMeta) => `${d.x}_${d.y}`));
-        fullLevel.forEach((d: TileMeta) => {
-          if (d.loading && d.controller && !neededSetDyn.has(`${d.x}_${d.y}`)) {
-            d.controller.abort();
-          }
-        });
+        for (let i = 0; i < tiles.length; i++) {
+          const d = tiles[i];
+          this.#frameNeededKeys.add(`${d.x}_${d.y}`);
+        }
       }
     }
 
@@ -632,7 +658,9 @@ export default class SlippyMapGlobe extends Group {
             ),
             this.#materialFactory(),
           );
-          tile.renderOrder = this.#tileRenderOrder;
+          const tileMat = tile.material as Material;
+          tile.renderOrder = this.#tileRenderOrder
+            + (tileMat.transparent ? (this.#level ?? 0) : 0);
           if (this.#isMercator) {
             const yTop = 0.5 - (lat + latLen / 2) / 180;
             const yBot = 0.5 - (lat - latLen / 2) / 180;

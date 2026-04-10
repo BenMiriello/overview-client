@@ -76,8 +76,10 @@ export function patchTileMaterial(material: THREE.Material): void {
 
         vec3 nPos = normalize(vWorldPosition);
         float lat = asin(clamp(nPos.y, -1.0, 1.0));
-        float lng = atan(nPos.x, nPos.z);
-        vec2 cloudUv = vec2(lng / 6.2831853 + 0.5, 0.5 - lat / 3.1415927);
+        vec2 cloudUv = vec2(
+          fract(atan(nPos.z, -nPos.x) / 6.2831853),
+          0.5 + lat / 3.1415927
+        );
 
         vec3 cEastRaw = cross(vec3(0.0, 1.0, 0.0), nPos);
         float cEastLen = length(cEastRaw);
@@ -86,9 +88,9 @@ export function patchTileMaterial(material: THREE.Material): void {
         float cosLat = max(0.08, cEastLen);
         float sunE = dot(sunDir, cEast);
         float sunN = dot(sunDir, cNorth);
-        vec2 sunUvOff = vec2(sunE / (cosLat * 6.2831853), -sunN / 3.1415927) * 0.008;
+        vec2 sunUvOff = vec2(sunE / (cosLat * 6.2831853), sunN / 3.1415927) * 0.008;
         float cloudAlpha = texture2D(cloudTex, cloudUv + sunUvOff).a;
-        float shadowDarken = cloudAlpha * 0.5 * (1.0 - nightFactor);
+        float shadowDarken = cloudAlpha * 0.7 * (1.0 - nightFactor);
         diffuseColor.rgb *= (1.0 - shadowDarken);
 
         float flashDist = length(vWorldPosition - flashWorldPos);
@@ -99,7 +101,7 @@ export function patchTileMaterial(material: THREE.Material): void {
   };
 
   const matType = (material as any).isMeshPhongMaterial ? 'phong' : 'lambert';
-  material.customProgramCacheKey = () => `daynight-day-${matType}-v3`;
+  material.customProgramCacheKey = () => `daynight-day-${matType}-v4`;
   if (!material.userData) material.userData = {};
   material.userData[DAY_PATCH_FLAG] = true;
   material.needsUpdate = true;
@@ -156,6 +158,11 @@ const GIBS_URL = (x: number, y: number, level: number) =>
  * Creates a tile engine for ArcGIS day tiles. Tiles are patched with the
  * day/night darkening shader at material creation time — no 1-frame flash.
  */
+// Threshold table targeting ~85% of pixel-matched resolution for FOV=50, 1080p.
+// The upstream default (8/2^i) is ~3.5x too conservative, yielding tiles 2 levels
+// below what the screen can display.
+const TILE_THRESHOLDS = [...new Array(30)].map((_, i) => 24 / Math.pow(2, i));
+
 export function createDayTileEngine(radius: number): SlippyMapGlobe {
   const engine = createTiledPlanetEngine({
     radius,
@@ -164,6 +171,7 @@ export function createDayTileEngine(radius: number): SlippyMapGlobe {
     projection: 'mercator',
     patchMaterial: patchTileMaterial,
   });
+  engine.thresholds = TILE_THRESHOLDS;
   // Show the inner back layer (black sphere at 0.99*radius). The factory hides
   // it, but the day engine is the only visible surface — gaps between tile patches
   // must show black, not transparent (which would reveal the scene background).
@@ -182,11 +190,13 @@ export function createDayTileEngine(radius: number): SlippyMapGlobe {
  * unpatched-flash on the first frame after a tile loads.
  */
 export function createNightTileEngine(radius: number): SlippyMapGlobe {
-  return createTiledPlanetEngine({
+  const engine = createTiledPlanetEngine({
     radius,
     tileUrl: GIBS_URL,
     maxLevel: 8,
     projection: 'mercator',
     patchMaterial: patchNightTileMaterial,
   });
+  engine.thresholds = TILE_THRESHOLDS;
+  return engine;
 }

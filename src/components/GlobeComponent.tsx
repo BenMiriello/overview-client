@@ -136,7 +136,7 @@ function raySphereIntersect(
 //
 // Works for any sphere: pass sphereCenter=(0,0,0) for Earth, moonMesh.position for Moon.
 function applyHorizonTilePovs(
-  engine: { updatePov: (cam: THREE.Camera) => void },
+  engine: { updatePov: (cam: THREE.Camera, forceFetch?: boolean) => void },
   camera: THREE.PerspectiveCamera,
   sphereCenter: THREE.Vector3,
   sphereRadius: number,
@@ -169,15 +169,15 @@ function applyHorizonTilePovs(
   // Near-ground ray: covers the lower screen portion (tiles closer to directly below camera).
   const nearDir = lookDir.clone().applyAxisAngle(right, -fovHalf * 0.7);
   const synthNear = buildSynth(nearDir);
-  if (synthNear) engine.updatePov(synthNear);
+  if (synthNear) engine.updatePov(synthNear, true);
 
   const synthCenter = buildSynth(lookDir);
-  if (synthCenter) engine.updatePov(synthCenter);
+  if (synthCenter) engine.updatePov(synthCenter, true);
 
   // Horizon ray: covers the far zone (tiles toward the visible horizon).
   const horizonDir = lookDir.clone().applyAxisAngle(right, fovHalf * 0.8);
   const synthHorizon = buildSynth(horizonDir);
-  if (synthHorizon) engine.updatePov(synthHorizon);
+  if (synthHorizon) engine.updatePov(synthHorizon, true);
 
   engine.updatePov(camera);
 }
@@ -806,6 +806,16 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         }
       }
 
+      // Abort in-flight fetches for tiles that no camera requested this frame.
+      // Must run after ALL updatePov + applyHorizonTilePovs calls so the
+      // combined needed set is complete before anything is cancelled.
+      if (dayTileEngineRef.current) dayTileEngineRef.current.flushAborts();
+      nightEngine.flushAborts();
+      if (moonMeshRef.current) {
+        moonMeshRef.current.colorEngine.flushAborts();
+        moonMeshRef.current.reliefEngine.flushAborts();
+      }
+
       perfSpan('cullTiles', () => {
         if (dayTileEngineRef.current) cullEngineTiles(dayTileEngineRef.current, EARTH_R, camera);
         cullEngineTiles(nightEngine, EARTH_R, camera);
@@ -1202,7 +1212,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   function startCloseModeLoop(controls: any) {
     let lastTime: number | null = null;
-    let prevFlyActive = flyToActiveRef.current;
 
     const tick = (now: number) => {
       if (!inCloseModeRef.current || !closeModeState.current || !globeEl.current) return;
@@ -1231,12 +1240,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
       const camera = globeEl.current.camera() as THREE.Camera;
       const earthR = globeEl.current.getGlobeRadius();
-
-      const flyNow = flyToActiveRef.current;
-      if (prevFlyActive && !flyNow && closeModeState.current) {
-        console.log(`[flyTo-render] targetLng=${closeModeState.current.targetLng.toFixed(4)} targetLat=${closeModeState.current.targetLat.toFixed(4)}`);
-      }
-      prevFlyActive = flyNow;
 
       applyCameraState(camera, closeModeState.current, earthR);
       renderScene();
@@ -1486,8 +1489,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       // Normalize to shortest angular path — works even when startLng has
       // accumulated many full rotations of panning (single ±360 is insufficient).
       const lngDelta = (((flyTo.lng - startLng) % 360) + 540) % 360 - 180;
-
-      console.log(`[flyTo] target=lat:${flyTo.lat.toFixed(2)},lng:${flyTo.lng.toFixed(2)} startLng=${startLng.toFixed(2)} lngDelta=${lngDelta.toFixed(2)} endLng=${(startLng+lngDelta).toFixed(2)}`);
+      const expectedEnd = ((startLng + lngDelta + 540) % 360) - 180;
+      console.log(`[flyTo-3d] start=(${startLat.toFixed(2)},${startLng.toFixed(2)}) target=(${flyTo.lat.toFixed(2)},${flyTo.lng.toFixed(2)}) lngDelta=${lngDelta.toFixed(2)} expectedEnd=${expectedEnd.toFixed(2)}`);
 
       const targetAlt = flyTo.altitude ?? 0.5;
 
@@ -1510,7 +1513,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         if (t < 1) {
           raf = requestAnimationFrame(animate);
         } else {
-          console.log(`[flyTo-done] actual targetLng=${closeModeState.current?.targetLng.toFixed(4)} targetLat=${closeModeState.current?.targetLat.toFixed(4)}`);
           flyToActiveRef.current = false;
         }
       };
@@ -1535,6 +1537,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       globeEl.current.pointOfView(start, 0); // reset OrbitControls damping
 
       const lngDelta = (((flyTo.lng - start.lng) % 360) + 540) % 360 - 180;
+      console.log(`[flyTo-2d] start=(${start.lat.toFixed(2)},${start.lng.toFixed(2)}) target=(${flyTo.lat.toFixed(2)},${flyTo.lng.toFixed(2)}) lngDelta=${lngDelta.toFixed(2)}`);
 
       const targetAlt = flyTo.altitude ?? 0.5;
       const duration = 1500;
