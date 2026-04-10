@@ -1086,15 +1086,29 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     dragVelocityRef.current = null;
     inCloseModeRef.current = true;
-    entryAnimatingRef.current = false;
-
-    // Snap pitch to its target value immediately. The previous 500ms ramp from
-    // pitch=0 caused a visible camera-position slide on the surface tangent
-    // (driven by cameraPositionFromTarget's angleO calculation), which the user
-    // perceived as the day/night terminator "snapping" on close-mode entry.
-    closeModeState.current.pitch = targetPitch;
+    entryAnimatingRef.current = true;
 
     startCloseModeLoop(controls);
+
+    // Animate pitch from 0 to target for a smooth 2D→3D transition.
+    const entryStart = performance.now();
+    const ENTRY_DURATION = 500;
+    const animateEntry = (now: number) => {
+      if (!closeModeState.current || !inCloseModeRef.current) {
+        entryAnimatingRef.current = false;
+        return;
+      }
+      const t = Math.min((now - entryStart) / ENTRY_DURATION, 1);
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      closeModeState.current.pitch = targetPitch * ease;
+      if (t < 1) {
+        requestAnimationFrame(animateEntry);
+      } else {
+        closeModeState.current.pitch = targetPitch;
+        entryAnimatingRef.current = false;
+      }
+    };
+    requestAnimationFrame(animateEntry);
 
     const el = controls.domElement;
     el.addEventListener('mousedown', onCloseMouseDown);
