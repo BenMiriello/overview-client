@@ -69,6 +69,7 @@ interface TileMeta {
   tileRadius?: number;
   obj?: Mesh;
   loading?: boolean;
+  failed?: boolean;
   controller?: AbortController;
   _sortDot?: number;
 }
@@ -580,7 +581,7 @@ export default class SlippyMapGlobe extends Group {
     }
 
     const candidates = tiles
-      .filter((d) => (!d.obj || !d.obj.parent) && !d.loading)
+      .filter((d) => (!d.obj || !d.obj.parent) && !d.loading && !d.failed)
       .filter(this.#isInView ?? (() => true));
 
     if (camLookLocal) {
@@ -683,6 +684,7 @@ export default class SlippyMapGlobe extends Group {
             } else {
               if (d.obj) { deallocate(d.obj); delete d.obj; }
               d.loading = false;
+              d.failed = true;
               delete d.controller;
             }
             this.#fetchNeededTiles();
