@@ -1041,7 +1041,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
   // ── Close-mode enter/exit ────────────────────────────────────────────────
 
-  function enterCloseMode(controls: any) {
+  function enterCloseMode(controls: any, animate = false) {
     if (inCloseModeRef.current || !globeEl.current) return;
 
     cancelIntroRef.current?.();
@@ -1098,29 +1098,40 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     dragVelocityRef.current = null;
     inCloseModeRef.current = true;
-    entryAnimatingRef.current = true;
 
-    startCloseModeLoop(controls);
+    if (animate) {
+      // Button-toggle entry: user clicked 3D while zoomed in at a non-trivial altitude,
+      // so pitch would snap. Animate from 0 to target over 500ms.
+      entryAnimatingRef.current = true;
 
-    // Animate pitch from 0 to target for a smooth 2D→3D transition.
-    const entryStart = performance.now();
-    const ENTRY_DURATION = 500;
-    const animateEntry = (now: number) => {
-      if (!closeModeState.current || !inCloseModeRef.current) {
-        entryAnimatingRef.current = false;
-        return;
-      }
-      const t = Math.min((now - entryStart) / ENTRY_DURATION, 1);
-      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-      closeModeState.current.pitch = targetPitch * ease;
-      if (t < 1) {
-        requestAnimationFrame(animateEntry);
-      } else {
-        closeModeState.current.pitch = targetPitch;
-        entryAnimatingRef.current = false;
-      }
-    };
-    requestAnimationFrame(animateEntry);
+      startCloseModeLoop(controls);
+
+      const entryStart = performance.now();
+      const ENTRY_DURATION = 500;
+      const animateEntry = (now: number) => {
+        if (!closeModeState.current || !inCloseModeRef.current) {
+          entryAnimatingRef.current = false;
+          return;
+        }
+        const t = Math.min((now - entryStart) / ENTRY_DURATION, 1);
+        const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        closeModeState.current.pitch = targetPitch * ease;
+        if (t < 1) {
+          requestAnimationFrame(animateEntry);
+        } else {
+          closeModeState.current.pitch = targetPitch;
+          entryAnimatingRef.current = false;
+        }
+      };
+      requestAnimationFrame(animateEntry);
+    } else {
+      // Zoom-threshold or fly-to entry: pitch at threshold is naturally 0, no animation needed.
+      // Set pitch immediately so onCloseWheel can track it continuously from the first scroll.
+      entryAnimatingRef.current = false;
+      closeModeState.current.pitch = targetPitch;
+
+      startCloseModeLoop(controls);
+    }
 
     const el = controls.domElement;
     el.addEventListener('mousedown', onCloseMouseDown);
@@ -1621,7 +1632,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         const { altitude } = globeEl.current.pointOfView();
         if (altitude < TILT_THRESHOLD_ENTER) {
           try {
-            enterCloseMode(globeEl.current.controls());
+            enterCloseMode(globeEl.current.controls(), true);
           } catch { /* ignore */ }
         }
       }
