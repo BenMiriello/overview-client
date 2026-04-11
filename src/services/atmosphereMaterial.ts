@@ -4,9 +4,9 @@ import { sharedNightUniforms } from './dayNightMaterial';
 // See client/docs/atmosphere.md for the physics and design rationale.
 
 const PLANET_RADIUS = 100;
-const ATMOSPHERE_HEIGHT = 0.025 * PLANET_RADIUS; // 2.5
-const ATMOSPHERE_RADIUS = PLANET_RADIUS + ATMOSPHERE_HEIGHT; // 102.5
-const SCALE_HEIGHT = 0.25 * ATMOSPHERE_HEIGHT; // 0.625
+const ATMOSPHERE_HEIGHT = 4.0; // extends to r=104, above cloud far-zoom max of 103
+const ATMOSPHERE_RADIUS = PLANET_RADIUS + ATMOSPHERE_HEIGHT; // 104
+const SCALE_HEIGHT = 0.625; // fixed exponential scale height; decoupled from shell top
 
 // Rayleigh coefficients in the canonical (R, G, B) ratio for 680/550/440 nm,
 // scaled to scene units. Tuned visually against SUN_INTENSITY to keep the
@@ -20,7 +20,7 @@ const MIE_COEFF = new THREE.Vector3(0.021, 0.021, 0.021);
 
 // Mie scale height is much shorter than Rayleigh's in real Earth (~1.2 km vs
 // ~8.5 km). Aerosols hug the surface. Keep the same loose ratio in scene units.
-const MIE_SCALE_HEIGHT = 0.25 * (0.025 * PLANET_RADIUS); // 0.25 of atmosphere height
+const MIE_SCALE_HEIGHT = 0.625; // fixed; aerosols hug surface, same as Rayleigh scale height
 
 // Henyey-Greenstein anisotropy parameter. Higher = sharper forward peak.
 // 0.76 is a common Earth haze value.
@@ -115,7 +115,11 @@ const fragmentShader = /* glsl */ `
         float closest = length(closestPt);
         shadowFactor = smoothstep(uPlanetR - 0.5, uPlanetR + 0.5, closest);
       }
-      if (shadowFactor <= 0.0) continue;
+      // Ambient floor: indirect sky light (earthshine, starlight) means the
+      // night-side limb should show faint blue scatter at grazing angles.
+      // 0.012 keeps it well below day brightness; Rayleigh wavelength-dependence
+      // naturally makes it blue.
+      shadowFactor = max(0.012, shadowFactor);
       densityR *= shadowFactor;
       densityM *= shadowFactor;
 

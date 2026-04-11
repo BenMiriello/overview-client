@@ -7,10 +7,14 @@ import { updateSunDirection, patchNightTileMaterial, createDayTileEngine, create
 import { createMoonMesh, updateMoonPosition, updateMoonOrientation, MoonGroup } from '../services/moonMesh';
 import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE, SUN_HALO_SCALE } from '../services/sunMesh';
 import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } from '../services/atmosphereMesh';
-import { MOON_RADIUS_SCENE } from '../services/astronomy';
+import { MOON_RADIUS_SCENE, getSiderealTimeHours } from '../services/astronomy';
 import { LAYERS } from '../services/renderLayers';
 import { StoredView, saveView } from './globeViewPersistence';
 import { span as perfSpan, frameMark as perfFrameMark, captureRenderInfo } from '../utils/perfHUD';
+
+// Aligns the starmap texture's RA=0h (vernal equinox) with scene -Z (eqjToScene convention).
+// Calibrate by checking a known bright star's position against the sun at a known date/time.
+const STARMAP_PHASE_OFFSET = Math.PI;
 
 const TILT_THRESHOLD_ENTER = 1.0;
 const TILT_THRESHOLD_EXIT  = 1.15;
@@ -435,6 +439,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   const preventReentryRef      = useRef(false);
   const justExitedCloseModeRef = useRef(false);
   const flyToActiveRef         = useRef(false);
+  const flyToCompletedAtRef    = useRef<number>(0);
   useEffect(() => { prefer3DRef.current = is3D; }, [is3D]);
   const cloudsEnabledRef = useRef(cloudsEnabled);
   useEffect(() => { cloudsEnabledRef.current = cloudsEnabled; }, [cloudsEnabled]);
@@ -775,14 +780,14 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const ENGINE_MOVE_THRESHOLD = 0.05;
       const cameraActuallyMoved = cameraMoved(camera, ENGINE_MOVE_THRESHOLD);
 
-      if (dayTileEngineRef.current && (inCloseModeRef.current || cameraActuallyMoved)) {
+      if (dayTileEngineRef.current) {
         perfSpan('updatePov.day', () => dayTileEngineRef.current!.updatePov(camera));
         if (inCloseModeRef.current && cameraActuallyMoved) {
           applyHorizonTilePovs(dayTileEngineRef.current, camera as THREE.PerspectiveCamera,
             new THREE.Vector3(), EARTH_R);
         }
       }
-      if (inCloseModeRef.current || cameraActuallyMoved) {
+      {
         perfSpan('updatePov.night', () => nightEngine.updatePov(camera));
         if (inCloseModeRef.current && cameraActuallyMoved) {
           applyHorizonTilePovs(nightEngine, camera as THREE.PerspectiveCamera,
@@ -790,30 +795,18 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         }
         if (moonMeshRef.current) {
           const inMoonClose = inMoonViewRef.current && moonCloseState.current !== null;
-          if (inMoonClose || cameraActuallyMoved) {
-            const moonCenter = moonMeshRef.current.position.clone();
-            moonMeshRef.current.colorEngine.updatePov(camera);
-            if (inMoonClose && cameraActuallyMoved) {
-              applyHorizonTilePovs(moonMeshRef.current.colorEngine,
-                camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
-            }
-            moonMeshRef.current.reliefEngine.updatePov(camera);
-            if (inMoonClose && cameraActuallyMoved) {
-              applyHorizonTilePovs(moonMeshRef.current.reliefEngine,
-                camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
-            }
+          const moonCenter = moonMeshRef.current.position.clone();
+          moonMeshRef.current.colorEngine.updatePov(camera);
+          if (inMoonClose && cameraActuallyMoved) {
+            applyHorizonTilePovs(moonMeshRef.current.colorEngine,
+              camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
+          }
+          moonMeshRef.current.reliefEngine.updatePov(camera);
+          if (inMoonClose && cameraActuallyMoved) {
+            applyHorizonTilePovs(moonMeshRef.current.reliefEngine,
+              camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
           }
         }
-      }
-
-      // Abort in-flight fetches for tiles that no camera requested this frame.
-      // Must run after ALL updatePov + applyHorizonTilePovs calls so the
-      // combined needed set is complete before anything is cancelled.
-      if (dayTileEngineRef.current) dayTileEngineRef.current.flushAborts();
-      nightEngine.flushAborts();
-      if (moonMeshRef.current) {
-        moonMeshRef.current.colorEngine.flushAborts();
-        moonMeshRef.current.reliefEngine.flushAborts();
       }
 
       perfSpan('cullTiles', () => {
@@ -879,6 +872,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       }
       if (skySphere) {
         const sky = skySphere;
+        // Rotate sky sphere at the sidereal rate so stars remain correctly
+        // oriented relative to the Earth-fixed sun/moon positions.
+        sky.rotation.y = -(getSiderealTimeHours(now) * Math.PI / 12) + STARMAP_PHASE_OFFSET;
         perfSpan('skyBright', () => {
           tmpSunDir.copy(sharedNightUniforms.sunDir.value);
 
@@ -1052,8 +1048,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const dist   = camPos.length();
     const altitude = (dist - earthR) / earthR;
 
-    // OrbitControls targets origin → camera looks along -camPos direction.
-    // Raycast from camera center to find the surface point we're looking at.
+    // three-globe's internal coordinate frame differs from ours by 90° longitude
+    // (globeObj.rotation.y = -π/2). cartesianToLatLng reads camera.position in our
+    // frame, which is consistent with latLngToCartesian used in applyCameraState.
+    // Do NOT use pointOfView() here — it returns library-frame coords which would
+    // cause a 90° snap when applyCameraState repositions the camera.
     const lookDir = camPos.clone().normalize().negate();
     const hit = raySphereIntersect(camPos, lookDir, earthR);
     let targetLat: number, targetLng: number;
@@ -1160,6 +1159,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const animTick = (now: number) => {
       if (!closeModeState.current) return;
+      // A fly-to started while this exit was animating — abort so fly-to can complete in close mode.
+      if (flyToActiveRef.current) {
+        exitAnimatingRef.current = false;
+        return;
+      }
       const t = Math.min((now - startTime) / DURATION, 1);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 
@@ -1194,7 +1198,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.target.set(0, 0, 0);
     globeEl.current?.resumeAnimation?.();
 
-    // Position camera directly above the target point
+    // Position camera above the target. latLngToCartesian is in our frame (consistent
+    // with applyCameraState), offset 90° from the library frame. pointOfView() must
+    // NOT be used here — it uses library frame and would cause a 90° visual snap.
     if (closeModeState.current && globeEl.current) {
       const camera = globeEl.current.camera() as THREE.Camera;
       const earthR = globeEl.current.getGlobeRadius();
@@ -1344,6 +1350,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     e.preventDefault();
     cancelIntroRef.current?.();
     if (!closeModeState.current || !globeEl.current || exitAnimatingRef.current) return;
+    if (flyToActiveRef.current) return; // don't interrupt a fly-to with a zoom gesture
+    if (performance.now() - flyToCompletedAtRef.current < 600) return; // ignore trackpad inertia after fly-to
 
     const zoomFactor = Math.pow(0.999, -e.deltaY);
     const newAlt = Math.max(MIN_ALTITUDE, closeModeState.current.altitude * zoomFactor);
@@ -1366,6 +1374,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   const onCloseTouchStart = (e: TouchEvent) => {
     e.preventDefault();
     if (!globeEl.current || !closeModeState.current || exitAnimatingRef.current) return;
+    if (flyToActiveRef.current) return;
 
     if (entryAnimatingRef.current && e.touches.length < 2) return;
 
@@ -1501,11 +1510,13 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const startLng = closeModeState.current.targetLng;
       const startAlt = closeModeState.current.altitude;
 
-      // Normalize to shortest angular path — works even when startLng has
-      // accumulated many full rotations of panning (single ±360 is insufficient).
-      const lngDelta = (((flyTo.lng - startLng) % 360) + 540) % 360 - 180;
-      const expectedEnd = ((startLng + lngDelta + 540) % 360) - 180;
-      console.log(`[flyTo-3d] start=(${startLat.toFixed(2)},${startLng.toFixed(2)}) target=(${flyTo.lat.toFixed(2)},${flyTo.lng.toFixed(2)}) lngDelta=${lngDelta.toFixed(2)} expectedEnd=${expectedEnd.toFixed(2)}`);
+      // flyTo.lng is in three-globe's library frame; closeModeState uses our frame
+      // (cartesianToLatLng / latLngToCartesian), which is offset by -90° from the
+      // library frame (due to globeObj.rotation.y = -π/2 in three-globe internals).
+      // Convert target to our frame before computing the delta.
+      const flyToLng = ((flyTo.lng - 90) + 540) % 360 - 180;
+      const lngDelta = (((flyToLng - startLng) % 360) + 540) % 360 - 180;
+      console.log(`[flyTo-3d] start=(${startLat.toFixed(2)},${startLng.toFixed(2)}) target=(${flyTo.lat.toFixed(2)},${flyTo.lng.toFixed(2)}) flyToLng_ours=${flyToLng.toFixed(2)} lngDelta=${lngDelta.toFixed(2)}`);
 
       const targetAlt = flyTo.altitude ?? 0.5;
 
@@ -1521,7 +1532,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         const t = Math.min((ts - startTime) / duration, 1);
         const p = easeInOutCubicShifted(t, 0);
         closeModeState.current.targetLat = startLat + (flyTo.lat - startLat) * p;
-        closeModeState.current.targetLng = startLng + lngDelta * p;
+        closeModeState.current.targetLng = startLng + lngDelta * p; // accumulates in our frame
         closeModeState.current.altitude  = startAlt + (targetAlt - startAlt) * p;
         if (!entryAnimatingRef.current) {
           closeModeState.current.pitch = pitchFromAltitude(closeModeState.current.altitude);
@@ -1530,6 +1541,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           raf = requestAnimationFrame(animate);
         } else {
           flyToActiveRef.current = false;
+          flyToCompletedAtRef.current = performance.now();
         }
       };
 
@@ -1575,6 +1587,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           raf = requestAnimationFrame(animate);
         } else {
           flyToActiveRef.current = false;
+          flyToCompletedAtRef.current = performance.now();
         }
       };
 
@@ -2408,7 +2421,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       onGlobeReady={() => setIsGlobeReady(true)}
       globeImageUrl="https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
       bumpImageUrl="https://unpkg.com/three-globe/example/img/earth-topology.png"
-      backgroundImageUrl="https://unpkg.com/three-globe/example/img/night-sky.png"
+      backgroundImageUrl="/starmap.jpg"
       animateIn={false}
       showAtmosphere={false}
       enablePointerInteraction={false}
