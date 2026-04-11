@@ -1266,11 +1266,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       renderScene();
 
       if (cameraTargetRef) {
-        cameraTargetRef.current = {
-          lat: closeModeState.current.targetLat,
-          // Normalize accumulated lng back to [-180,180] for consumers
-          lng: ((closeModeState.current.targetLng % 360) + 540) % 360 - 180,
-        };
+        // Convert our-frame lng (+90°) to library frame so consumers can compare
+        // directly against geographic coordinates (hotspot lat/lng from server).
+        const ourLng = closeModeState.current.targetLng;
+        const libLng = ((ourLng + 90) % 360 + 540) % 360 - 180;
+        cameraTargetRef.current = { lat: closeModeState.current.targetLat, lng: libLng };
       }
 
       closeModeRafRef.current = requestAnimationFrame(tick);
