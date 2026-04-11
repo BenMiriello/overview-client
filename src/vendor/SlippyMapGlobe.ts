@@ -274,7 +274,6 @@ export default class SlippyMapGlobe extends Group {
   #onTileLoaded?: (tile: Mesh) => void;
   #tileRenderOrder: number;
   #level?: number;
-  #initialBaseFetched = false;
   #tilesMeta: Record<number, TileMetaLevel> = {};
   #isInView?: (d: TileMeta) => boolean;
   #camera?: Camera;
@@ -428,17 +427,6 @@ export default class SlippyMapGlobe extends Group {
     };
 
     if (this.tileUrl) {
-      if (!this.#initialBaseFetched) {
-        this.#initialBaseFetched = true;
-        // Fetch level 0 (1 tile, whole globe) for immediate visual coverage.
-        // Zoom-in never evicts lower levels, so this persists as backdrop
-        // while higher-level tiles are still loading.
-        if (!this.#tilesMeta[0]) this.#buildMetaLevel(0);
-        const savedLevel = this.#level;
-        this.#level = 0;
-        this.#fetchNeededTiles(true);
-        this.#level = savedLevel;
-      }
       if (!posUnchanged) {
         const pov = _tmpVec3B.copy(camera.position);
         const distToGlobeCenter = pov.distanceTo(this.getWorldPosition(_tmpVec3C));
@@ -729,6 +717,8 @@ export default class SlippyMapGlobe extends Group {
             }
             d.loading = false;
             delete d.controller;
+            // Re-trigger fetch to fill freed slots with remaining unfetched tiles.
+            this.#fetchNeededTiles();
           })
           .catch((err) => {
             if (err?.name === 'AbortError') {
@@ -741,6 +731,7 @@ export default class SlippyMapGlobe extends Group {
               d.loading = false;
               delete d.controller;
             }
+            this.#fetchNeededTiles();
           });
       });
   }
