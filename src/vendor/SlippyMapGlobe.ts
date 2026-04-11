@@ -500,6 +500,7 @@ export default class SlippyMapGlobe extends Group {
         }
       }
     }
+    if (count > 0) this.#fetchNeededTiles(true);
     return count;
   }
 
