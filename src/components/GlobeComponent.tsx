@@ -64,6 +64,8 @@ interface GlobeComponentProps {
   onIsOrbitingChange: (val: boolean) => void;
   viewTarget?: 'earth' | 'moon';
   cloudsEnabled?: boolean;
+  lightningEnabled?: boolean;
+  temperatureEnabled?: boolean;
   restoredView?: StoredView | null;
   onEarthViewReady?: () => void;
   // Populated in close-mode with the camera ground target; null in far-mode.
@@ -413,6 +415,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   onIsOrbitingChange,
   viewTarget = 'earth',
   cloudsEnabled = true,
+  lightningEnabled = true,
+  temperatureEnabled = false,
   restoredView = null,
   onEarthViewReady,
   cameraTargetRef,
@@ -443,12 +447,20 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   useEffect(() => { prefer3DRef.current = is3D; }, [is3D]);
   const cloudsEnabledRef = useRef(cloudsEnabled);
   useEffect(() => { cloudsEnabledRef.current = cloudsEnabled; }, [cloudsEnabled]);
+  const lightningEnabledRef = useRef(lightningEnabled);
+  useEffect(() => { lightningEnabledRef.current = lightningEnabled; }, [lightningEnabled]);
+  const temperatureEnabledRef = useRef(temperatureEnabled);
+  useEffect(() => { temperatureEnabledRef.current = temperatureEnabled; }, [temperatureEnabled]);
 
   const dragVelocityRef  = useRef<{ dlat: number; dlng: number } | null>(null);
 
   const dayTileEngineRef = useRef<any>(null);
   const nightTileEngineRef = useRef<THREE.Object3D | null>(null);
   const moonMeshRef = useRef<MoonGroup | null>(null);
+  // three-globe unconditionally resets globeObj.visible = true on every prop update
+  // (it does: state.globeObj.visible = !state.globeTileEngineUrl, and we don't pass
+  // globeTileEngineUrl). Store a ref and re-hide it every frame.
+  const globeBaseRef = useRef<THREE.Object3D | null>(null);
 
   // Day/night: darken day tiles + GIBS night tiles with additive blending for city lights
   useEffect(() => {
@@ -692,6 +704,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const tick = () => {
       if (cancelled || !globeEl.current) return;
+      try {
+
+      if (globeBaseRef.current) globeBaseRef.current.visible = false;
 
       const now = new Date();
       perfSpan('astro', () => {
@@ -907,6 +922,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       }
 
       perfFrameMark();
+      } catch (e) { console.error('[tick] crash:', e); }
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
@@ -992,10 +1008,13 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     if (scene) {
       scene.traverse((obj: any) => {
         if (obj.__globeObjType === 'globe') {
-          // Hide the base globe mesh — vendored tiles replace it entirely
+          // Hide the base globe mesh — vendored tiles replace it entirely.
+          // three-globe resets globeObj.visible = true on every prop update, so we
+          // also store the ref for per-frame re-hiding in tick().
           for (const child of [...obj.children]) {
             if (child.isMesh) {
               child.visible = false;
+              globeBaseRef.current = child;
             }
           }
           // Remove npm tile engine
@@ -2350,6 +2369,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         is3D: prefer3DRef.current,
         isOrbiting: isOrbitingRef.current,
         cloudsEnabled: cloudsEnabledRef.current,
+        lightningEnabled: lightningEnabledRef.current,
+        temperatureEnabled: temperatureEnabledRef.current,
         mode,
       };
 

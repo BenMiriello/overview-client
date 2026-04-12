@@ -69,7 +69,8 @@ interface TileMeta {
   tileRadius?: number;
   obj?: Mesh;
   loading?: boolean;
-  failed?: boolean;
+  failedAt?: number;
+  failCount?: number;
   controller?: AbortController;
   _sortDot?: number;
 }
@@ -349,6 +350,8 @@ export default class SlippyMapGlobe extends Group {
             deallocate(d.obj);
             delete d.obj;
           }
+          delete d.failedAt;
+          delete d.failCount;
         });
       }
     }
@@ -461,6 +464,8 @@ export default class SlippyMapGlobe extends Group {
           delete d.obj;
           delete d.loading;
           delete d.controller;
+          delete d.failedAt;
+          delete d.failCount;
           count++;
         }
       }
@@ -580,8 +585,17 @@ export default class SlippyMapGlobe extends Group {
       camLookLocal = this.worldToLocal(_tmpVec3B.copy(this.#camera.position).add(worldLook)).normalize();
     }
 
+    const now = performance.now();
     const candidates = tiles
-      .filter((d) => (!d.obj || !d.obj.parent) && !d.loading && !d.failed)
+      .filter((d) => {
+        if (d.loading) return false;
+        if (d.obj && d.obj.parent) return false;
+        if (d.failedAt !== undefined) {
+          const backoff = Math.min(60_000, 2_000 * Math.pow(2, (d.failCount ?? 1) - 1));
+          if (now - d.failedAt < backoff) return false;
+        }
+        return true;
+      })
       .filter(this.#isInView ?? (() => true));
 
     if (camLookLocal) {
@@ -669,6 +683,8 @@ export default class SlippyMapGlobe extends Group {
               texture.flipY = false;  // bitmap is already oriented for WebGL; no second flip
               texture.needsUpdate = true;
               this.#applyTexture(d.obj.material as Material, texture);
+              if (!d.obj.userData) d.obj.userData = {};
+              (d.obj.userData as any).__lastVisibleAt = Date.now();
               this.add(d.obj);
               this.#onTileLoaded?.(d.obj);
             }
@@ -684,7 +700,8 @@ export default class SlippyMapGlobe extends Group {
             } else {
               if (d.obj) { deallocate(d.obj); delete d.obj; }
               d.loading = false;
-              d.failed = true;
+              d.failedAt = performance.now();
+              d.failCount = (d.failCount ?? 0) + 1;
               delete d.controller;
             }
             this.#fetchNeededTiles();
