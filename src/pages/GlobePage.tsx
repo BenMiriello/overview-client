@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { useLightningData } from '../services/dataStreams/hooks';
-import { GlobeComponent, GlobeControls } from '../components';
+import { GlobeComponent, GlobeControls, TemperatureLegend } from '../components';
 import { NavigationIcons } from '../components/Navigation';
 import { LightningLayer, CloudLayer, TemperatureLayer } from '../layers';
 import { GlobeLayerManager } from '../managers';
@@ -243,6 +243,7 @@ const GlobePage = () => {
         lastUpdate={lastUpdate}
         lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
       />
+      <TemperatureLegend visible={temperatureEnabled} />
       <NavigationIcons currentPage="globe" />
     </div>
   );
