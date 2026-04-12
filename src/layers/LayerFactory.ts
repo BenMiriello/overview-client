@@ -1,6 +1,7 @@
 import { Layer } from './LayerInterface';
 import { LightningLayer } from './LightningLayer';
 import { CloudLayer } from './CloudLayer';
+import { TemperatureLayer } from './TemperatureLayer';
 
 /**
  * Factory for creating different types of data layers
@@ -24,6 +25,8 @@ export class LayerFactory {
       case 'clouds':
       case 'cloud':
         return this.createCloudLayer();
+      case 'temperature':
+        return new TemperatureLayer();
       default:
         console.warn(`Unknown layer type: ${type}`);
         return null;

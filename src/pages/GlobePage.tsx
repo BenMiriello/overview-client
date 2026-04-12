@@ -2,7 +2,7 @@ import { useRef, useCallback, useEffect, useState } from 'react';
 import { useLightningData } from '../services/dataStreams/hooks';
 import { GlobeComponent, GlobeControls } from '../components';
 import { NavigationIcons } from '../components/Navigation';
-import { LightningLayer, CloudLayer } from '../layers';
+import { LightningLayer, CloudLayer, TemperatureLayer } from '../layers';
 import { GlobeLayerManager } from '../managers';
 import { loadView, loadLegacyPrefer3D } from '../components/globeViewPersistence';
 
@@ -56,6 +56,8 @@ const GlobePage = () => {
   const [isOrbiting, setIsOrbiting] = useState(() => restoredView?.isOrbiting ?? false);
   const [viewTarget, setViewTarget] = useState<'earth' | 'moon'>(() => restoredView?.viewTarget ?? 'earth');
   const [cloudsEnabled, setCloudsEnabled] = useState(() => restoredView?.cloudsEnabled ?? true);
+  const [lightningEnabled, setLightningEnabled] = useState(() => restoredView?.lightningEnabled ?? true);
+  const [temperatureEnabled, setTemperatureEnabled] = useState(() => restoredView?.temperatureEnabled ?? false);
 
   useEffect(() => {
     // Stored view rehydrates the camera directly — skip the intro fetch + animation.
@@ -120,15 +122,26 @@ const GlobePage = () => {
   const cloudsEnabledRef = useRef(cloudsEnabled);
   cloudsEnabledRef.current = cloudsEnabled;
 
+  const lightningEnabledRef = useRef(lightningEnabled);
+  lightningEnabledRef.current = lightningEnabled;
+  const temperatureEnabledRef = useRef(temperatureEnabled);
+  temperatureEnabledRef.current = temperatureEnabled;
+
   const handleLayerManagerReady = useCallback((manager: GlobeLayerManager) => {
     layerManagerRef.current = manager;
     const cloudLayer = manager.createLayer<CloudLayer>('clouds', 'clouds');
     if (cloudLayer) {
       cloudLayer.setCloudsEnabled(cloudsEnabledRef.current);
+      cloudLayer.setTemperatureEnabled(temperatureEnabledRef.current);
     }
     const lightningLayer = manager.createLayer<LightningLayer>('lightning', 'lightning');
     if (lightningLayer) {
       lightningLayer.setDataStream(dataStream);
+      if (!lightningEnabledRef.current) lightningLayer.hide();
+    }
+    const temperatureLayer = manager.createLayer<TemperatureLayer>('temperature', 'temperature');
+    if (temperatureLayer) {
+      temperatureEnabledRef.current ? temperatureLayer.show() : temperatureLayer.hide();
     }
   }, [dataStream]);
 
@@ -143,6 +156,25 @@ const GlobePage = () => {
     setCloudsEnabled(v => {
       const next = !v;
       layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setCloudsEnabled(next);
+      return next;
+    });
+  }, []);
+
+  const handleToggleLightning = useCallback(() => {
+    setLightningEnabled(v => {
+      const next = !v;
+      const layer = layerManagerRef.current?.getLayer<LightningLayer>('lightning');
+      next ? layer?.show() : layer?.hide();
+      return next;
+    });
+  }, []);
+
+  const handleToggleTemperature = useCallback(() => {
+    setTemperatureEnabled(v => {
+      const next = !v;
+      const layer = layerManagerRef.current?.getLayer<TemperatureLayer>('temperature');
+      next ? layer?.show() : layer?.hide();
+      layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setTemperatureEnabled(next);
       return next;
     });
   }, []);
@@ -184,6 +216,8 @@ const GlobePage = () => {
         onIsOrbitingChange={setIsOrbiting}
         viewTarget={viewTarget}
         cloudsEnabled={cloudsEnabled}
+        lightningEnabled={lightningEnabled}
+        temperatureEnabled={temperatureEnabled}
         restoredView={restoredView}
         onEarthViewReady={handleEarthViewReady}
         cameraTargetRef={cameraTargetRef}
@@ -201,6 +235,10 @@ const GlobePage = () => {
         onToggleViewTarget={handleToggleViewTarget}
         cloudsEnabled={cloudsEnabled}
         onToggleClouds={handleToggleClouds}
+        lightningEnabled={lightningEnabled}
+        onToggleLightning={handleToggleLightning}
+        temperatureEnabled={temperatureEnabled}
+        onToggleTemperature={handleToggleTemperature}
         connectionStatus={connectionStatus}
         lastUpdate={lastUpdate}
         lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}

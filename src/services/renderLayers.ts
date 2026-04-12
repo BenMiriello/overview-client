@@ -21,6 +21,7 @@ export const LAYERS = {
   CLOUD_OCCLUDER: 5,
   CLOUDS: 10,
   ATMOSPHERE: 20,
+  TEMPERATURE: 25, // must be above atmosphere so it renders on night side
   MOON_SURFACE: 30,
   MOON_RELIEF: 31,
   MARKERS: 100,

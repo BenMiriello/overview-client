@@ -13,7 +13,13 @@ export const sharedNightUniforms = {
   flashIntensity: { value: 0 },
   flashWorldPos: { value: new THREE.Vector3() },
   flashFalloff: { value: 15.0 },
+  desaturate: { value: 0.0 },
 };
+
+/** Drive map desaturation; called by TemperatureLayer to sync with fade. */
+export function setMapDesaturate(amount: number): void {
+  sharedNightUniforms.desaturate.value = Math.max(0, Math.min(1, amount));
+}
 
 /**
  * Updates the sun direction uniform using three-globe's polar2Cartesian convention.
@@ -52,6 +58,7 @@ export function patchTileMaterial(material: THREE.Material): void {
     shader.uniforms.flashIntensity = sharedNightUniforms.flashIntensity;
     shader.uniforms.flashWorldPos = sharedNightUniforms.flashWorldPos;
     shader.uniforms.flashFalloff = sharedNightUniforms.flashFalloff;
+    shader.uniforms.desaturate = sharedNightUniforms.desaturate;
 
     shader.vertexShader = 'varying vec3 vWorldPosition;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
@@ -67,13 +74,18 @@ export function patchTileMaterial(material: THREE.Material): void {
       uniform float cloudShadowEnabled;
       uniform float flashIntensity;
       uniform vec3 flashWorldPos;
-      uniform float flashFalloff;\n` + shader.fragmentShader;
+      uniform float flashFalloff;
+      uniform float desaturate;\n` + shader.fragmentShader;
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
       `#include <map_fragment>
       {
         ${NIGHT_FRAG_COMMON}
+
+        // Capture pre-darkened texel for surface classification (water/snow heuristics).
+        vec3 texelRgb = diffuseColor.rgb;
+
         float darkness = 0.88 * nightFactor;
         diffuseColor.rgb *= (1.0 - darkness);
 
@@ -97,15 +109,29 @@ export function patchTileMaterial(material: THREE.Material): void {
         float shadowDarken = cloudAlpha * 0.7 * (1.0 - nightFactor) * cloudShadowEnabled;
         diffuseColor.rgb *= (1.0 - shadowDarken);
 
+        // SUN REFLECTION TEMPORARILY DISABLED FOR ISOLATION TEST
+
         float flashDist = length(vWorldPosition - flashWorldPos);
         float groundFlash = flashIntensity * exp(-flashDist * flashDist * flashFalloff);
         diffuseColor.rgb += vec3(0.8, 0.85, 1.0) * groundFlash * 0.7;
+
+        float gray = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(gray), desaturate);
       }`,
+    );
+
+    // Our custom map_fragment code is the sole illumination source (day/night
+    // dimming, cloud shadows, flash). Three.js's lighting pipeline produces
+    // vec3(0) because the DirectionalLight is zeroed and there's no AmbientLight.
+    // Bypass it: pipe diffuseColor straight to gl_FragColor in the output stage.
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <output_fragment>',
+      `gl_FragColor = vec4(diffuseColor.rgb, diffuseColor.a);`,
     );
   };
 
   const matType = (material as any).isMeshPhongMaterial ? 'phong' : 'lambert';
-  material.customProgramCacheKey = () => `daynight-day-${matType}-v5`;
+  material.customProgramCacheKey = () => `daynight-day-${matType}-v15`;
   if (!material.userData) material.userData = {};
   material.userData[DAY_PATCH_FLAG] = true;
   material.needsUpdate = true;
@@ -123,7 +149,11 @@ export function patchNightTileMaterial(material: THREE.MeshLambertMaterial): voi
   material.transparent = true;
 
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.sunDir = sharedNightUniforms.sunDir;
+    shader.uniforms.sunDir        = sharedNightUniforms.sunDir;
+    shader.uniforms.flashIntensity = sharedNightUniforms.flashIntensity;
+    shader.uniforms.flashWorldPos  = sharedNightUniforms.flashWorldPos;
+    shader.uniforms.flashFalloff   = sharedNightUniforms.flashFalloff;
+    shader.uniforms.desaturate    = sharedNightUniforms.desaturate;
 
     shader.vertexShader = 'varying vec3 vWorldPosition;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
@@ -134,7 +164,11 @@ export function patchNightTileMaterial(material: THREE.MeshLambertMaterial): voi
 
     shader.fragmentShader =
       `varying vec3 vWorldPosition;
-      uniform vec3 sunDir;\n` + shader.fragmentShader;
+      uniform vec3  sunDir;
+      uniform float flashIntensity;
+      uniform vec3  flashWorldPos;
+      uniform float flashFalloff;
+      uniform float desaturate;\n` + shader.fragmentShader;
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
@@ -142,11 +176,17 @@ export function patchNightTileMaterial(material: THREE.MeshLambertMaterial): voi
       {
         ${NIGHT_FRAG_COMMON}
         diffuseColor.a *= nightFactor;
+        float flashDist   = length(vWorldPosition - flashWorldPos);
+        float groundFlash = flashIntensity * exp(-flashDist * flashDist * flashFalloff);
+        diffuseColor.rgb += vec3(0.8, 0.85, 1.0) * groundFlash * 0.7;
+
+        float gray = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(gray), desaturate);
       }`,
     );
   };
 
-  material.customProgramCacheKey = () => 'daynight-night-v1';
+  material.customProgramCacheKey = () => 'daynight-night-v3';
   if (!material.userData) material.userData = {};
   material.userData[NIGHT_PATCH_FLAG] = true;
   material.needsUpdate = true;
@@ -175,6 +215,7 @@ export function createDayTileEngine(radius: number): SlippyMapGlobe {
     projection: 'mercator',
     patchMaterial: patchTileMaterial,
   });
+  engine.debugTag = 'day';
   engine.thresholds = TILE_THRESHOLDS;
   // Show the inner back layer (black sphere at 0.99*radius). The factory hides
   // it, but the day engine is the only visible surface — gaps between tile patches
@@ -201,6 +242,7 @@ export function createNightTileEngine(radius: number): SlippyMapGlobe {
     projection: 'mercator',
     patchMaterial: patchNightTileMaterial,
   });
+  engine.debugTag = 'night';
   engine.thresholds = TILE_THRESHOLDS;
   return engine;
 }
