@@ -109,28 +109,26 @@ export function patchTileMaterial(material: THREE.Material): void {
         float shadowDarken = cloudAlpha * 0.7 * (1.0 - nightFactor) * cloudShadowEnabled;
         diffuseColor.rgb *= (1.0 - shadowDarken);
 
-        // Blinn-Phong specular. Surface classification from the pre-darkened texel:
-        //   water = blue-dominant + relatively dark (ocean blue)
-        //   snow  = very bright + low saturation (polar ice, glaciers)
-        //   land  = everything else, low base reflectance
-        // All gated by (1.0 - nightFactor) so specular only fires on the day side.
-        float isWater = clamp(
-          (texelRgb.b - max(texelRgb.r, texelRgb.g)) * 10.0
-          + (0.15 - dot(texelRgb, vec3(0.333))) * 8.0,
-          0.0, 1.0);
-        float snowLuma = dot(texelRgb, vec3(0.299, 0.587, 0.114));
-        float snowSat  = max(texelRgb.r, max(texelRgb.g, texelRgb.b))
-                       - min(texelRgb.r, min(texelRgb.g, texelRgb.b));
-        float isSnow = clamp((snowLuma - 0.75) * 20.0 - snowSat * 15.0, 0.0, 1.0);
+        if (sunDot > 0.0) {
+          vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+          float nDotV = max(0.0, dot(wp, viewDir));
+          float halfLen = max(1e-4, length(sunDir + viewDir));
+          vec3 halfVec = (sunDir + viewDir) / halfLen;
+          float nDotH = max(0.0, dot(wp, halfVec));
 
-        vec3 viewDir = normalize(cameraPosition - vWorldPosition);
-        vec3 halfVec = normalize(sunDir + viewDir);
-        float nDotH  = max(0.0, dot(wp, halfVec));
-        float specWater = pow(nDotH, 80.0) * 0.6 * isWater;
-        float specSnow  = pow(nDotH, 20.0) * 0.3 * isSnow;
-        float specLand  = pow(nDotH,  8.0) * 0.05 * (1.0 - isWater) * (1.0 - isSnow);
-        float specular  = (specWater + specSnow + specLand) * (1.0 - nightFactor);
-        diffuseColor.rgb += vec3(1.0, 0.98, 0.9) * specular;
+          // sunDot (nDotL) weighting kills specular at the terminator — without it,
+          // terminator fragments (sunDot≈0+) at grazing camera angles produce
+          // nDotH≈1 → full specular visible from the night side.
+          float nDotL = sunDot;
+
+          float blueExcess = texelRgb.b - max(texelRgb.r, texelRgb.g);
+          float waterMask = smoothstep(0.05, 0.15, blueExcess);
+          float shininess = mix(12.0, 80.0, waterMask);
+          float specScale = mix(0.1, 0.625, waterMask);
+
+          float spec = pow(nDotH, shininess) * nDotL * nDotV * specScale;
+          diffuseColor.rgb += vec3(1.0, 0.98, 0.94) * spec;
+        }
 
         float flashDist = length(vWorldPosition - flashWorldPos);
         float groundFlash = flashIntensity * exp(-flashDist * flashDist * flashFalloff);
@@ -151,7 +149,7 @@ export function patchTileMaterial(material: THREE.Material): void {
   };
 
   const matType = (material as any).isMeshPhongMaterial ? 'phong' : 'lambert';
-  material.customProgramCacheKey = () => `daynight-day-${matType}-v16`;
+  material.customProgramCacheKey = () => `daynight-day-${matType}-v22`;
   if (!material.userData) material.userData = {};
   material.userData[DAY_PATCH_FLAG] = true;
   material.needsUpdate = true;
