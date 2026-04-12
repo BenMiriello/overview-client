@@ -4,33 +4,28 @@ import { sharedNightUniforms } from './dayNightMaterial';
 // See client/docs/atmosphere.md for the physics and design rationale.
 
 const PLANET_RADIUS = 100;
-const ATMOSPHERE_HEIGHT = 4.0; // extends to r=104, above cloud far-zoom max of 103
-const ATMOSPHERE_RADIUS = PLANET_RADIUS + ATMOSPHERE_HEIGHT; // 104
-const SCALE_HEIGHT = 0.625; // fixed exponential scale height; decoupled from shell top
 
-// Rayleigh coefficients in the canonical (R, G, B) ratio for 680/550/440 nm,
-// scaled to scene units. Tuned visually against SUN_INTENSITY to keep the
-// day-disk inside LDR while leaving enough optical-depth differential to
-// reveal a visible reddening at the terminator.
+// Geometry sphere is fixed at the maximum possible atmosphere radius (far zoom,
+// cloudAlt=0.03, atmosphere=2x clouds → 100*(1+0.06)=106). uAtmosphereR and
+// uScaleHeight are updated each frame to track current cloud altitude.
+export const ATMOSPHERE_RADIUS_SCENE = 106;
+
+// Base scale height at far zoom (cloudAlt=0.03). Scaled proportionally to
+// cloudAlt each frame so the atmosphere always extends above the cloud shell
+// regardless of zoom level.
+const BASE_SCALE_HEIGHT = 2.0;
+
+const MIE_SCALE_HEIGHT_BASE = 0.5;
+
 const RAYLEIGH_COEFF = new THREE.Vector3(0.116, 0.270, 0.662);
-
-// Mie is approximately wavelength-independent (haze is white/gray), so the
-// coefficient is grayscale. Magnitude tuned visually; see atmosphere.md.
 const MIE_COEFF = new THREE.Vector3(0.021, 0.021, 0.021);
-
-// Mie scale height is much shorter than Rayleigh's in real Earth (~1.2 km vs
-// ~8.5 km). Aerosols hug the surface. Keep the same loose ratio in scene units.
-const MIE_SCALE_HEIGHT = 0.625; // fixed; aerosols hug surface, same as Rayleigh scale height
-
-// Henyey-Greenstein anisotropy parameter. Higher = sharper forward peak.
-// 0.76 is a common Earth haze value.
 const MIE_G = 0.76;
 
-// Brightness multiplier on the final scattered color before additive blend.
-// Lowered alongside doubling RAYLEIGH_COEFF: net mid-disk brightness is
-// similar but the dynamic range shifts down so reddening at the terminator
-// becomes visible before the day disk clips to white in LDR.
-const SUN_INTENSITY = 5.0;
+const SUN_INTENSITY = 2.0;
+
+// Night-side path-length haze. NOT multiplied by RAYLEIGH_COEFF — kept dark
+// and neutral so it reads as opacity/presence, not a glow.
+const AMBIENT_INTENSITY = 0.006;
 
 const VIEW_SAMPLES = 10;
 const SHADOW_SAMPLES = 4;
@@ -58,11 +53,10 @@ const fragmentShader = /* glsl */ `
   uniform vec3  uMieCoeff;
   uniform float uMieG;
   uniform float uSunIntensity;
+  uniform float uAmbientIntensity;
 
   varying vec3 vWorldPos;
 
-  // Returns (tNear, tFar) for ray vs sphere at origin radius r.
-  // Returns (1.0, -1.0) when there is no intersection.
   vec2 raySphere(vec3 ro, vec3 rd, float r) {
     float b = dot(ro, rd);
     float c = dot(ro, ro) - r * r;
@@ -82,7 +76,6 @@ const fragmentShader = /* glsl */ `
     float tNear = max(atm.x, 0.0);
     float tFar  = atm.y;
 
-    // Clip the chord to the planet's near side if the view ray hits Earth.
     vec2 planet = raySphere(ro, rd, uPlanetR);
     if (planet.y > 0.0 && planet.x > 0.0) {
       tFar = min(tFar, planet.x);
@@ -92,6 +85,7 @@ const fragmentShader = /* glsl */ `
     float segLen = (tFar - tNear) / float(${VIEW_SAMPLES});
     vec3  rayleighSum = vec3(0.0);
     vec3  mieSum      = vec3(0.0);
+    float ambientSum  = 0.0;
 
     for (int i = 0; i < ${VIEW_SAMPLES}; i++) {
       float t = tNear + (float(i) + 0.5) * segLen;
@@ -101,29 +95,19 @@ const fragmentShader = /* glsl */ `
       float densityR = exp(-altitude / uScaleHeight)    * segLen;
       float densityM = exp(-altitude / uScaleHeightMie) * segLen;
 
-      // Soft ground-shadow factor: a binary "ray hits Earth = contribute 0"
-      // test snaps a sample's contribution to zero across one frame's worth
-      // of motion at the terminator, killing the dusk gradient. Instead,
-      // measure the sun ray's closest approach to Earth's center and smooth
-      // the transition over a narrow band centered on the surface so dusk
-      // samples contribute partially.
+      // Path-length integral for night-side limb visibility (no sun dependency).
+      ambientSum += densityR;
+
       vec2 shadow = raySphere(P, uSunDir, uPlanetR);
       float shadowFactor = 1.0;
       if (shadow.y > 0.0 && shadow.x > 0.0) {
         float tClosest = -dot(P, uSunDir);
         vec3 closestPt = P + uSunDir * tClosest;
         float closest = length(closestPt);
-        shadowFactor = smoothstep(uPlanetR - 0.5, uPlanetR + 0.5, closest);
+        shadowFactor = smoothstep(uPlanetR - 1.0, uPlanetR + 1.0, closest);
       }
-      // Ambient floor: indirect sky light (earthshine, starlight) means the
-      // night-side limb should show faint blue scatter at grazing angles.
-      // 0.012 keeps it well below day brightness; Rayleigh wavelength-dependence
-      // naturally makes it blue.
-      shadowFactor = max(0.012, shadowFactor);
-      densityR *= shadowFactor;
-      densityM *= shadowFactor;
+      if (shadowFactor <= 0.0) continue;
 
-      // Light optical depth: integrate density along sun ray to top of atmosphere.
       vec2 lightAtm = raySphere(P, uSunDir, uAtmosphereR);
       float lightLen = lightAtm.y;
       if (lightLen <= 0.0) continue;
@@ -141,11 +125,11 @@ const fragmentShader = /* glsl */ `
       if (lightBlocked) continue;
 
       vec3 tau =
-        uRayleighCoeff * (densityR * 0.5 + lightDensityR) +
-        uMieCoeff      * (densityM * 0.5 + lightDensityM);
+        uRayleighCoeff * (densityR * shadowFactor * 0.5 + lightDensityR) +
+        uMieCoeff      * (densityM * shadowFactor * 0.5 + lightDensityM);
       vec3 attenuation = exp(-tau);
-      rayleighSum += densityR * attenuation;
-      mieSum      += densityM * attenuation;
+      rayleighSum += densityR * shadowFactor * attenuation;
+      mieSum      += densityM * shadowFactor * attenuation;
     }
 
     float mu = dot(rd, uSunDir);
@@ -159,10 +143,15 @@ const fragmentShader = /* glsl */ `
       ((1.0 - g2) * (1.0 + mu2)) /
       ((2.0 + g2) * pow(max(0.0, 1.0 + g2 - 2.0 * g * mu), 1.5));
 
-    vec3 color = uSunIntensity * (
+    // Night ambient: neutral dark haze (not blue) proportional to path length.
+    // Gives the atmosphere limb presence without adding a colored glow.
+    vec3 nightHaze = uAmbientIntensity * vec3(0.15, 0.2, 0.35) * ambientSum;
+
+    vec3 color = nightHaze + uSunIntensity * (
       uRayleighCoeff * phaseR * rayleighSum +
       uMieCoeff      * phaseM * mieSum
     );
+
     gl_FragColor = vec4(color, 1.0);
   }
 `;
@@ -170,26 +159,20 @@ const fragmentShader = /* glsl */ `
 export function createAtmosphereMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
-      uCameraPos:      { value: new THREE.Vector3() },
-      uSunDir:         sharedNightUniforms.sunDir, // shared reference; updated by updateSunDirection
-      uPlanetR:        { value: PLANET_RADIUS },
-      uAtmosphereR:    { value: ATMOSPHERE_RADIUS },
-      uScaleHeight:    { value: SCALE_HEIGHT },
-      uScaleHeightMie: { value: MIE_SCALE_HEIGHT },
-      uRayleighCoeff:  { value: RAYLEIGH_COEFF.clone() },
-      uMieCoeff:       { value: MIE_COEFF.clone() },
-      uMieG:           { value: MIE_G },
-      uSunIntensity:   { value: SUN_INTENSITY },
+      uCameraPos:        { value: new THREE.Vector3() },
+      uSunDir:           sharedNightUniforms.sunDir,
+      uPlanetR:          { value: PLANET_RADIUS },
+      uAtmosphereR:      { value: ATMOSPHERE_RADIUS_SCENE },
+      uScaleHeight:      { value: BASE_SCALE_HEIGHT },
+      uScaleHeightMie:   { value: MIE_SCALE_HEIGHT_BASE },
+      uRayleighCoeff:    { value: RAYLEIGH_COEFF.clone() },
+      uMieCoeff:         { value: MIE_COEFF.clone() },
+      uMieG:             { value: MIE_G },
+      uSunIntensity:     { value: SUN_INTENSITY },
+      uAmbientIntensity: { value: AMBIENT_INTENSITY },
     },
     vertexShader,
     fragmentShader,
-    // BackSide so the shell still draws when the camera is inside the
-    // atmosphere (close mode). depthTest is OFF because the back face of the
-    // shell is at radius > Earth and would otherwise be depth-clipped by
-    // Earth on every pixel except the thin limb ring. The shader handles
-    // planet occlusion analytically by clipping the integration interval at
-    // the planet's near hit, so a depth test against the framebuffer is
-    // redundant.
     side: THREE.BackSide,
     transparent: true,
     depthWrite: false,
@@ -198,4 +181,5 @@ export function createAtmosphereMaterial(): THREE.ShaderMaterial {
   });
 }
 
-export const ATMOSPHERE_RADIUS_SCENE = ATMOSPHERE_RADIUS;
+export const BASE_CLOUD_ALT_FAR = 0.03;
+export { BASE_SCALE_HEIGHT, MIE_SCALE_HEIGHT_BASE };
