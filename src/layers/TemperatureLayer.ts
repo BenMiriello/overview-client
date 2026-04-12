@@ -174,7 +174,7 @@ export class TemperatureLayer extends BaseLayer<void> {
   private fadeTarget = 0;
   private fadeStartMs = 0;
   private isFading = false;
-  private static readonly FADE_MS = 300;
+  private static readonly FADE_MS = 600;
 
   private startFade(target: number): void {
     const mat = this.mesh?.material as THREE.ShaderMaterial | undefined;
