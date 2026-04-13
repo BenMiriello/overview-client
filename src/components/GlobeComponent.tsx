@@ -5,7 +5,7 @@ import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
 import { updateSunDirection, patchNightTileMaterial, createDayTileEngine, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
 import { createMoonMesh, updateMoonPosition, updateMoonOrientation, MoonGroup } from '../services/moonMesh';
-import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE, SUN_HALO_SCALE } from '../services/sunMesh';
+import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE } from '../services/sunMesh';
 import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } from '../services/atmosphereMesh';
 import { MOON_RADIUS_SCENE, getSiderealTimeHours } from '../services/astronomy';
 import { LAYERS } from '../services/renderLayers';
@@ -72,6 +72,7 @@ interface GlobeComponentProps {
   // Use this instead of pointOfView() when you need the actual lat/lng target,
   // because pointOfView() returns the camera nadir which is offset by pitch.
   cameraTargetRef?: React.MutableRefObject<{ lat: number; lng: number } | null>;
+  onSurfaceHover?: (result: { lat: number; lng: number } | null, x: number, y: number) => void;
 }
 
 // Target-primary state: the ground point (targetLat/targetLng) is the invariant.
@@ -420,6 +421,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   restoredView = null,
   onEarthViewReady,
   cameraTargetRef,
+  onSurfaceHover,
 }) => {
   const globeEl          = useRef<any>(null);
   const layerManagerRef  = useRef<GlobeLayerManager | null>(null);
@@ -447,6 +449,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   useEffect(() => { prefer3DRef.current = is3D; }, [is3D]);
   const cloudsEnabledRef = useRef(cloudsEnabled);
   useEffect(() => { cloudsEnabledRef.current = cloudsEnabled; }, [cloudsEnabled]);
+  const smoothedStarVisibility = useRef(1);
   const lightningEnabledRef = useRef(lightningEnabled);
   useEffect(() => { lightningEnabledRef.current = lightningEnabled; }, [lightningEnabled]);
   const temperatureEnabledRef = useRef(temperatureEnabled);
@@ -518,9 +521,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const tmpMoonPos = new THREE.Vector3();
     const tmpSunPos = new THREE.Vector3();
     const tmpRayDir = new THREE.Vector3();
-    const sunFrustum = new THREE.Frustum();
-    const sunSphere = new THREE.Sphere(new THREE.Vector3(), SUN_HALO_SCALE / 2);
-    const tmpProjScreen = new THREE.Matrix4();
 
     // Returns true if the segment from `camPos` to `sunPos` passes through a
     // sphere at the origin with radius `EARTH_R`. Standard ray-sphere
@@ -795,6 +795,18 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const ENGINE_MOVE_THRESHOLD = 0.05;
       const cameraActuallyMoved = cameraMoved(camera, ENGINE_MOVE_THRESHOLD);
 
+      {
+        // Gate max-level tiles on pitch-independent altitude. The camera's radial
+        // position (used for LOD) shrinks toward zero as pitch increases — at max
+        // tilt the camera is essentially at the surface even when altitude is 2×
+        // minimum. Only closeModeState.altitude is pitch-independent and reliable.
+        const LEVEL14_MAX_ALTITUDE = 0.0015;
+        const inMaxZoom = inCloseModeRef.current &&
+          (closeModeState.current?.altitude ?? Infinity) <= LEVEL14_MAX_ALTITUDE;
+        if (dayTileEngineRef.current) dayTileEngineRef.current.maxLevel = inMaxZoom ? 14 : 13;
+        (nightTileEngineRef.current as any).maxLevel = inMaxZoom ? 8 : 7;
+      }
+
       if (dayTileEngineRef.current) {
         perfSpan('updatePov.day', () => dayTileEngineRef.current!.updatePov(camera));
         if (inCloseModeRef.current && cameraActuallyMoved) {
@@ -872,7 +884,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         tmpCamPos.copy(camForSun.position);
         tmpSunPos.copy(sunGroup.position);
         sunOcclFraction = sunOccludedFraction(tmpCamPos, tmpSunPos);
-        updateSunHalo(sunGroup, sunOcclFraction);
+        updateSunHalo(sunGroup, sunOcclFraction, smoothedStarVisibility.current);
         updateAtmosphereCamera(atmosphereMesh, camForSun);
       });
 
@@ -897,27 +909,28 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           tmpMoonPos.copy(moonMesh.position);
           const moonBright = computeBrightArea(tmpCamPos, tmpMoonPos, MOON_R_SCENE, fovRad, 0.66);
 
-          // Sun contribution: stylized fixed angular size from the halo sprite,
-          // gated by a sphere-frustum check (so it doesn't pop when only the
-          // sun's center crosses the frame edge) and scaled by the same
-          // occlusion fraction that drives the halo lerp.
-          tmpProjScreen.multiplyMatrices(camForSun.projectionMatrix, camForSun.matrixWorldInverse);
-          sunFrustum.setFromProjectionMatrix(tmpProjScreen);
-          sunSphere.center.copy(tmpSunPos);
+          // Sun contribution: smooth angular visibility rather than a binary
+          // frustum check, so stars never snap as the sun crosses the FOV edge.
+          const toSun = tmpSunPos.clone().sub(tmpCamPos).normalize();
+          const viewDir = tmpDir.set(0, 0, -1).applyQuaternion(camForSun.quaternion);
+          const sunViewDot = toSun.dot(viewDir);
+          const halfFovCos = Math.cos(fovRad / 2);
+          // Smooth over ±15° around the frustum edge — no hard snap.
+          const sunInView = THREE.MathUtils.smoothstep(sunViewDot, halfFovCos - 0.26, halfFovCos + 0.26);
           let sunBright = 0;
-          if (sunFrustum.intersectsSphere(sunSphere)) {
+          if (sunInView > 0) {
             const sunDist = tmpCamPos.distanceTo(tmpSunPos);
-            const sunAngularR = Math.atan((SUN_HALO_SCALE / 2) / sunDist);
+            const sunAngularR = Math.atan((SUN_CORE_SCALE / 2) / sunDist);
             const sunHeightFraction = Math.min(1, (2 * sunAngularR) / fovRad);
-            sunBright = sunHeightFraction * SUN_BRIGHTNESS_SCALE * (1 - sunOcclFraction);
+            sunBright = sunHeightFraction * sunInView * SUN_BRIGHTNESS_SCALE * (1 - sunOcclFraction);
           }
 
           const totalBright = earthBright + moonBright + sunBright;
-          // Begin dimming once a fully-lit body covers ~10% of viewport height,
-          // fully gone once it covers ~70%.
-          const starVisibility = 1.0 - THREE.MathUtils.smoothstep(totalBright, 0.1, 0.7);
+          const target = 1.0 - THREE.MathUtils.smoothstep(totalBright, 0.1, 0.7);
+          // Lerp toward target (~0.5s at 60fps) to absorb any remaining per-frame discontinuities.
+          smoothedStarVisibility.current = THREE.MathUtils.lerp(smoothedStarVisibility.current, target, 0.06);
 
-          (sky.material as THREE.MeshBasicMaterial).color.setScalar(starVisibility);
+          (sky.material as THREE.MeshBasicMaterial).color.setScalar(smoothedStarVisibility.current);
         });
       }
 
@@ -2425,6 +2438,60 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       persist();
     };
   }, [isGlobeReady, restoredView]);
+
+  // ── Tile backoff reset on network recovery ───────────────────────────────
+  useEffect(() => {
+    const handleOnline = () => {
+      (dayTileEngineRef.current as any)?.resetBackoff();
+      (nightTileEngineRef.current as any)?.resetBackoff();
+      if (moonMeshRef.current) {
+        (moonMeshRef.current as any).colorEngine?.resetBackoff();
+        (moonMeshRef.current as any).reliefEngine?.resetBackoff();
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, []);
+
+  // ── Temperature surface hover (raycasting for cursor tooltip) ───────────
+  useEffect(() => {
+    if (!isGlobeReady || !globeEl.current || !onSurfaceHover) return;
+    if (!temperatureEnabled || viewTarget !== 'earth') {
+      onSurfaceHover(null, 0, 0);
+      return;
+    }
+
+    const canvas = globeEl.current.renderer().domElement as HTMLCanvasElement;
+    const globeRadius = globeEl.current.getGlobeRadius() as number;
+
+    const handleMove = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const nx = (e.clientX - rect.left) / rect.width * 2 - 1;
+      const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const camera = globeEl.current.camera() as THREE.PerspectiveCamera;
+      const ndc = new THREE.Vector3(nx, ny, 0.5).unproject(camera);
+      const direction = ndc.sub(camera.position).normalize();
+      const hit = raySphereIntersect(camera.position.clone(), direction, globeRadius);
+      if (hit) {
+        const { lat, lng } = cartesianToLatLng(hit);
+        onSurfaceHover({ lat, lng }, e.clientX, e.clientY);
+      } else {
+        onSurfaceHover(null, 0, 0);
+      }
+    };
+
+    const handleLeave = () => onSurfaceHover(null, 0, 0);
+
+    canvas.style.cursor = 'crosshair';
+    canvas.addEventListener('mousemove', handleMove);
+    canvas.addEventListener('mouseleave', handleLeave);
+    return () => {
+      canvas.removeEventListener('mousemove', handleMove);
+      canvas.removeEventListener('mouseleave', handleLeave);
+      canvas.style.cursor = '';
+      onSurfaceHover(null, 0, 0);
+    };
+  }, [isGlobeReady, temperatureEnabled, viewTarget, onSurfaceHover]);
 
   // ── Layer manager cleanup ────────────────────────────────────────────────
   useEffect(() => {

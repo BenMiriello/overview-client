@@ -1,6 +1,7 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { useLightningData } from '../services/dataStreams/hooks';
 import { GlobeComponent, GlobeControls, TemperatureLegend } from '../components';
+import { TemperatureCursor, TemperatureCursorHandle } from '../components/TemperatureCursor';
 import { NavigationIcons } from '../components/Navigation';
 import { LightningLayer, CloudLayer, TemperatureLayer } from '../layers';
 import { GlobeLayerManager } from '../managers';
@@ -58,6 +59,8 @@ const GlobePage = () => {
   const [cloudsEnabled, setCloudsEnabled] = useState(() => restoredView?.cloudsEnabled ?? true);
   const [lightningEnabled, setLightningEnabled] = useState(() => restoredView?.lightningEnabled ?? true);
   const [temperatureEnabled, setTemperatureEnabled] = useState(() => restoredView?.temperatureEnabled ?? false);
+  const [tempUnit, setTempUnit] = useState<'C' | 'F'>('C');
+  const cursorRef = useRef<TemperatureCursorHandle>(null);
 
   useEffect(() => {
     // Stored view rehydrates the camera directly — skip the intro fetch + animation.
@@ -179,6 +182,14 @@ const GlobePage = () => {
     });
   }, []);
 
+  const handleSurfaceHover = useCallback((result: { lat: number; lng: number } | null, x: number, y: number) => {
+    if (!result) { cursorRef.current?.update(null); return; }
+    const layer = layerManagerRef.current?.getLayer<TemperatureLayer>('temperature');
+    const tempC = layer?.getTempAtLatLng(result.lat, result.lng);
+    if (tempC == null) { cursorRef.current?.update(null); return; }
+    cursorRef.current?.update({ x, y, lat: result.lat, lng: result.lng, tempC });
+  }, []);
+
   const handleEarthViewReady = useCallback(() => {
     if (pendingFlyAfterEarthRef.current) {
       const spot = pendingFlyAfterEarthRef.current;
@@ -221,6 +232,7 @@ const GlobePage = () => {
         restoredView={restoredView}
         onEarthViewReady={handleEarthViewReady}
         cameraTargetRef={cameraTargetRef}
+        onSurfaceHover={handleSurfaceHover}
       />
       <GlobeControls
         is3D={is3D}
@@ -243,7 +255,8 @@ const GlobePage = () => {
         lastUpdate={lastUpdate}
         lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
       />
-      <TemperatureLegend visible={temperatureEnabled} />
+      <TemperatureLegend visible={temperatureEnabled} unit={tempUnit} onUnitChange={setTempUnit} />
+      <TemperatureCursor ref={cursorRef} unit={tempUnit} />
       <NavigationIcons currentPage="globe" />
     </div>
   );

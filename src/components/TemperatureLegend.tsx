@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import './TemperatureLegend.css';
 
 // Color stops — used only for the gradient
@@ -37,11 +36,11 @@ const gradientStops = [...COLORMAP].reverse().map(({ temp, rgb }) => {
 
 interface Props {
   visible: boolean;
+  unit: 'C' | 'F';
+  onUnitChange: (u: 'C' | 'F') => void;
 }
 
-export const TemperatureLegend: React.FC<Props> = ({ visible }) => {
-  const [unit, setUnit] = useState<'C' | 'F'>('C');
-
+export const TemperatureLegend: React.FC<Props> = ({ visible, unit, onUnitChange }) => {
   if (!visible) return null;
 
   return (
@@ -66,7 +65,7 @@ export const TemperatureLegend: React.FC<Props> = ({ visible }) => {
         <div className="temp-legend-unit-wrap">
           <button
             className="temp-legend-unit-btn"
-            onClick={() => setUnit(u => u === 'C' ? 'F' : 'C')}
+            onClick={() => onUnitChange(unit === 'C' ? 'F' : 'C')}
           >
             {unit === 'C' ? '°C' : '°F'}
           </button>

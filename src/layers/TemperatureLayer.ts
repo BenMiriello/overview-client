@@ -52,7 +52,7 @@ const COLORMAP: [number, [number, number, number]][] = [
   [ 48, [120,   0,  40]],  // dark crimson  — extreme heat
 ];
 
-function tempToRGB(temp: number): [number, number, number] {
+export function tempToRGB(temp: number): [number, number, number] {
   const clipped = Math.max(COLORMAP[0][0], Math.min(COLORMAP[COLORMAP.length - 1][0], temp));
   for (let i = 0; i < COLORMAP.length - 1; i++) {
     const [t0, c0] = COLORMAP[i];
@@ -79,8 +79,7 @@ async function fetchTemperatureGrid(): Promise<Float32Array> {
   return new Float32Array(json);
 }
 
-async function buildTemperatureTexture(): Promise<THREE.CanvasTexture> {
-  const temps = await fetchTemperatureGrid();
+async function buildTemperatureTexture(temps: Float32Array): Promise<THREE.CanvasTexture> {
 
   const small = document.createElement('canvas');
   small.width = GRID_W;
@@ -119,6 +118,7 @@ export class TemperatureLayer extends BaseLayer<void> {
   private mesh: THREE.Mesh | null = null;
   private geometry: THREE.SphereGeometry | null = null;
   private texture: THREE.CanvasTexture | null = null;
+  private grid: Float32Array | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
   initialize(globeEl: any): void {
@@ -151,8 +151,10 @@ export class TemperatureLayer extends BaseLayer<void> {
   }
 
   private loadTexture(): void {
-    buildTemperatureTexture()
-      .then(texture => {
+    fetchTemperatureGrid()
+      .then(async grid => {
+        this.grid = grid;
+        const texture = await buildTemperatureTexture(grid);
         if (!this.mesh) { texture.dispose(); return; }
         const mat = this.mesh.material as THREE.ShaderMaterial;
         const old = this.texture;
@@ -166,6 +168,13 @@ export class TemperatureLayer extends BaseLayer<void> {
         }
       })
       .catch(err => console.error('[TemperatureLayer] fetch/build failed:', err));
+  }
+
+  getTempAtLatLng(lat: number, lng: number): number | null {
+    if (!this.grid) return null;
+    const latIdx = Math.round((lat + 90) / 0.25);
+    const lngIdx = Math.round((lng + 180) / 0.25);
+    return this.grid[latIdx * GRID_W + lngIdx] ?? null;
   }
 
   private pendingShow = false;
