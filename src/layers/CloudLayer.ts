@@ -214,8 +214,8 @@ export class CloudLayer extends BaseLayer<void> {
     // Reference camera distance for falloff scaling (altitude ≈ 0.2 → dist ≈ 120).
     // Falloff ∝ 1/dist² so glow world-radius scales with apparent globe size.
     const REF_DIST = 120;
-    let cloudFalloff = 20000.0;
-    let groundFalloff = 15.0;
+    let cloudFalloff = 60000.0;
+    let groundFalloff = 6.0;
 
     if (this.globeEl) {
       try {

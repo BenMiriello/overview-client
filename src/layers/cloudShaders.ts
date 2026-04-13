@@ -177,13 +177,19 @@ export const cloudFragmentShader = /* glsl */ `
     float cosAngle = dot(normalize(vWorldPos), normalize(uFlashWorldPos));
     float flashGlow = uFlashIntensity * exp(-max(0.0, 1.0 - cosAngle) * uFlashFalloff);
 
-    brightness = clamp(brightness, 0.0, 1.0);
+    // Drive all cloud fragments toward full brightness before tinting — this flattens relief
+    // and ensures the subsequent cool tint is visible even on already-white day clouds.
+    brightness = clamp(brightness + flashGlow * 2.0, 0.0, 1.0);
 
     vec3 color = vec3(brightness);
-    // Mix toward blue-white so day clouds (already at 1.0) shift hue rather than just brightening
-    vec3 flashTint = vec3(0.7, 0.85, 1.0);
-    color = mix(color, flashTint, clamp(flashGlow * 0.6, 0.0, 1.0));
-    float alpha = density * uOpacity;
+    // Cool tint: with brightness at 1.0, mixing toward (0.82, 0.9, 1.0) pulls R and G
+    // slightly below white → perceptible blue-white hue shift rather than invisible brightening.
+    vec3 flashTint = vec3(0.82, 0.9, 1.0);
+    color = mix(color, flashTint, clamp(flashGlow * 0.5, 0.0, 0.65));
+
+    // Alpha pulse: sparse cloud fragments gain opacity during flash, creating the glow impression
+    // even on the day side where pure brightness changes are invisible against white.
+    float alpha = density * clamp(uOpacity + flashGlow * 0.4, uOpacity, 0.85);
     if (alpha < 0.005) discard;
 
     gl_FragColor = vec4(color, alpha);
