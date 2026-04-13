@@ -13,15 +13,21 @@ export const ATMOSPHERE_RADIUS_SCENE = 106;
 // Base scale height at far zoom (cloudAlt=0.03). Scaled proportionally to
 // cloudAlt each frame so the atmosphere always extends above the cloud shell
 // regardless of zoom level.
-const BASE_SCALE_HEIGHT = 2.0;
+const BASE_SCALE_HEIGHT = 0.625;
 
 const MIE_SCALE_HEIGHT_BASE = 0.5;
 
+// Rayleigh coefficients in the canonical (R, G, B) ratio for 680/550/440 nm,
+// scaled to scene units. Tuned visually against SUN_INTENSITY to keep the
+// day-disk inside LDR while leaving enough optical-depth differential to
+// reveal a visible reddening at the terminator.
 const RAYLEIGH_COEFF = new THREE.Vector3(0.116, 0.270, 0.662);
+
+// Mie is approximately wavelength-independent (haze is white/gray).
 const MIE_COEFF = new THREE.Vector3(0.021, 0.021, 0.021);
 const MIE_G = 0.76;
 
-const SUN_INTENSITY = 2.0;
+const SUN_INTENSITY = 5.0;
 
 // Night-side path-length haze. NOT multiplied by RAYLEIGH_COEFF — kept dark
 // and neutral so it reads as opacity/presence, not a glow.
@@ -104,7 +110,7 @@ const fragmentShader = /* glsl */ `
         float tClosest = -dot(P, uSunDir);
         vec3 closestPt = P + uSunDir * tClosest;
         float closest = length(closestPt);
-        shadowFactor = smoothstep(uPlanetR - 1.0, uPlanetR + 1.0, closest);
+        shadowFactor = smoothstep(uPlanetR - 0.5, uPlanetR + 0.5, closest);
       }
       if (shadowFactor <= 0.0) continue;
 
