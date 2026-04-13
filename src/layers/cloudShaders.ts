@@ -176,11 +176,13 @@ export const cloudFragmentShader = /* glsl */ `
     // Gaussian gives bright center that diffuses out rather than a sharp ring.
     float cosAngle = dot(normalize(vWorldPos), normalize(uFlashWorldPos));
     float flashGlow = uFlashIntensity * exp(-max(0.0, 1.0 - cosAngle) * uFlashFalloff);
-    brightness += flashGlow * 0.6;
 
     brightness = clamp(brightness, 0.0, 1.0);
 
     vec3 color = vec3(brightness);
+    // Mix toward blue-white so day clouds (already at 1.0) shift hue rather than just brightening
+    vec3 flashTint = vec3(0.7, 0.85, 1.0);
+    color = mix(color, flashTint, clamp(flashGlow * 0.6, 0.0, 1.0));
     float alpha = density * uOpacity;
     if (alpha < 0.005) discard;
 

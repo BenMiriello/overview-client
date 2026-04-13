@@ -21,6 +21,10 @@ const SHELL_DEFS = [
 ];
 
 export class CloudLayer extends BaseLayer<void> {
+  /** Flip to true in the browser console to test whether clouds are the source of
+   *  any night-side glow: `layerManagerRef.current.getLayer('clouds').constructor.ISOLATION_TEST_DISABLE = true` */
+  static ISOLATION_TEST_DISABLE = false;
+
   private shells: CloudShell[] = [];
   private sharedGeometry: THREE.SphereGeometry | null = null;
   private occluderMesh: THREE.Mesh | null = null;
@@ -32,6 +36,7 @@ export class CloudLayer extends BaseLayer<void> {
   private flashWorldPos = new THREE.Vector3();
   private flashHandler: ((e: Event) => void) | null = null;
   private userCloudsEnabled = true;
+  private temperatureEnabled = false;
   private fadeOpacity = 1.0;
   private fadeTarget = 1.0;
   private lastUpdateTime = -1;
@@ -179,6 +184,10 @@ export class CloudLayer extends BaseLayer<void> {
 
   update(): void {
     if (this.shells.length === 0) return;
+    if (CloudLayer.ISOLATION_TEST_DISABLE) {
+      for (const { mesh } of this.shells) mesh.visible = false;
+      return;
+    }
 
     for (const { mesh } of this.shells) {
       mesh.visible = this.visible;
@@ -191,7 +200,8 @@ export class CloudLayer extends BaseLayer<void> {
     this.lastUpdateTime = nowMs;
 
     if (this.flashIntensity > 0.001) {
-      this.flashIntensity *= 0.75;
+      // Decay to ~1% in 250ms regardless of frame rate (half-life ≈ 55ms)
+      this.flashIntensity *= Math.pow(0.001, dt / 0.25);
     } else {
       this.flashIntensity = 0;
     }
@@ -233,7 +243,10 @@ export class CloudLayer extends BaseLayer<void> {
         cloudAlt = CLOUD_ALT_FAR + (CLOUD_ALT_NEAR - CLOUD_ALT_FAR) * t;
         detailFade = Math.max(0, Math.min(1, (1.0 - cameraAlt) / 0.5));
 
-        this.fadeTarget = (cameraAlt >= ALT_FAR_POINT || this.userCloudsEnabled) ? 1.0 : 0.0;
+        // When temperature overlay is on, respect the clouds-off toggle at all altitudes
+        // (normally far-mode forces clouds visible regardless of user toggle).
+        const forcedOn = cameraAlt >= ALT_FAR_POINT && !(this.temperatureEnabled && !this.userCloudsEnabled);
+        this.fadeTarget = (forcedOn || this.userCloudsEnabled) ? 1.0 : 0.0;
       } catch { /* globeEl not ready */ }
     }
 
@@ -281,6 +294,10 @@ export class CloudLayer extends BaseLayer<void> {
   setCloudsEnabled(enabled: boolean): void {
     this.userCloudsEnabled = enabled;
     sharedNightUniforms.cloudShadowEnabled.value = enabled ? 1.0 : 0.0;
+  }
+
+  setTemperatureEnabled(enabled: boolean): void {
+    this.temperatureEnabled = enabled;
   }
 
   isCloudsEnabled(): boolean {
