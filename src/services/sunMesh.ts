@@ -78,17 +78,19 @@ export function createSunGroup(): THREE.Group {
 }
 
 /**
- * Set the halo's opacity from a continuous occlusion fraction in [0, 1] —
- * 0 = sun fully visible, 1 = photosphere fully hidden by Earth. The corona is
- * overwhelmed by the photosphere when the sun is unblocked, so we keep the
- * glow faint by default and ramp it up smoothly as the sun is covered.
+ * Updates halo opacity each frame.
+ * - occludedFraction [0,1]: how much of the photosphere is hidden by Earth (eclipse progress)
+ * - starVisibility [0,1]: scene darkness — 1 = pure dark space, 0 = bright body filling view
+ *
+ * The corona scales up during eclipse AND is visible in dark space, but dims
+ * whenever a bright body washes out the background.
  */
-export function updateSunHalo(group: THREE.Group, occludedFraction: number): void {
+export function updateSunHalo(group: THREE.Group, occludedFraction: number, starVisibility: number): void {
   const halo = group.getObjectByName('sunHalo') as THREE.Sprite | undefined;
   if (!halo) return;
   const f = THREE.MathUtils.clamp(occludedFraction, 0, 1);
-  const opacity = HALO_OPACITY_SPACE + (HALO_OPACITY_ECLIPSE - HALO_OPACITY_SPACE) * f;
-  (halo.material as THREE.SpriteMaterial).opacity = opacity;
+  const base = HALO_OPACITY_SPACE + (HALO_OPACITY_ECLIPSE - HALO_OPACITY_SPACE) * f;
+  (halo.material as THREE.SpriteMaterial).opacity = base * THREE.MathUtils.clamp(starVisibility, 0, 1);
 }
 
 export function updateSunPosition(group: THREE.Group, date: Date): void {
