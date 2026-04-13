@@ -796,15 +796,29 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const cameraActuallyMoved = cameraMoved(camera, ENGINE_MOVE_THRESHOLD);
 
       {
-        // Gate max-level tiles on pitch-independent altitude. The camera's radial
-        // position (used for LOD) shrinks toward zero as pitch increases — at max
-        // tilt the camera is essentially at the surface even when altitude is 2×
-        // minimum. Only closeModeState.altitude is pitch-independent and reliable.
-        const LEVEL14_MAX_ALTITUDE = 0.0015;
-        const inMaxZoom = inCloseModeRef.current &&
-          (closeModeState.current?.altitude ?? Infinity) <= LEVEL14_MAX_ALTITUDE;
-        if (dayTileEngineRef.current) dayTileEngineRef.current.maxLevel = inMaxZoom ? 14 : 13;
-        (nightTileEngineRef.current as any).maxLevel = inMaxZoom ? 8 : 7;
+        // Gate high-res tiles using pitch-independent altitude.
+        // In close mode: closeModeState.altitude is pitch-independent (the camera's
+        //   radial position shrinks to ~0 at max pitch, making cameraDistance useless).
+        // In far/2D mode: pointOfView().altitude is authoritative — no pitch, so it
+        //   equals cameraDistance. Previously used Infinity here, which let level 12
+        //   load at altitude ~0.004 (before clouds) with no gate at all.
+        const alt = inCloseModeRef.current
+          ? (closeModeState.current?.altitude ?? Infinity)
+          : (globeEl.current?.pointOfView().altitude ?? Infinity);
+        const dayMax  = alt <= 0.0015 ? 14 : alt <= 0.002 ? 13 : 11;
+        const nightMax = alt <= 0.0015 ?  8 : alt <= 0.002 ?  7 :  5;
+        if (dayTileEngineRef.current) {
+          dayTileEngineRef.current.maxLevel = dayMax;
+          if (dayTileEngineRef.current.level > dayMax) {
+            dayTileEngineRef.current.level = dayMax;
+          }
+        }
+        if (nightTileEngineRef.current) {
+          (nightTileEngineRef.current as any).maxLevel = nightMax;
+          if ((nightTileEngineRef.current as any).level > nightMax) {
+            (nightTileEngineRef.current as any).level = nightMax;
+          }
+        }
       }
 
       if (dayTileEngineRef.current) {

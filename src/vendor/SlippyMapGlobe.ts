@@ -57,6 +57,12 @@ export interface SlippyMapOptions {
   onTileLoaded?: (tile: Mesh) => void;
   /** Render order assigned to every tile mesh as it's created. Defaults to 0. */
   tileRenderOrder?: number;
+  /**
+   * Hysteresis fraction applied specifically to the transition into/out of maxLevel.
+   * A larger value (e.g. 0.5) means the camera must zoom much deeper before max-level
+   * tiles load, and zoom out further before they drop. Defaults to LEVEL_HYSTERESIS (0.05).
+   */
+  maxLevelHysteresis?: number;
 }
 
 interface TileMeta {
@@ -263,6 +269,8 @@ export default class SlippyMapGlobe extends Group {
   minLevel: number;
   maxLevel: number;
   thresholds: number[] = [...new Array(30)].map((_, idx) => 8 / Math.pow(2, idx));
+  /** Hysteresis fraction for the maxLevel transition. See SlippyMapOptions.maxLevelHysteresis. */
+  maxLevelHysteresis = 0.05;
   /** Resolution of tile sphere subdivision in degrees. */
   curvatureResolution = 5;
   /** Tile shrink factor (0–1) — used to leave gaps between tiles for debugging. */
@@ -284,6 +292,7 @@ export default class SlippyMapGlobe extends Group {
   #lastPovY = NaN;
   #lastPovZ = NaN;
   #lastFetchAt = 0;
+  #lastTileLoadedAt = 0;
   #frustumReady = false;
 
   constructor(radius: number, opts: SlippyMapOptions = {}) {
@@ -297,8 +306,10 @@ export default class SlippyMapGlobe extends Group {
       applyTexture = defaultApplyTexture,
       onTileLoaded,
       tileRenderOrder = 0,
+      maxLevelHysteresis = 0.05,
     } = opts;
 
+    this.maxLevelHysteresis = maxLevelHysteresis;
     this.#radius = radius;
     this.#isMercator = mercatorProjection;
     this.#materialFactory = materialFactory;
@@ -342,7 +353,10 @@ export default class SlippyMapGlobe extends Group {
     if (level === prevLevel || prevLevel === undefined) return;
 
     if (prevLevel > level) {
-      for (let l = level + 1; l <= this.maxLevel; l++) {
+      // Use prevLevel as the upper bound, not maxLevel: if maxLevel was reduced before
+      // this setter fires, the loop would go from level+1 to the new lower maxLevel
+      // and never reach tiles that exist at the old (higher) levels.
+      for (let l = level + 1; l <= Math.max(this.maxLevel, prevLevel); l++) {
         this.#tilesMeta[l]?.forEach((d) => {
           d.controller?.abort();
           if (d.obj) {
@@ -430,9 +444,14 @@ export default class SlippyMapGlobe extends Group {
           // The boundary lives at thresholds[curLevel] (zoom in) or thresholds[rawLevel] (zoom out).
           const boundaryIdx = isZoomingIn ? curLevel : rawLevel;
           const boundary = this.thresholds[boundaryIdx] ?? 0;
+          // Max-level transitions use a wider gate so those tiles only load at the
+          // very closest zoom and drop away on any deliberate zoom-out.
+          const hysteresis = (rawLevel === this.maxLevel || curLevel === this.maxLevel)
+            ? this.maxLevelHysteresis
+            : LEVEL_HYSTERESIS;
           const shouldSwitch = isZoomingIn
-            ? cameraDistance < boundary * (1 - LEVEL_HYSTERESIS)
-            : cameraDistance > boundary * (1 + LEVEL_HYSTERESIS);
+            ? cameraDistance < boundary * (1 - hysteresis)
+            : cameraDistance > boundary * (1 + hysteresis);
           if (!shouldSwitch) targetLevel = curLevel;
         }
         this.level = targetLevel;
@@ -472,6 +491,15 @@ export default class SlippyMapGlobe extends Group {
     }
     if (count > 0) this.#fetchNeededTiles(true);
     return count;
+  }
+
+  resetBackoff(): void {
+    if (this.#level === undefined || !this.#tilesMeta[this.#level]) return;
+    for (const d of this.#tilesMeta[this.#level]) {
+      delete d.failedAt;
+      delete d.failCount;
+    }
+    this.#fetchNeededTiles(true);
   }
 
   #buildMetaLevel(level: number): void {
@@ -610,6 +638,20 @@ export default class SlippyMapGlobe extends Group {
       candidates.sort((a, b) => (b._sortDot ?? 0) - (a._sortDot ?? 0));
     }
 
+    // Stuck-state recovery: if we have slots but zero candidates, check whether
+    // all unloaded tiles are simply in backoff (not genuinely done). If so and
+    // nothing has loaded in 20s, reset all backoffs and retry immediately.
+    const STUCK_TIMEOUT_MS = 20_000;
+    if (slots > 0 && candidates.length === 0) {
+      const hasBackoffedTiles = tiles.some(
+        (d) => !d.loading && !(d.obj && d.obj.parent) && d.failedAt !== undefined,
+      );
+      if (hasBackoffedTiles && performance.now() - this.#lastTileLoadedAt > STUCK_TIMEOUT_MS) {
+        this.resetBackoff();
+        return;
+      }
+    }
+
     candidates.slice(0, slots)
       .forEach((d) => {
         const { x, y, lng, lat, latLen } = d;
@@ -656,7 +698,21 @@ export default class SlippyMapGlobe extends Group {
         d.loading = true;
         const ctrl = new AbortController();
         d.controller = ctrl;
-        const timeoutId = setTimeout(() => ctrl.abort(), 15_000);
+        const timeoutId = setTimeout(() => {
+          ctrl.abort();
+          // createImageBitmap is not abortable. If d.loading is still set 2s after
+          // the abort, the bitmap decode is hung — clean up so this tile can be retried.
+          setTimeout(() => {
+            if (d.loading && d.controller === ctrl) {
+              if (d.obj) { deallocate(d.obj); delete d.obj; }
+              d.loading = false;
+              d.failedAt = performance.now();
+              d.failCount = (d.failCount ?? 0) + 1;
+              delete d.controller;
+              this.#fetchNeededTiles();
+            }
+          }, 2_000);
+        }, 15_000);
         const url = this.tileUrl!(x, y, this.#level!);
         const capturedLevel = this.#level!;
 
@@ -686,6 +742,7 @@ export default class SlippyMapGlobe extends Group {
               if (!d.obj.userData) d.obj.userData = {};
               (d.obj.userData as any).__lastVisibleAt = Date.now();
               this.add(d.obj);
+              this.#lastTileLoadedAt = performance.now();
               this.#onTileLoaded?.(d.obj);
             }
             d.loading = false;
