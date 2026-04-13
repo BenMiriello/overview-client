@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff, Info } from 'lucide-react';
+import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff, Info, Zap, Thermometer } from 'lucide-react';
 import { ConnectionStatus } from '../services/dataStreams/hooks';
 import { LightningLayer } from '../layers';
 import './GlobeControls.css';
@@ -23,6 +23,10 @@ interface GlobeControlsProps {
   onToggleViewTarget?: () => void;
   cloudsEnabled?: boolean;
   onToggleClouds?: () => void;
+  lightningEnabled?: boolean;
+  onToggleLightning?: () => void;
+  temperatureEnabled?: boolean;
+  onToggleTemperature?: () => void;
   connectionStatus?: ConnectionStatus;
   lastUpdate?: string;
   lightningLayer?: LightningLayer | null;
@@ -61,6 +65,10 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   onToggleViewTarget,
   cloudsEnabled = true,
   onToggleClouds,
+  lightningEnabled = true,
+  onToggleLightning,
+  temperatureEnabled = false,
+  onToggleTemperature,
   connectionStatus,
   lastUpdate,
   lightningLayer,
@@ -72,7 +80,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   const hotspotClass = [
     'globe-ctrl-btn',
     'hotspot-btn',
-    isMoonView || !hasData ? 'inactive' : '',
+    isMoonView || !hasData || !lightningEnabled ? 'inactive' : '',
     !isMoonView && hasData && isViewingHotspot ? 'viewing' : '',
     !isMoonView && hasData && hasNewHotspot ? 'new-hotspot' : '',
   ].filter(Boolean).join(' ');
@@ -113,6 +121,22 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         tooltip={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
       >
         {cloudsEnabled ? <Cloud size={16} /> : <CloudOff size={16} />}
+      </CtrlBtn>
+      <CtrlBtn
+        className={`globe-ctrl-btn ${lightningEnabled ? 'active' : ''}`}
+        onClick={onToggleLightning}
+        ariaLabel={lightningEnabled ? 'Hide lightning' : 'Show lightning'}
+        tooltip={lightningEnabled ? 'Hide lightning' : 'Show lightning'}
+      >
+        <Zap size={16} />
+      </CtrlBtn>
+      <CtrlBtn
+        className={`globe-ctrl-btn ${temperatureEnabled ? 'active' : ''}`}
+        onClick={onToggleTemperature}
+        ariaLabel={temperatureEnabled ? 'Hide temperature' : 'Show temperature'}
+        tooltip={temperatureEnabled ? 'Hide temperature overlay' : 'Show temperature overlay'}
+      >
+        <Thermometer size={16} />
       </CtrlBtn>
       <CtrlBtn
         className={hotspotClass}

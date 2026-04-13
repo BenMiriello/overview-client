@@ -58,6 +58,7 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
   }
 
   addData(strike: LightningStrike): void {
+    if (!this.visible) return;
     const altitude = this.getCameraAltitude();
 
     // Very far (moon): skip everything — markers would be invisible clutter
@@ -391,10 +392,10 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
 
   hide(): void {
     super.hide();
-
-    // Immediately terminate all visible lightning bolt effects when hiding the layer
-    if (!getConfig<boolean>('layers.lightning.showLightningBolt')) {
-      this.clearLightningBoltEffects();
-    }
+    this.clearLightningBoltEffects();
+    this.markerEffects.forEach(effect => effect.terminateImmediately());
+    this.markerEffects.clear();
+    this.pendingMarkers.clear();
+    this.activeEffects = [];
   }
 }

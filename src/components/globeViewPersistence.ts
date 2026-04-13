@@ -35,6 +35,8 @@ export interface StoredView {
   is3D: boolean;
   isOrbiting: boolean;
   cloudsEnabled?: boolean;
+  lightningEnabled?: boolean;
+  temperatureEnabled?: boolean;
   mode: 'far' | 'close' | 'moon' | 'moonClose';
   far?: FarSnapshot;
   close?: CloseSnapshot;
