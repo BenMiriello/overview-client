@@ -521,19 +521,24 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     const tmpMoonPos = new THREE.Vector3();
     const tmpSunPos = new THREE.Vector3();
     const tmpRayDir = new THREE.Vector3();
+    const tmpOccOffset = new THREE.Vector3();
+    const ORIGIN = new THREE.Vector3(0, 0, 0);
 
     // Returns true if the segment from `camPos` to `sunPos` passes through a
-    // sphere at the origin with radius `EARTH_R`. Standard ray-sphere
-    // intersection: solve |camPos + t*dir|^2 = R^2 for t in (0, |sunPos-camPos|).
-    // Used as the close-mode fallback when the planar disk-overlap formula
-    // breaks down (Earth subtends a large angle of the view).
-    const sunOccludedByEarth = (camPos: THREE.Vector3, sunPos: THREE.Vector3): boolean => {
+    // sphere at `occluderCenter` with radius `occluderR`. Standard ray-sphere
+    // intersection: solve |P + t*dir|^2 = R^2 for t in (0, |sunPos-camPos|),
+    // where P = camPos - occluderCenter.
+    const raySphereOccludes = (
+      camPos: THREE.Vector3, sunPos: THREE.Vector3,
+      occluderCenter: THREE.Vector3, occluderR: number,
+    ): boolean => {
       tmpRayDir.subVectors(sunPos, camPos);
       const dist = tmpRayDir.length();
       if (dist === 0) return false;
       tmpRayDir.divideScalar(dist);
-      const b = camPos.dot(tmpRayDir);
-      const c = camPos.lengthSq() - EARTH_R * EARTH_R;
+      tmpOccOffset.subVectors(camPos, occluderCenter);
+      const b = tmpOccOffset.dot(tmpRayDir);
+      const c = tmpOccOffset.lengthSq() - occluderR * occluderR;
       const disc = b * b - c;
       if (disc < 0) return false;
       const sq = Math.sqrt(disc);
@@ -543,20 +548,25 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     };
 
     // Continuous fraction in [0, 1] of how much of the sun's photosphere disk
-    // is covered by Earth from the camera's POV. Both the corona halo opacity
-    // and the star-fade contribution lerp on this single value, since both
-    // visual responses correspond to the same physical event (the bright
-    // photosphere being progressively eaten by Earth's limb).
+    // is covered by a spherical occluder from the camera's POV. Used for both
+    // Earth and Moon occlusion — the corona halo opacity and star-fade
+    // contribution both lerp on this value.
     //
-    // Math: model sun and Earth as angular disks seen from the camera and
+    // Math: model sun and occluder as angular disks seen from the camera and
     // compute their planar lens-area intersection in angular space. This is
-    // accurate for `earthAngularR < ~30°`; above that the spherical-cap
+    // accurate for `occluderAngularR < ~30°`; above that the spherical-cap
     // curvature dominates and we fall back to the binary ray-sphere test.
-    const MAX_PLANAR_EARTH_ANGLE = Math.PI / 6; // 30°
+    const MAX_PLANAR_OCCLUDER_ANGLE = Math.PI / 6; // 30°
     const SUN_OCCLUSION_RADIUS = SUN_CORE_SCALE / 2;
-    const sunOccludedFraction = (camPos: THREE.Vector3, sunPos: THREE.Vector3): number => {
-      const distEarth = camPos.length();
-      if (distEarth <= EARTH_R * 1.00001) return 0;
+    const computeSunOcclusion = (
+      camPos: THREE.Vector3, sunPos: THREE.Vector3,
+      occluderCenter: THREE.Vector3, occluderR: number,
+    ): number => {
+      const toOccX = occluderCenter.x - camPos.x;
+      const toOccY = occluderCenter.y - camPos.y;
+      const toOccZ = occluderCenter.z - camPos.z;
+      const distOcc = Math.sqrt(toOccX * toOccX + toOccY * toOccY + toOccZ * toOccZ);
+      if (distOcc <= occluderR * 1.00001) return 0;
 
       const toSunX = sunPos.x - camPos.x;
       const toSunY = sunPos.y - camPos.y;
@@ -564,37 +574,36 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const distSun = Math.sqrt(toSunX * toSunX + toSunY * toSunY + toSunZ * toSunZ);
       if (distSun === 0) return 0;
 
-      // Earth behind camera relative to sun direction → cannot occlude.
-      const toEarthDotSunDir = (-camPos.x) * toSunX + (-camPos.y) * toSunY + (-camPos.z) * toSunZ;
-      if (toEarthDotSunDir <= 0) return 0;
+      // Occluder behind camera relative to sun direction -> cannot occlude.
+      const toOccDotSunDir = toOccX * toSunX + toOccY * toSunY + toOccZ * toSunZ;
+      if (toOccDotSunDir <= 0) return 0;
 
-      const sinEarth = THREE.MathUtils.clamp(EARTH_R / distEarth, 0, 0.9999);
-      const earthAngularR = Math.asin(sinEarth);
+      const sinOcc = THREE.MathUtils.clamp(occluderR / distOcc, 0, 0.9999);
+      const occAngularR = Math.asin(sinOcc);
 
-      // Close camera: planar formula breaks down. Fall back to binary.
-      if (earthAngularR > MAX_PLANAR_EARTH_ANGLE) {
-        return sunOccludedByEarth(camPos, sunPos) ? 1 : 0;
+      if (occAngularR > MAX_PLANAR_OCCLUDER_ANGLE) {
+        return raySphereOccludes(camPos, sunPos, occluderCenter, occluderR) ? 1 : 0;
       }
 
       const sunAngularR = Math.atan(SUN_OCCLUSION_RADIUS / distSun);
 
-      // Angular separation between camera→Earth and camera→sun directions.
+      // Angular separation between camera->occluder and camera->sun directions.
       const cosSep = THREE.MathUtils.clamp(
-        (-camPos.x * toSunX + -camPos.y * toSunY + -camPos.z * toSunZ) / (distEarth * distSun),
+        (toOccX * toSunX + toOccY * toSunY + toOccZ * toSunZ) / (distOcc * distSun),
         -1,
         1,
       );
       const sep = Math.acos(cosSep);
 
-      if (sep >= sunAngularR + earthAngularR) return 0;
-      if (sep + sunAngularR <= earthAngularR) return 1;
-      if (sep + earthAngularR <= sunAngularR) {
-        const ratio = earthAngularR / sunAngularR;
+      if (sep >= sunAngularR + occAngularR) return 0;
+      if (sep + sunAngularR <= occAngularR) return 1;
+      if (sep + occAngularR <= sunAngularR) {
+        const ratio = occAngularR / sunAngularR;
         return ratio * ratio;
       }
 
       const r1 = sunAngularR;
-      const r2 = earthAngularR;
+      const r2 = occAngularR;
       const d = sep;
       const a = THREE.MathUtils.clamp((d * d + r1 * r1 - r2 * r2) / (2 * d * r1), -1, 1);
       const b = THREE.MathUtils.clamp((d * d + r2 * r2 - r1 * r1) / (2 * d * r2), -1, 1);
@@ -897,7 +906,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       perfSpan('sunHalo', () => {
         tmpCamPos.copy(camForSun.position);
         tmpSunPos.copy(sunGroup.position);
-        sunOcclFraction = sunOccludedFraction(tmpCamPos, tmpSunPos);
+        tmpMoonPos.copy(moonMesh.position);
+        const earthOccl = computeSunOcclusion(tmpCamPos, tmpSunPos, ORIGIN, EARTH_R);
+        const moonOccl = computeSunOcclusion(tmpCamPos, tmpSunPos, tmpMoonPos, MOON_R_SCENE);
+        sunOcclFraction = Math.min(1, earthOccl + moonOccl);
         updateSunHalo(sunGroup, sunOcclFraction, smoothedStarVisibility.current);
         updateAtmosphereCamera(atmosphereMesh, camForSun);
       });
