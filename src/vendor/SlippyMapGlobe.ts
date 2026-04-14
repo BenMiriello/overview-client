@@ -353,10 +353,11 @@ export default class SlippyMapGlobe extends Group {
     if (level === prevLevel || prevLevel === undefined) return;
 
     if (prevLevel > level) {
-      // Use prevLevel as the upper bound, not maxLevel: if maxLevel was reduced before
-      // this setter fires, the loop would go from level+1 to the new lower maxLevel
-      // and never reach tiles that exist at the old (higher) levels.
-      for (let l = level + 1; l <= Math.max(this.maxLevel, prevLevel); l++) {
+      // Destroy tiles 2+ levels above the new level immediately, but retain
+      // tiles one level above as visual fallback while new-level tiles load.
+      // Retained tiles are culled by cullEngineTiles (invisible when behind
+      // the camera) and evicted by the GlobeComponent 30s eviction timer.
+      for (let l = level + 2; l <= Math.max(this.maxLevel, prevLevel); l++) {
         this.#tilesMeta[l]?.forEach((d) => {
           d.controller?.abort();
           if (d.obj) {
@@ -368,6 +369,12 @@ export default class SlippyMapGlobe extends Group {
           delete d.failCount;
         });
       }
+      // Level+1: abort in-flight fetches but keep loaded tiles as visual fallback
+      this.#tilesMeta[level + 1]?.forEach((d) => {
+        d.controller?.abort();
+        delete d.failedAt;
+        delete d.failCount;
+      });
     }
     this.#fetchNeededTiles(true);
   }
@@ -606,11 +613,33 @@ export default class SlippyMapGlobe extends Group {
     const slots = MAX_CONCURRENT - inFlight;
     if (slots <= 0) return;
 
-    // Camera look direction in local space — used to sort tiles by screen-center proximity.
-    let camLookLocal: Vector3 | null = null;
-    if (this.#camera && (this.#camera as any).quaternion) {
-      const worldLook = _tmpVec3A.set(0, 0, -1).applyQuaternion((this.#camera as any).quaternion);
-      camLookLocal = this.worldToLocal(_tmpVec3B.copy(this.#camera.position).add(worldLook)).normalize();
+    // Sort target: the point on the globe surface where the camera is actually
+    // looking. Found via ray-sphere intersection of the camera look direction.
+    // At close zoom with pitch, this differs significantly from the camera nadir
+    // (the old heuristic used camPos+lookDir which collapsed to the nadir direction).
+    let sortTarget: Vector3 | null = null;
+    if (this.#camera) {
+      const camLocal = this.worldToLocal(_tmpVec3B.copy(this.#camera.position));
+      if ((this.#camera as any).quaternion) {
+        const lookWorld = _tmpVec3A.set(0, 0, -1).applyQuaternion((this.#camera as any).quaternion);
+        // Transform direction to local space (subtract origins to get pure direction)
+        const lookLocal = this.worldToLocal(
+          _tmpVec3C.copy(this.#camera.position).add(lookWorld)
+        ).sub(camLocal).normalize();
+
+        const bCoeff = 2 * camLocal.dot(lookLocal);
+        const cCoeff = camLocal.dot(camLocal) - this.#radius * this.#radius;
+        const disc = bCoeff * bCoeff - 4 * cCoeff;
+        if (disc >= 0) {
+          const t = (-bCoeff - Math.sqrt(disc)) / 2;
+          if (t > 0) {
+            sortTarget = camLocal.clone().addScaledVector(lookLocal, t).normalize();
+          }
+        }
+      }
+      if (!sortTarget) {
+        sortTarget = camLocal.clone().normalize();
+      }
     }
 
     const now = performance.now();
@@ -626,13 +655,13 @@ export default class SlippyMapGlobe extends Group {
       })
       .filter(this.#isInView ?? (() => true));
 
-    if (camLookLocal) {
+    if (sortTarget) {
       for (let i = 0; i < candidates.length; i++) {
         const c = candidates[i].centroid;
         if (!c) { candidates[i]._sortDot = 0; continue; }
         const len = Math.sqrt(c.x * c.x + c.y * c.y + c.z * c.z);
         candidates[i]._sortDot = len > 0
-          ? (c.x * camLookLocal.x + c.y * camLookLocal.y + c.z * camLookLocal.z) / len
+          ? (c.x * sortTarget.x + c.y * sortTarget.y + c.z * sortTarget.z) / len
           : 0;
       }
       candidates.sort((a, b) => (b._sortDot ?? 0) - (a._sortDot ?? 0));

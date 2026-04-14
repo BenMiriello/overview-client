@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff, Info, Zap, Thermometer } from 'lucide-react';
 import { ConnectionStatus } from '../services/dataStreams/hooks';
 import { LightningLayer } from '../layers';
@@ -78,6 +78,66 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   lightningLayer,
 }) => {
   const [infoVisible, setInfoVisible] = useState(false);
+  const [cloudPanelOpen, setCloudPanelOpen] = useState(false);
+  const cloudOuterRef = useRef<HTMLDivElement>(null);
+  const sliderTrackRef = useRef<HTMLDivElement>(null);
+  const cloudHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cloudDraggingRef = useRef(false);
+
+  const cancelCloudHideTimer = useCallback(() => {
+    if (cloudHideTimerRef.current) {
+      clearTimeout(cloudHideTimerRef.current);
+      cloudHideTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleCloudHide = useCallback(() => {
+    if (cloudDraggingRef.current) return;
+    cancelCloudHideTimer();
+    cloudHideTimerRef.current = setTimeout(() => {
+      setCloudPanelOpen(false);
+      cloudHideTimerRef.current = null;
+    }, 500);
+  }, [cancelCloudHideTimer]);
+
+  const handleCloudBtnEnter = useCallback(() => {
+    cancelCloudHideTimer();
+    setCloudPanelOpen(true);
+  }, [cancelCloudHideTimer]);
+
+  const handleCloudOuterEnter = useCallback(() => {
+    cancelCloudHideTimer();
+  }, [cancelCloudHideTimer]);
+
+  const handleCloudOuterLeave = useCallback(() => {
+    scheduleCloudHide();
+  }, [scheduleCloudHide]);
+
+  const handleSliderInteraction = useCallback((clientY: number) => {
+    const track = sliderTrackRef.current;
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (rect.bottom - clientY) / rect.height));
+    onCloudOpacityChange?.(pct);
+  }, [onCloudOpacityChange]);
+
+  const handleSliderMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    cloudDraggingRef.current = true;
+    handleSliderInteraction(e.clientY);
+    const onMove = (ev: MouseEvent) => handleSliderInteraction(ev.clientY);
+    const onUp = () => {
+      cloudDraggingRef.current = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      if (cloudOuterRef.current && !cloudOuterRef.current.matches(':hover')) {
+        scheduleCloudHide();
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [handleSliderInteraction, scheduleCloudHide]);
+
   const isMoonView = viewTarget === 'moon';
   const hasData = !!hotspot;
 
@@ -118,18 +178,30 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         : <Earth size={16} />
         }
       </CtrlBtn>
-      <div className="cloud-ctrl-outer">
+      <div
+        className={`cloud-ctrl-outer${cloudPanelOpen ? ' panel-open' : ''}`}
+        ref={cloudOuterRef}
+        onMouseEnter={handleCloudOuterEnter}
+        onMouseLeave={handleCloudOuterLeave}
+      >
         <div className="cloud-opacity-panel">
           <div className="cloud-opacity-row">
-            <input
-              type="range"
-              className="cloud-opacity-slider"
-              min={0}
-              max={100}
-              value={Math.round(cloudOpacity * 100)}
-              onChange={e => onCloudOpacityChange?.(Number(e.target.value) / 100)}
-              style={{ '--cloud-opacity': `${Math.round(cloudOpacity * 100)}%` } as React.CSSProperties}
-            />
+            <div className="cloud-slider-wrap">
+              <div
+                className="cloud-slider-track"
+                ref={sliderTrackRef}
+                onMouseDown={handleSliderMouseDown}
+              >
+                <div
+                  className="cloud-slider-fill"
+                  style={{ height: `${Math.round(cloudOpacity * 100)}%` }}
+                />
+                <div
+                  className="cloud-slider-thumb"
+                  style={{ bottom: `${Math.round(cloudOpacity * 100)}%` }}
+                />
+              </div>
+            </div>
             <div className="cloud-opacity-side">
               <span className="cloud-opacity-pct">{Math.round(cloudOpacity * 100)}%</span>
               <button className="cloud-visibility-btn" onClick={onToggleClouds}>
@@ -141,6 +213,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         <button
           className={`globe-ctrl-btn ${cloudsEnabled ? 'active' : ''}`}
           onClick={onToggleClouds}
+          onMouseEnter={handleCloudBtnEnter}
           aria-label={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
         >
           {cloudsEnabled ? <Cloud size={16} /> : <CloudOff size={16} />}

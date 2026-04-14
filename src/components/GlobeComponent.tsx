@@ -173,15 +173,18 @@ function applyHorizonTilePovs(
     return synth;
   };
 
-  // Near-ground ray: covers the lower screen portion (tiles closer to directly below camera).
+  // Center first — tiles at the actual look-at point are highest priority.
+  // Each updatePov can consume up to 16 concurrent fetch slots, so order
+  // determines which tiles get fetched first when slots are scarce.
+  const synthCenter = buildSynth(lookDir);
+  if (synthCenter) engine.updatePov(synthCenter, true);
+
+  // Near-ground: covers the lower screen portion (tiles closer to directly below camera).
   const nearDir = lookDir.clone().applyAxisAngle(right, -fovHalf * 0.7);
   const synthNear = buildSynth(nearDir);
   if (synthNear) engine.updatePov(synthNear, true);
 
-  const synthCenter = buildSynth(lookDir);
-  if (synthCenter) engine.updatePov(synthCenter, true);
-
-  // Horizon ray: covers the far zone (tiles toward the visible horizon).
+  // Horizon last — lowest visual priority.
   const horizonDir = lookDir.clone().applyAxisAngle(right, fovHalf * 0.8);
   const synthHorizon = buildSynth(horizonDir);
   if (synthHorizon) engine.updatePov(synthHorizon, true);
@@ -715,8 +718,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       if (cancelled || !globeEl.current) return;
       try {
 
-      if (globeBaseRef.current) globeBaseRef.current.visible = false;
-
       const now = new Date();
       perfSpan('astro', () => {
         updateSunDirection(now);
@@ -872,8 +873,15 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       if (evictNow - lastEvictAt > EVICT_INTERVAL_MS) {
         lastEvictAt = evictNow;
         perfSpan('evict', () => {
-          const pred = (m: THREE.Mesh) =>
-            !m.visible && evictNow - ((m.userData as any).__lastVisibleAt ?? 0) > EVICT_AGE_MS;
+          const FALLBACK_FLOOR_LEVEL = 3;
+          const pred = (m: THREE.Mesh) => {
+            // Never evict low-level tiles — they serve as essential visual
+            // fallback during level transitions. polygonOffsetFactor is set
+            // to -level at tile creation, so -factor recovers the level.
+            const offsetFactor = (m.material as any)?.polygonOffsetFactor;
+            if (offsetFactor !== undefined && -offsetFactor <= FALLBACK_FLOOR_LEVEL) return false;
+            return !m.visible && evictNow - ((m.userData as any).__lastVisibleAt ?? 0) > EVICT_AGE_MS;
+          };
           if (dayTileEngineRef.current) dayTileEngineRef.current.evictTiles(pred);
           nightEngine.evictTiles(pred);
           if (moonMeshRef.current) {
@@ -1039,20 +1047,17 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     controls.domElement.addEventListener('touchstart', stopIntroAnimation);
 
     // Replace the npm tile engine inside react-globe.gl's globe group with our
-    // vendored engine, and hide the base globe mesh (blue marble). The npm engine
-    // worked the same way: globeObj hidden, tiles are the only visible surface,
-    // with a black back layer at 0.99*radius for sub-pixel gap coverage.
-    // Two surfaces at the same radius = z-fighting; one surface = no z-fighting.
+    // vendored engine. The base globe mesh (blue marble) stays visible as a
+    // last-resort fallback during initial load / level transitions. Tiles use
+    // polygonOffset to render above it; the 0.999 scale nudges it slightly
+    // inward to prevent z-fighting at tile edges.
     const scene = globeEl.current.scene() as any;
     if (scene) {
       scene.traverse((obj: any) => {
         if (obj.__globeObjType === 'globe') {
-          // Hide the base globe mesh — vendored tiles replace it entirely.
-          // three-globe resets globeObj.visible = true on every prop update, so we
-          // also store the ref for per-frame re-hiding in tick().
           for (const child of [...obj.children]) {
             if (child.isMesh) {
-              child.visible = false;
+              child.scale.setScalar(0.999);
               globeBaseRef.current = child;
             }
           }
