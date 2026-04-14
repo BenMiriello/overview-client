@@ -5,7 +5,7 @@ import { GlobeLayerManager } from '../managers';
 import { easeInOutCubicShifted } from '../utils';
 import { updateSunDirection, patchNightTileMaterial, createDayTileEngine, createNightTileEngine, sharedNightUniforms } from '../services/dayNightMaterial';
 import { createMoonMesh, updateMoonPosition, updateMoonOrientation, MoonGroup } from '../services/moonMesh';
-import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE } from '../services/sunMesh';
+import { createSunGroup, updateSunPosition, updateSunHalo, disposeSunGroup, SUN_CORE_SCALE, SUN_HALO_SCALE } from '../services/sunMesh';
 import { createAtmosphereMesh, updateAtmosphereCamera, disposeAtmosphereMesh } from '../services/atmosphereMesh';
 import { MOON_RADIUS_SCENE, getSiderealTimeHours } from '../services/astronomy';
 import { LAYERS } from '../services/renderLayers';
@@ -930,11 +930,11 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           const sunViewDot = toSun.dot(viewDir);
           const halfFovCos = Math.cos(fovRad / 2);
           // Smooth over ±15° around the frustum edge — no hard snap.
-          const sunInView = THREE.MathUtils.smoothstep(sunViewDot, halfFovCos - 0.26, halfFovCos + 0.26);
+          const sunInView = THREE.MathUtils.smoothstep(sunViewDot, halfFovCos - 0.26, Math.min(halfFovCos + 0.26, 1.0));
           let sunBright = 0;
           if (sunInView > 0) {
             const sunDist = tmpCamPos.distanceTo(tmpSunPos);
-            const sunAngularR = Math.atan((SUN_CORE_SCALE / 2) / sunDist);
+            const sunAngularR = Math.atan((SUN_HALO_SCALE / 2) / sunDist);
             const sunHeightFraction = Math.min(1, (2 * sunAngularR) / fovRad);
             sunBright = sunHeightFraction * sunInView * SUN_BRIGHTNESS_SCALE * (1 - sunOcclFraction);
           }
