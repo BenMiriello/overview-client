@@ -9,7 +9,7 @@ export const CloudsConfig = {
   fallbackImagePath: '/clouds-fallback.png',
   refreshIntervalMs: 30 * 60 * 1000,
   detailStrength: 0.10,
-  densityLo: 0.05,
+  densityLo: 0.3,
   bumpStrength: 2.5,
   reliefAmount: 1.2,
 };
