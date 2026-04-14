@@ -117,13 +117,17 @@ export const cloudFragmentShader = /* glsl */ `
       if (dot(n, toCamera) < -0.05) discard;
     }
 
-    // Linear floor remap. We deliberately do NOT use smoothstep here:
-    // a sigmoid saturates the dense end, producing a visible contour line
-    // wherever the source crosses the upper edge AND killing relief
-    // gradients in plateau regions. Linear remap preserves the source's
-    // natural gradient across the whole range.
-    float density = sampleDensity(vUv);
-    density = clamp((density - uDensityLo) / (1.0 - uDensityLo), 0.0, 1.0);
+    // Equirectangular cloud texture is aligned 90° east of the globe surface UVs.
+    vec2 cloudUV = vec2(vUv.x + 0.25, vUv.y);
+
+    // Linear floor remap. We deliberately do NOT use smoothstep on the dense end:
+    // a sigmoid there saturates plateaus and kills relief gradients. Linear remap
+    // preserves the source's natural gradient across the whole range.
+    float rawDensity = sampleDensity(cloudUV);
+    float density = clamp((rawDensity - uDensityLo) / (1.0 - uDensityLo), 0.0, 1.0);
+    // Smooth onset at cloud edges: fades from zero over [0, uDensityLo + 0.08] so
+    // the hard contour at the floor threshold becomes a gradual feather.
+    float edgeFactor = smoothstep(0.0, uDensityLo + 0.08, rawDensity);
 
     // Local east/north tangent basis at this fragment, used for the
     // relief gradient.
@@ -136,10 +140,10 @@ export const cloudFragmentShader = /* glsl */ `
     // jagged relief. v=0 is the north pole in three-globe equirectangular
     // convention, so 'north' direction → -dv.
     vec2 stride = uTexelSize * 3.0;
-    float hE = sampleHeight(vUv + vec2(stride.x, 0.0));
-    float hW = sampleHeight(vUv - vec2(stride.x, 0.0));
-    float hN = sampleHeight(vUv - vec2(0.0, stride.y));
-    float hS = sampleHeight(vUv + vec2(0.0, stride.y));
+    float hE = sampleHeight(cloudUV + vec2(stride.x, 0.0));
+    float hW = sampleHeight(cloudUV - vec2(stride.x, 0.0));
+    float hN = sampleHeight(cloudUV - vec2(0.0, stride.y));
+    float hS = sampleHeight(cloudUV + vec2(0.0, stride.y));
 
     float dHdE = (hE - hW);
     float dHdN = (hN - hS);
@@ -187,9 +191,17 @@ export const cloudFragmentShader = /* glsl */ `
     vec3 flashTint = vec3(0.82, 0.9, 1.0);
     color = mix(color, flashTint, clamp(flashGlow * 0.5, 0.0, 0.65));
 
-    // Alpha pulse: sparse cloud fragments gain opacity during flash, creating the glow impression
-    // even on the day side where pure brightness changes are invisible against white.
-    float alpha = density * clamp(uOpacity + flashGlow * 0.4, uOpacity, 0.85);
+    // WISPY_SCALE: opacity of the sparsest clouds relative to the densest.
+    // The smoothstep blend from WISPY_SCALE → 1.0 gives the density response curve:
+    // thin cirrus stays transparent, thick systems go fully opaque.
+    const float WISPY_SCALE = 0.65;
+    float denseBlend = smoothstep(0.4, 0.8, density);
+    float shapedAlpha = edgeFactor * mix(density * WISPY_SCALE, density, denseBlend);
+
+    // uOpacity is a uniform scalar over all clouds. At 1.0 dense clouds reach full
+    // opacity; lower values dim all clouds proportionally without altering the
+    // wispy/dense contrast ratio.
+    float alpha = clamp(shapedAlpha * uOpacity + flashGlow * 0.4 * density, 0.0, 1.0);
     if (alpha < 0.005) discard;
 
     gl_FragColor = vec4(color, alpha);

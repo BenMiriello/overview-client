@@ -116,7 +116,7 @@ export class CloudLayer extends BaseLayer<void> {
       uniforms: {
         uMap:             { value: placeholder },
         uSunDir:          sharedNightUniforms.sunDir,
-        uOpacity:         { value: getConfig<number>('layers.clouds.opacity') ?? 0.55 },
+        uOpacity:         { value: getConfig<number>('layers.clouds.opacity') ?? 1.0 },
         uTime:            { value: 0 },
         uDetailStrength:  { value: getConfig<number>('layers.clouds.detailStrength') ?? 0.10 },
         uDetailFreq:      { value: new THREE.Vector2(64, 32) },
@@ -243,10 +243,7 @@ export class CloudLayer extends BaseLayer<void> {
         cloudAlt = CLOUD_ALT_FAR + (CLOUD_ALT_NEAR - CLOUD_ALT_FAR) * t;
         detailFade = Math.max(0, Math.min(1, (1.0 - cameraAlt) / 0.5));
 
-        // When temperature overlay is on, respect the clouds-off toggle at all altitudes
-        // (normally far-mode forces clouds visible regardless of user toggle).
-        const forcedOn = cameraAlt >= ALT_FAR_POINT && !(this.temperatureEnabled && !this.userCloudsEnabled);
-        this.fadeTarget = (forcedOn || this.userCloudsEnabled) ? 1.0 : 0.0;
+        this.fadeTarget = this.userCloudsEnabled ? 1.0 : 0.0;
       } catch { /* globeEl not ready */ }
     }
 
