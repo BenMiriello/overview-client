@@ -257,6 +257,12 @@ export class CloudLayer extends BaseLayer<void> {
       }
     }
 
+    // Always sync altitude to config so lightning height tracks zoom even when clouds are off
+    if (Math.abs(cloudAlt - this.lastCloudAlt) > 0.0001) {
+      setConfig('layers.clouds.altitude', cloudAlt);
+      this.lastCloudAlt = cloudAlt;
+    }
+
     // Skip rendering entirely when fully faded out
     if (this.fadeOpacity <= 0) {
       sharedNightUniforms.cloudShadowEnabled.value = 0.0;
@@ -280,11 +286,6 @@ export class CloudLayer extends BaseLayer<void> {
       mat.uniforms.uFlashFalloff.value = cloudFalloff;
       mat.uniforms.uDetailFade.value = detailFade;
       mesh.scale.setScalar(1 + cloudAlt * altMultiplier);
-    }
-
-    if (Math.abs(cloudAlt - this.lastCloudAlt) > 0.0001) {
-      setConfig('layers.clouds.altitude', cloudAlt);
-      this.lastCloudAlt = cloudAlt;
     }
   }
 
