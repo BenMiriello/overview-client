@@ -1,22 +1,22 @@
 # Lightning Client
 
-A minimalistic React client for displaying real-time lightning strike data.
+View live at [overview-effect.world](https://overview-effect.world)
 
-Currently only displays data in a table as it arrives.
+A React client for displaying real-time lightning strike data on a 3d globe.
 
-Future versions will display data in a 3d globe visualization.
+Built out of a love for understanding, modeling, and visualizing natural phenomena.
 
-## How It Works
+The primary globe view includes
+- Real-time in-position simulated lightning strikes
+- Lightning hotspot detection and navigation
+- Real-time clouds
+- Day and night surfaces with realistic earth and sun positions.
+- Sunset visualization at terminator (day-night boundary)
+- Real-time surface temperature visualizer
+- View the moon close up, simulated in its current position relative to sun and earth.
 
-1. Connects to the Lightning Server via WebSocket
-2. Receives lightning strike data in real-time
-3. Displays strikes in a simple table format
-
-## Usage
-
-```
-npm install
-npm run dev
-```
-
-The client will connect to the server running on localhost:3001.
+A lightning showcase allows closer inspection and interaction with the lightning simulation
+- Control time to watch all phases play out
+- Visualize growth and evolution of ground and cloud charge buildup
+- Change atmospheric conditions such as wind and moisture
+- Change detail and more
