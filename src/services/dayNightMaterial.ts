@@ -10,6 +10,7 @@ export const sharedNightUniforms = {
   sunDir: { value: new THREE.Vector3(0, 1, 0) },
   cloudTex: { value: null as THREE.Texture | null },
   cloudShadowEnabled: { value: 1.0 },
+  cloudDensityLo: { value: 0.30 },
   flashIntensity: { value: 0 },
   flashWorldPos: { value: new THREE.Vector3() },
   flashFalloff: { value: 15.0 },
@@ -55,6 +56,7 @@ export function patchTileMaterial(material: THREE.Material): void {
     shader.uniforms.sunDir = sharedNightUniforms.sunDir;
     shader.uniforms.cloudTex = sharedNightUniforms.cloudTex;
     shader.uniforms.cloudShadowEnabled = sharedNightUniforms.cloudShadowEnabled;
+    shader.uniforms.cloudDensityLo = sharedNightUniforms.cloudDensityLo;
     shader.uniforms.flashIntensity = sharedNightUniforms.flashIntensity;
     shader.uniforms.flashWorldPos = sharedNightUniforms.flashWorldPos;
     shader.uniforms.flashFalloff = sharedNightUniforms.flashFalloff;
@@ -72,6 +74,7 @@ export function patchTileMaterial(material: THREE.Material): void {
       uniform vec3 sunDir;
       uniform sampler2D cloudTex;
       uniform float cloudShadowEnabled;
+      uniform float cloudDensityLo;
       uniform float flashIntensity;
       uniform vec3 flashWorldPos;
       uniform float flashFalloff;
@@ -91,8 +94,10 @@ export function patchTileMaterial(material: THREE.Material): void {
 
         vec3 nPos = normalize(vWorldPosition);
         float lat = asin(clamp(nPos.y, -1.0, 1.0));
+        // Cloud texture is offset 90° east (0.25 in UV) relative to the globe sphere UVs —
+        // match the same shift applied in the cloud shell fragment shader.
         vec2 cloudUv = vec2(
-          fract(atan(nPos.z, -nPos.x) / 6.2831853),
+          fract(atan(nPos.z, -nPos.x) / 6.2831853 + 0.25),
           0.5 + lat / 3.1415927
         );
 
@@ -105,7 +110,8 @@ export function patchTileMaterial(material: THREE.Material): void {
         float sunN = dot(sunDir, cNorth);
         float sunElev = max(0.1, dot(nPos, sunDir));
         vec2 sunUvOff = vec2(sunE / (cosLat * 6.2831853), sunN / 3.1415927) * (0.012 / sunElev);
-        float cloudAlpha = texture2D(cloudTex, cloudUv + sunUvOff).a;
+        float cloudRaw = texture2D(cloudTex, cloudUv + sunUvOff).a;
+        float cloudAlpha = clamp((cloudRaw - cloudDensityLo) / (1.0 - cloudDensityLo), 0.0, 1.0);
         float shadowDarken = cloudAlpha * 0.7 * (1.0 - nightFactor) * cloudShadowEnabled;
         diffuseColor.rgb *= (1.0 - shadowDarken);
 
@@ -149,7 +155,7 @@ export function patchTileMaterial(material: THREE.Material): void {
   };
 
   const matType = (material as any).isMeshPhongMaterial ? 'phong' : 'lambert';
-  material.customProgramCacheKey = () => `daynight-day-${matType}-v22`;
+  material.customProgramCacheKey = () => `daynight-day-${matType}-v23`;
   if (!material.userData) material.userData = {};
   material.userData[DAY_PATCH_FLAG] = true;
   material.needsUpdate = true;

@@ -286,7 +286,9 @@ export class CloudLayer extends BaseLayer<void> {
       (mat.uniforms.uFlashWorldPos.value as THREE.Vector3).copy(this.flashWorldPos);
       mat.uniforms.uFlashFalloff.value = cloudFalloff;
       mat.uniforms.uDetailFade.value = detailFade;
-      mat.uniforms.uDensityLo.value = getConfig<number>('layers.clouds.densityLo') ?? 0.05;
+      const densityLo = getConfig<number>('layers.clouds.densityLo') ?? 0.05;
+      mat.uniforms.uDensityLo.value = densityLo;
+      sharedNightUniforms.cloudDensityLo.value = densityLo;
       mesh.scale.setScalar(1 + cloudAlt * altMultiplier);
     }
   }

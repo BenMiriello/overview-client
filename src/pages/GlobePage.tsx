@@ -63,7 +63,7 @@ const GlobePage = () => {
   });
   const cloudOpacityRef = useRef(cloudOpacity);
   cloudOpacityRef.current = cloudOpacity;
-  const prevCloudOpacityRef = useRef<number>(cloudOpacity > 0.1 ? cloudOpacity : 1.0);
+  const prevCloudOpacityRef = useRef<number>(cloudOpacity);
   const [lightningEnabled, setLightningEnabled] = useState(() => restoredView?.lightningEnabled ?? true);
   const [temperatureEnabled, setTemperatureEnabled] = useState(() => restoredView?.temperatureEnabled ?? false);
   const [tempUnit, setTempUnit] = useState<'C' | 'F'>('C');
@@ -172,7 +172,7 @@ const GlobePage = () => {
       const next = !v;
       const cloudLayer = layerManagerRef.current?.getLayer<CloudLayer>('clouds');
       if (next) {
-        const restore = prevCloudOpacityRef.current < 0.1 ? 1.0 : prevCloudOpacityRef.current;
+        const restore = prevCloudOpacityRef.current;
         setCloudOpacity(restore);
         cloudLayer?.setUserOpacity(restore);
       } else {
