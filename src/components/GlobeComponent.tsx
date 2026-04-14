@@ -2488,15 +2488,16 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       const hit = raySphereIntersect(camera.position.clone(), direction, globeRadius);
       if (hit) {
         const { lat, lng } = cartesianToLatLng(hit);
+        canvas.style.cursor = 'crosshair';
         onSurfaceHover({ lat, lng }, e.clientX, e.clientY);
       } else {
+        canvas.style.cursor = '';
         onSurfaceHover(null, 0, 0);
       }
     };
 
-    const handleLeave = () => onSurfaceHover(null, 0, 0);
+    const handleLeave = () => { canvas.style.cursor = ''; onSurfaceHover(null, 0, 0); };
 
-    canvas.style.cursor = 'crosshair';
     canvas.addEventListener('mousemove', handleMove);
     canvas.addEventListener('mouseleave', handleLeave);
     return () => {
