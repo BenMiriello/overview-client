@@ -2,6 +2,8 @@
 
 View live at [overview-effect.world](https://overview-effect.world)
 
+<img width="1052" height="778" alt="overview-effect-screenshot" src="https://github.com/user-attachments/assets/9955a36b-1d6d-431a-b538-613dd1de3e9b" />
+
 A React client for displaying real-time lightning strike data on a 3d globe.
 
 Built out of a love for understanding, modeling, and visualizing natural phenomena.
