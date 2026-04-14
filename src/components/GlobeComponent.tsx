@@ -514,7 +514,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
 
     const EARTH_R = globeRadius;
     const MOON_R_SCENE = MOON_RADIUS_SCENE;
-    const SUN_BRIGHTNESS_SCALE = 4;
+    const SUN_BRIGHTNESS_SCALE = 6;
     const tmpCamPos = new THREE.Vector3();
     const tmpDir = new THREE.Vector3();
     const tmpSunDir = new THREE.Vector3();

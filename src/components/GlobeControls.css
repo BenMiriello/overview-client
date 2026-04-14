@@ -6,7 +6,7 @@
     flex-direction: row;
     align-items: center;
     gap: 8px;
-    z-index: 1000;
+    z-index: 1001;
 }
 
 .globe-controls-info {
@@ -85,28 +85,25 @@
     line-height: 1.4;
     padding: 7px 10px;
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
     width: max-content;
     max-width: 200px;
     white-space: normal;
     text-align: left;
     opacity: 0;
     transition: opacity 0.15s ease;
-}
-
-/* Flame button sits at left viewport edge — left-align to avoid clipping */
-.ctrl-tooltip.left-align {
-    left: 0;
-    transform: none;
+    /* drop-shadow traces the full element shape including the caret pseudo-element,
+       so the outline wraps the whole speech bubble without a seam at the caret join */
+    filter: drop-shadow(0 0 0.5px rgba(255, 255, 255, 0.45))
+            drop-shadow(0 0 1px rgba(255, 255, 255, 0.2));
 }
 
 .ctrl-btn-wrap:hover .ctrl-tooltip {
     opacity: 1;
 }
 
-/* Speech-bubble arrow: outer (border) + inner (fill) pseudo-elements */
-.ctrl-tooltip::before,
-.ctrl-tooltip::after {
+/* Speech-bubble caret: single pseudo-element, fill color only.
+   The border outline comes from the parent's filter: drop-shadow. */
+.ctrl-tooltip::before {
     content: '';
     position: absolute;
     top: 100%;
@@ -115,23 +112,121 @@
     pointer-events: none;
     border-style: solid;
     border-color: transparent;
-}
-
-.ctrl-tooltip::before {
     border-width: 6px;
-    border-top-color: rgba(255, 255, 255, 0.12);
-}
-
-.ctrl-tooltip::after {
-    margin-top: 1px;
-    border-width: 5px;
     border-top-color: rgba(15, 15, 20, 0.88);
 }
 
-/* Left-aligned tooltip: pin arrow to center of the 40px button */
-.ctrl-tooltip.left-align::before,
-.ctrl-tooltip.left-align::after {
+/* First button in the row: pin tooltip to left edge so it doesn't clip off-screen */
+.globe-controls .ctrl-btn-wrap:first-child .ctrl-tooltip {
+    left: 0;
+    transform: none;
+}
+
+/* Pin caret to center of the 40px button when tooltip is left-anchored */
+.globe-controls .ctrl-btn-wrap:first-child .ctrl-tooltip::before {
     left: 20px;
+    transform: none;
+}
+
+/* ── Cloud opacity panel ────────────────────────────────────────────────── */
+
+.cloud-ctrl-outer {
+    position: relative;
+}
+
+.cloud-opacity-panel {
+    position: absolute;
+    bottom: calc(100% + 12px);
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+
+.cloud-ctrl-outer:hover .cloud-opacity-panel {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.cloud-opacity-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0);
+    transition: background 0.25s ease;
+}
+
+.cloud-ctrl-outer:hover .cloud-opacity-row {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.cloud-opacity-slider {
+    writing-mode: vertical-lr;
+    direction: rtl;
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 100px;
+    background: transparent;
+    outline: none;
+    cursor: pointer;
+}
+
+.cloud-opacity-slider::-webkit-slider-runnable-track {
+    width: 4px;
+    border-radius: 2px;
+    background: linear-gradient(
+        to top,
+        rgba(255, 255, 255, 0.75) var(--cloud-opacity),
+        rgba(255, 255, 255, 0.15) var(--cloud-opacity)
+    );
+}
+
+.cloud-opacity-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.9);
+    margin-left: -4.5px;
+    cursor: pointer;
+}
+
+.cloud-opacity-side {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.cloud-opacity-pct {
+    font-size: 11px;
+    font-family: 'Roboto', sans-serif;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.82);
+    white-space: nowrap;
+    line-height: 1;
+}
+
+.cloud-visibility-btn {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 13px;
+    font-family: 'Roboto', sans-serif;
+    font-weight: 500;
+    padding: 0;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.15s ease;
+}
+
+.cloud-ctrl-outer:hover .cloud-visibility-btn {
+    color: #fff;
 }
 
 /* ── Hotspot button ─────────────────────────────────────────────────────── */

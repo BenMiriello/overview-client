@@ -57,10 +57,21 @@ const GlobePage = () => {
   const [isOrbiting, setIsOrbiting] = useState(() => restoredView?.isOrbiting ?? false);
   const [viewTarget, setViewTarget] = useState<'earth' | 'moon'>(() => restoredView?.viewTarget ?? 'earth');
   const [cloudsEnabled, setCloudsEnabled] = useState(() => restoredView?.cloudsEnabled ?? true);
+  const [cloudOpacity, setCloudOpacity] = useState<number>(() => {
+    const stored = localStorage.getItem('lightning-cloud-opacity');
+    return stored ? parseFloat(stored) : 1.0;
+  });
+  const cloudOpacityRef = useRef(cloudOpacity);
+  cloudOpacityRef.current = cloudOpacity;
+  const prevCloudOpacityRef = useRef<number>(cloudOpacity > 0.1 ? cloudOpacity : 1.0);
   const [lightningEnabled, setLightningEnabled] = useState(() => restoredView?.lightningEnabled ?? true);
   const [temperatureEnabled, setTemperatureEnabled] = useState(() => restoredView?.temperatureEnabled ?? false);
   const [tempUnit, setTempUnit] = useState<'C' | 'F'>('C');
   const cursorRef = useRef<TemperatureCursorHandle>(null);
+
+  useEffect(() => {
+    localStorage.setItem('lightning-cloud-opacity', String(cloudOpacity));
+  }, [cloudOpacity]);
 
   useEffect(() => {
     // Stored view rehydrates the camera directly — skip the intro fetch + animation.
@@ -135,6 +146,7 @@ const GlobePage = () => {
     const cloudLayer = manager.createLayer<CloudLayer>('clouds', 'clouds');
     if (cloudLayer) {
       cloudLayer.setCloudsEnabled(cloudsEnabledRef.current);
+      cloudLayer.setUserOpacity(cloudOpacityRef.current);
       cloudLayer.setTemperatureEnabled(temperatureEnabledRef.current);
     }
     const lightningLayer = manager.createLayer<LightningLayer>('lightning', 'lightning');
@@ -158,9 +170,22 @@ const GlobePage = () => {
   const handleToggleClouds = useCallback(() => {
     setCloudsEnabled(v => {
       const next = !v;
-      layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setCloudsEnabled(next);
+      const cloudLayer = layerManagerRef.current?.getLayer<CloudLayer>('clouds');
+      if (next) {
+        const restore = prevCloudOpacityRef.current < 0.1 ? 1.0 : prevCloudOpacityRef.current;
+        setCloudOpacity(restore);
+        cloudLayer?.setUserOpacity(restore);
+      } else {
+        prevCloudOpacityRef.current = cloudOpacityRef.current;
+      }
+      cloudLayer?.setCloudsEnabled(next);
       return next;
     });
+  }, []);
+
+  const handleCloudOpacityChange = useCallback((opacity: number) => {
+    setCloudOpacity(opacity);
+    layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setUserOpacity(opacity);
   }, []);
 
   const handleToggleLightning = useCallback(() => {
@@ -246,7 +271,9 @@ const GlobePage = () => {
         viewTarget={viewTarget}
         onToggleViewTarget={handleToggleViewTarget}
         cloudsEnabled={cloudsEnabled}
+        cloudOpacity={cloudOpacity}
         onToggleClouds={handleToggleClouds}
+        onCloudOpacityChange={handleCloudOpacityChange}
         lightningEnabled={lightningEnabled}
         onToggleLightning={handleToggleLightning}
         temperatureEnabled={temperatureEnabled}

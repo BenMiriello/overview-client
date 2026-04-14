@@ -9,7 +9,7 @@ const EARTH_RADIUS = 100;
 const CLOUD_ALT_FAR  = 0.03;
 const CLOUD_ALT_NEAR = 0.003;
 const ALT_FAR_POINT  = 1.0;
-const ALT_NEAR_POINT = 0.25;
+const ALT_NEAR_POINT = 0.005;
 
 interface CloudShell {
   mesh: THREE.Mesh;
@@ -36,6 +36,7 @@ export class CloudLayer extends BaseLayer<void> {
   private flashWorldPos = new THREE.Vector3();
   private flashHandler: ((e: Event) => void) | null = null;
   private userCloudsEnabled = true;
+  private userOpacity = 1.0;
   private temperatureEnabled = false;
   private fadeOpacity = 1.0;
   private fadeTarget = 1.0;
@@ -272,15 +273,15 @@ export class CloudLayer extends BaseLayer<void> {
       return;
     }
 
-    const baseOpacity = getConfig<number>('layers.clouds.opacity') ?? 0.55;
+    const baseOpacity = getConfig<number>('layers.clouds.opacity') ?? 1.0;
 
-    sharedNightUniforms.cloudShadowEnabled.value = this.fadeOpacity;
+    sharedNightUniforms.cloudShadowEnabled.value = this.fadeOpacity * this.userOpacity;
     sharedNightUniforms.flashFalloff.value = groundFalloff;
 
     for (const { mesh, altMultiplier } of this.shells) {
       const mat = mesh.material as THREE.ShaderMaterial;
       mat.uniforms.uTime.value = time;
-      mat.uniforms.uOpacity.value = baseOpacity * this.fadeOpacity;
+      mat.uniforms.uOpacity.value = baseOpacity * this.userOpacity * this.fadeOpacity;
       mat.uniforms.uFlashIntensity.value = this.flashIntensity;
       (mat.uniforms.uFlashWorldPos.value as THREE.Vector3).copy(this.flashWorldPos);
       mat.uniforms.uFlashFalloff.value = cloudFalloff;
@@ -292,6 +293,10 @@ export class CloudLayer extends BaseLayer<void> {
   setCloudsEnabled(enabled: boolean): void {
     this.userCloudsEnabled = enabled;
     sharedNightUniforms.cloudShadowEnabled.value = enabled ? 1.0 : 0.0;
+  }
+
+  setUserOpacity(opacity: number): void {
+    this.userOpacity = opacity;
   }
 
   setTemperatureEnabled(enabled: boolean): void {

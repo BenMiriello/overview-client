@@ -22,7 +22,9 @@ interface GlobeControlsProps {
   viewTarget?: 'earth' | 'moon';
   onToggleViewTarget?: () => void;
   cloudsEnabled?: boolean;
+  cloudOpacity?: number;
   onToggleClouds?: () => void;
+  onCloudOpacityChange?: (v: number) => void;
   lightningEnabled?: boolean;
   onToggleLightning?: () => void;
   temperatureEnabled?: boolean;
@@ -64,6 +66,8 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   viewTarget = 'earth',
   onToggleViewTarget,
   cloudsEnabled = true,
+  cloudOpacity = 1,
+  onCloudOpacityChange,
   onToggleClouds,
   lightningEnabled = true,
   onToggleLightning,
@@ -114,14 +118,34 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         : <Earth size={16} />
         }
       </CtrlBtn>
-      <CtrlBtn
-        className={`globe-ctrl-btn ${cloudsEnabled ? 'active' : ''}`}
-        onClick={onToggleClouds}
-        ariaLabel={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
-        tooltip={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
-      >
-        {cloudsEnabled ? <Cloud size={16} /> : <CloudOff size={16} />}
-      </CtrlBtn>
+      <div className="cloud-ctrl-outer">
+        <div className="cloud-opacity-panel">
+          <div className="cloud-opacity-row">
+            <input
+              type="range"
+              className="cloud-opacity-slider"
+              min={0}
+              max={100}
+              value={Math.round(cloudOpacity * 100)}
+              onChange={e => onCloudOpacityChange?.(Number(e.target.value) / 100)}
+              style={{ '--cloud-opacity': `${Math.round(cloudOpacity * 100)}%` } as React.CSSProperties}
+            />
+            <div className="cloud-opacity-side">
+              <span className="cloud-opacity-pct">{Math.round(cloudOpacity * 100)}%</span>
+              <button className="cloud-visibility-btn" onClick={onToggleClouds}>
+                {cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
+              </button>
+            </div>
+          </div>
+        </div>
+        <button
+          className={`globe-ctrl-btn ${cloudsEnabled ? 'active' : ''}`}
+          onClick={onToggleClouds}
+          aria-label={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
+        >
+          {cloudsEnabled ? <Cloud size={16} /> : <CloudOff size={16} />}
+        </button>
+      </div>
       <CtrlBtn
         className={`globe-ctrl-btn ${lightningEnabled ? 'active' : ''}`}
         onClick={onToggleLightning}
@@ -143,7 +167,6 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onGoToHotspot}
         ariaLabel="Go to hotspot"
         tooltip={hotspotTooltip}
-        leftAlignTooltip
       >
         <Flame size={16} />
       </CtrlBtn>
