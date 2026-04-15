@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Play, Pause, Loader2 } from 'lucide-react';
+import { Play, Pause, Loader2, X } from 'lucide-react';
 import './WeatherTimeline.css';
 
 interface FrameInfo {
@@ -15,6 +15,7 @@ interface Props {
   readyFrameIds?: Set<string>;
   onRequestPrefetch?: () => void;
   onPlayingChange?: (playing: boolean) => void;
+  onClose?: () => void;
 }
 
 function formatHour(ts: number): string {
@@ -39,7 +40,7 @@ function formatDate(ts: number): string {
 
 export const WeatherTimeline: React.FC<Props> = ({
   visible, frames, currentFrameId, onFrameChange,
-  readyFrameIds, onRequestPrefetch, onPlayingChange,
+  readyFrameIds, onRequestPrefetch, onPlayingChange, onClose,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -243,6 +244,15 @@ export const WeatherTimeline: React.FC<Props> = ({
       >
         NOW
       </div>
+      {onClose && (
+        <button
+          className="weather-timeline-close"
+          onClick={() => { cancelPlayback(); onClose(); }}
+          aria-label="Close timeline"
+        >
+          <X size={12} />
+        </button>
+      )}
     </div>
   );
 };

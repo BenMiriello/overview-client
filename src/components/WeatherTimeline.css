@@ -153,6 +153,28 @@
   color: #fff;
 }
 
+.weather-timeline-close {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  padding: 0;
+  margin-left: 4px;
+}
+
+.weather-timeline-close:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
 @media (max-width: 600px) {
   .weather-timeline-track-wrap {
     width: 200px;

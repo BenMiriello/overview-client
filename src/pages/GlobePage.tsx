@@ -88,6 +88,17 @@ const GlobePage = () => {
   const [cloudCurrentFrameId, setCloudCurrentFrameId] = useState<string | null>(null);
   const [cloudReadyIds, setCloudReadyIds] = useState<Set<string>>(new Set());
 
+  // History timeline open/close state with localStorage persistence
+  const [tempHistoryOpen, setTempHistoryOpen] = useState(() => localStorage.getItem('lightning-history-temperature') !== 'false');
+  const [precipHistoryOpen, setPrecipHistoryOpen] = useState(() => localStorage.getItem('lightning-history-precipitation') !== 'false');
+  const [windHistoryOpen, setWindHistoryOpen] = useState(() => localStorage.getItem('lightning-history-wind') !== 'false');
+  const [cloudHistoryOpen, setCloudHistoryOpen] = useState(() => localStorage.getItem('lightning-history-clouds') === 'true');
+
+  useEffect(() => { localStorage.setItem('lightning-history-temperature', String(tempHistoryOpen)); }, [tempHistoryOpen]);
+  useEffect(() => { localStorage.setItem('lightning-history-precipitation', String(precipHistoryOpen)); }, [precipHistoryOpen]);
+  useEffect(() => { localStorage.setItem('lightning-history-wind', String(windHistoryOpen)); }, [windHistoryOpen]);
+  useEffect(() => { localStorage.setItem('lightning-history-clouds', String(cloudHistoryOpen)); }, [cloudHistoryOpen]);
+
   useEffect(() => {
     localStorage.setItem('lightning-cloud-opacity', String(cloudOpacity));
   }, [cloudOpacity]);
@@ -484,6 +495,14 @@ const GlobePage = () => {
         onTogglePrecipitation={handleTogglePrecipitation}
         windEnabled={windEnabled}
         onToggleWind={handleToggleWind}
+        tempHistoryOpen={tempHistoryOpen}
+        onToggleTempHistory={() => setTempHistoryOpen(v => !v)}
+        precipHistoryOpen={precipHistoryOpen}
+        onTogglePrecipHistory={() => setPrecipHistoryOpen(v => !v)}
+        windHistoryOpen={windHistoryOpen}
+        onToggleWindHistory={() => setWindHistoryOpen(v => !v)}
+        cloudHistoryOpen={cloudHistoryOpen}
+        onToggleCloudHistory={() => setCloudHistoryOpen(v => !v)}
         connectionStatus={connectionStatus}
         lastUpdate={lastUpdate}
         lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
@@ -491,44 +510,48 @@ const GlobePage = () => {
       <TemperatureLegend visible={temperatureEnabled} unit={tempUnit} onUnitChange={setTempUnit} />
       <TemperatureCursor ref={cursorRef} unit={tempUnit} />
       <WeatherTimeline
-        visible={temperatureEnabled}
+        visible={temperatureEnabled && tempHistoryOpen}
         frames={tempFrames}
         currentFrameId={tempCurrentFrameId}
         onFrameChange={handleTempFrameChange}
         readyFrameIds={tempReadyIds}
         onRequestPrefetch={handleTempPrefetch}
         onPlayingChange={handleTimelinePlayingChange}
+        onClose={() => setTempHistoryOpen(false)}
       />
       <PrecipitationLegend visible={precipitationEnabled} />
       <PrecipitationCursor ref={precipCursorRef} />
       <WeatherTimeline
-        visible={precipitationEnabled}
+        visible={precipitationEnabled && precipHistoryOpen}
         frames={precipFrames}
         currentFrameId={precipCurrentFrameId}
         onFrameChange={handlePrecipFrameChange}
         readyFrameIds={precipReadyIds}
         onRequestPrefetch={handlePrecipPrefetch}
         onPlayingChange={handleTimelinePlayingChange}
+        onClose={() => setPrecipHistoryOpen(false)}
       />
       <WindLegend visible={windEnabled} unit={windUnit} onUnitChange={setWindUnit} />
       <WindCursor ref={windCursorRef} unit={windUnit} />
       <WeatherTimeline
-        visible={windEnabled}
+        visible={windEnabled && windHistoryOpen}
         frames={windFrames}
         currentFrameId={windCurrentFrameId}
         onFrameChange={handleWindFrameChange}
         readyFrameIds={windReadyIds}
         onRequestPrefetch={handleWindPrefetch}
         onPlayingChange={handleTimelinePlayingChange}
+        onClose={() => setWindHistoryOpen(false)}
       />
       <WeatherTimeline
-        visible={cloudsEnabled && cloudFrames.length > 1}
+        visible={cloudsEnabled && cloudHistoryOpen && cloudFrames.length > 1}
         frames={cloudFrames}
         currentFrameId={cloudCurrentFrameId}
         onFrameChange={handleCloudFrameChange}
         readyFrameIds={cloudReadyIds}
         onRequestPrefetch={handleCloudPrefetch}
         onPlayingChange={handleTimelinePlayingChange}
+        onClose={() => setCloudHistoryOpen(false)}
       />
       <NavigationIcons currentPage="globe" />
     </div>

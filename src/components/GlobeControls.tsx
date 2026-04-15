@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff, Info, Zap, Thermometer, CloudRain, Wind } from 'lucide-react';
+import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff, Info, Zap, Thermometer, CloudRain, Wind, Play, X } from 'lucide-react';
 import { ConnectionStatus } from '../services/dataStreams/hooks';
 import { LightningLayer } from '../layers';
 import './GlobeControls.css';
@@ -33,6 +33,14 @@ interface GlobeControlsProps {
   onTogglePrecipitation?: () => void;
   windEnabled?: boolean;
   onToggleWind?: () => void;
+  tempHistoryOpen?: boolean;
+  onToggleTempHistory?: () => void;
+  precipHistoryOpen?: boolean;
+  onTogglePrecipHistory?: () => void;
+  windHistoryOpen?: boolean;
+  onToggleWindHistory?: () => void;
+  cloudHistoryOpen?: boolean;
+  onToggleCloudHistory?: () => void;
   connectionStatus?: ConnectionStatus;
   lastUpdate?: string;
   lightningLayer?: LightningLayer | null;
@@ -44,16 +52,18 @@ interface CtrlBtnProps {
   ariaLabel: string;
   tooltip: string;
   leftAlignTooltip?: boolean;
+  tooltipExtra?: React.ReactNode;
   children: React.ReactNode;
 }
 
-const CtrlBtn: React.FC<CtrlBtnProps> = ({ className, onClick, ariaLabel, tooltip, leftAlignTooltip, children }) => (
+const CtrlBtn: React.FC<CtrlBtnProps> = ({ className, onClick, ariaLabel, tooltip, leftAlignTooltip, tooltipExtra, children }) => (
   <div className="ctrl-btn-wrap">
     <button className={className} onClick={onClick} aria-label={ariaLabel}>
       {children}
     </button>
     <div className={`ctrl-tooltip${leftAlignTooltip ? ' left-align' : ''}`}>
       {tooltip}
+      {tooltipExtra}
     </div>
   </div>
 );
@@ -81,6 +91,14 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   onTogglePrecipitation,
   windEnabled = false,
   onToggleWind,
+  tempHistoryOpen,
+  onToggleTempHistory,
+  precipHistoryOpen,
+  onTogglePrecipHistory,
+  windHistoryOpen,
+  onToggleWindHistory,
+  cloudHistoryOpen,
+  onToggleCloudHistory,
   connectionStatus,
   lastUpdate,
   lightningLayer,
@@ -149,6 +167,16 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   const isMoonView = viewTarget === 'moon';
   const hasData = !!hotspot;
 
+  const historyRow = (isOpen: boolean | undefined, onToggle: (() => void) | undefined) => {
+    if (!onToggle) return null;
+    return (
+      <div className="ctrl-tooltip-history" onClick={(e) => { e.stopPropagation(); onToggle(); }}>
+        {isOpen ? <X size={10} /> : <Play size={10} />}
+        <span>{isOpen ? 'Close history' : 'View history'}</span>
+      </div>
+    );
+  };
+
   const hotspotClass = [
     'globe-ctrl-btn',
     'hotspot-btn',
@@ -215,6 +243,12 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
               <button className="cloud-visibility-btn" onClick={onToggleClouds}>
                 {cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
               </button>
+              {cloudsEnabled && onToggleCloudHistory && (
+                <div className="ctrl-tooltip-history cloud-history-toggle" onClick={onToggleCloudHistory}>
+                  {cloudHistoryOpen ? <X size={10} /> : <Play size={10} />}
+                  <span>{cloudHistoryOpen ? 'Close history' : 'View history'}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -240,6 +274,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onToggleTemperature}
         ariaLabel={temperatureEnabled ? 'Hide temperature' : 'Show temperature'}
         tooltip={temperatureEnabled ? 'Hide temperature overlay' : 'Show temperature overlay'}
+        tooltipExtra={temperatureEnabled ? historyRow(tempHistoryOpen, onToggleTempHistory) : undefined}
       >
         <Thermometer size={16} />
       </CtrlBtn>
@@ -248,6 +283,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onTogglePrecipitation}
         ariaLabel={precipitationEnabled ? 'Hide precipitation' : 'Show precipitation'}
         tooltip={precipitationEnabled ? 'Hide precipitation overlay' : 'Show precipitation overlay'}
+        tooltipExtra={precipitationEnabled ? historyRow(precipHistoryOpen, onTogglePrecipHistory) : undefined}
       >
         <CloudRain size={16} />
       </CtrlBtn>
@@ -256,6 +292,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onToggleWind}
         ariaLabel={windEnabled ? 'Hide wind' : 'Show wind'}
         tooltip={windEnabled ? 'Hide wind overlay' : 'Show wind overlay'}
+        tooltipExtra={windEnabled ? historyRow(windHistoryOpen, onToggleWindHistory) : undefined}
       >
         <Wind size={16} />
       </CtrlBtn>

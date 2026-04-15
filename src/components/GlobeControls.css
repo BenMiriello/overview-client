@@ -268,3 +268,36 @@
 .globe-ctrl-btn.hotspot-btn.new-hotspot:hover {
     transform: scale(1.2);
 }
+
+.ctrl-tooltip-history {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    pointer-events: auto;
+    transition: color 0.15s;
+}
+
+.ctrl-tooltip-history:hover {
+    color: #fff;
+}
+
+.ctrl-tooltip-history span {
+    white-space: nowrap;
+}
+
+/* Make tooltip interactive when it has history toggle */
+.ctrl-btn-wrap:hover .ctrl-tooltip:has(.ctrl-tooltip-history) {
+    pointer-events: auto;
+}
+
+.cloud-history-toggle {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
