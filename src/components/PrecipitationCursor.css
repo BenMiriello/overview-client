@@ -1,0 +1,45 @@
+.precip-cursor {
+  position: fixed;
+  pointer-events: none;
+  z-index: 1000;
+  transform: translateY(25%);
+  background: rgba(10, 12, 18, 0.82);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 6px 10px;
+  width: max-content;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.92);
+  user-select: none;
+}
+
+.precip-cursor-rate {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.precip-cursor-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.precip-cursor-type {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.precip-cursor-coord {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+}

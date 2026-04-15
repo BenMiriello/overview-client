@@ -66,6 +66,7 @@ interface GlobeComponentProps {
   cloudsEnabled?: boolean;
   lightningEnabled?: boolean;
   temperatureEnabled?: boolean;
+  precipitationEnabled?: boolean;
   restoredView?: StoredView | null;
   onEarthViewReady?: () => void;
   // Populated in close-mode with the camera ground target; null in far-mode.
@@ -421,6 +422,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   cloudsEnabled = true,
   lightningEnabled = true,
   temperatureEnabled = false,
+  precipitationEnabled = false,
   restoredView = null,
   onEarthViewReady,
   cameraTargetRef,
@@ -457,6 +459,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   useEffect(() => { lightningEnabledRef.current = lightningEnabled; }, [lightningEnabled]);
   const temperatureEnabledRef = useRef(temperatureEnabled);
   useEffect(() => { temperatureEnabledRef.current = temperatureEnabled; }, [temperatureEnabled]);
+  const precipitationEnabledRef = useRef(precipitationEnabled);
+  useEffect(() => { precipitationEnabledRef.current = precipitationEnabled; }, [precipitationEnabled]);
 
   const dragVelocityRef  = useRef<{ dlat: number; dlng: number } | null>(null);
 
@@ -2415,6 +2419,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         cloudsEnabled: cloudsEnabledRef.current,
         lightningEnabled: lightningEnabledRef.current,
         temperatureEnabled: temperatureEnabledRef.current,
+        precipitationEnabled: precipitationEnabledRef.current,
         mode,
       };
 
@@ -2484,10 +2489,10 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
     return () => window.removeEventListener('online', handleOnline);
   }, []);
 
-  // ── Temperature surface hover (raycasting for cursor tooltip) ───────────
+  // ── Surface hover (raycasting for cursor tooltip) ───────────
   useEffect(() => {
     if (!isGlobeReady || !globeEl.current || !onSurfaceHover) return;
-    if (!temperatureEnabled || viewTarget !== 'earth') {
+    if ((!temperatureEnabled && !precipitationEnabled) || viewTarget !== 'earth') {
       onSurfaceHover(null, 0, 0);
       return;
     }
@@ -2523,7 +2528,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       canvas.style.cursor = '';
       onSurfaceHover(null, 0, 0);
     };
-  }, [isGlobeReady, temperatureEnabled, viewTarget, onSurfaceHover]);
+  }, [isGlobeReady, temperatureEnabled, precipitationEnabled, viewTarget, onSurfaceHover]);
 
   // ── Layer manager cleanup ────────────────────────────────────────────────
   useEffect(() => {

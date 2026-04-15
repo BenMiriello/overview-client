@@ -1,9 +1,10 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { useLightningData } from '../services/dataStreams/hooks';
-import { GlobeComponent, GlobeControls, TemperatureLegend } from '../components';
+import { GlobeComponent, GlobeControls, TemperatureLegend, PrecipitationLegend, PrecipitationTimeline } from '../components';
 import { TemperatureCursor, TemperatureCursorHandle } from '../components/TemperatureCursor';
+import { PrecipitationCursor, PrecipitationCursorHandle } from '../components/PrecipitationCursor';
 import { NavigationIcons } from '../components/Navigation';
-import { LightningLayer, CloudLayer, TemperatureLayer } from '../layers';
+import { LightningLayer, CloudLayer, TemperatureLayer, PrecipitationLayer } from '../layers';
 import { GlobeLayerManager } from '../managers';
 import { loadView, loadLegacyPrefer3D } from '../components/globeViewPersistence';
 
@@ -66,8 +67,12 @@ const GlobePage = () => {
   const prevCloudOpacityRef = useRef<number>(cloudOpacity);
   const [lightningEnabled, setLightningEnabled] = useState(() => restoredView?.lightningEnabled ?? true);
   const [temperatureEnabled, setTemperatureEnabled] = useState(() => restoredView?.temperatureEnabled ?? false);
+  const [precipitationEnabled, setPrecipitationEnabled] = useState(() => restoredView?.precipitationEnabled ?? false);
   const [tempUnit, setTempUnit] = useState<'C' | 'F'>('C');
   const cursorRef = useRef<TemperatureCursorHandle>(null);
+  const precipCursorRef = useRef<PrecipitationCursorHandle>(null);
+  const [precipFrames, setPrecipFrames] = useState<{ runId: string; timestamp: number }[]>([]);
+  const [precipCurrentFrameId, setPrecipCurrentFrameId] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem('lightning-cloud-opacity', String(cloudOpacity));
@@ -140,6 +145,8 @@ const GlobePage = () => {
   lightningEnabledRef.current = lightningEnabled;
   const temperatureEnabledRef = useRef(temperatureEnabled);
   temperatureEnabledRef.current = temperatureEnabled;
+  const precipitationEnabledRef = useRef(precipitationEnabled);
+  precipitationEnabledRef.current = precipitationEnabled;
 
   const handleLayerManagerReady = useCallback((manager: GlobeLayerManager) => {
     layerManagerRef.current = manager;
@@ -157,6 +164,19 @@ const GlobePage = () => {
     const temperatureLayer = manager.createLayer<TemperatureLayer>('temperature', 'temperature');
     if (temperatureLayer) {
       temperatureEnabledRef.current ? temperatureLayer.show() : temperatureLayer.hide();
+    }
+    const precipitationLayer = manager.createLayer<PrecipitationLayer>('precipitation', 'precipitation');
+    if (precipitationLayer) {
+      precipitationEnabledRef.current ? precipitationLayer.show() : precipitationLayer.hide();
+      precipitationLayer.setOnFrameListChange(frames => {
+        setPrecipFrames(frames);
+        if (frames.length > 0 && !precipitationLayer.getCurrentFrameId()) {
+          setPrecipCurrentFrameId(frames[frames.length - 1].runId);
+        } else {
+          setPrecipCurrentFrameId(precipitationLayer.getCurrentFrameId());
+        }
+        precipitationLayer.prefetchAllFrames();
+      });
     }
   }, [dataStream]);
 
@@ -203,16 +223,66 @@ const GlobePage = () => {
       const layer = layerManagerRef.current?.getLayer<TemperatureLayer>('temperature');
       next ? layer?.show() : layer?.hide();
       layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setTemperatureEnabled(next);
+      if (next && precipitationEnabled) {
+        setPrecipitationEnabled(false);
+        layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation')?.hide();
+      }
       return next;
     });
+  }, [precipitationEnabled]);
+
+  const handleTogglePrecipitation = useCallback(() => {
+    setPrecipitationEnabled(v => {
+      const next = !v;
+      const layer = layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation');
+      next ? layer?.show() : layer?.hide();
+      if (next && temperatureEnabled) {
+        setTemperatureEnabled(false);
+        layerManagerRef.current?.getLayer<TemperatureLayer>('temperature')?.hide();
+        layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setTemperatureEnabled(false);
+      }
+      return next;
+    });
+  }, [temperatureEnabled]);
+
+  const handlePrecipFrameChange = useCallback((runId: string) => {
+    setPrecipCurrentFrameId(runId);
+    const layer = layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation');
+    layer?.setFrame(runId);
   }, []);
 
   const handleSurfaceHover = useCallback((result: { lat: number; lng: number } | null, x: number, y: number) => {
-    if (!result) { cursorRef.current?.update(null); return; }
-    const layer = layerManagerRef.current?.getLayer<TemperatureLayer>('temperature');
-    const tempC = layer?.getTempAtLatLng(result.lat, result.lng);
-    if (tempC == null) { cursorRef.current?.update(null); return; }
-    cursorRef.current?.update({ x, y, lat: result.lat, lng: result.lng, tempC });
+    if (!result) {
+      cursorRef.current?.update(null);
+      precipCursorRef.current?.update(null);
+      return;
+    }
+
+    // Temperature cursor
+    const tempLayer = layerManagerRef.current?.getLayer<TemperatureLayer>('temperature');
+    if (tempLayer?.isVisible()) {
+      const tempC = tempLayer.getTempAtLatLng(result.lat, result.lng);
+      if (tempC != null) {
+        cursorRef.current?.update({ x, y, lat: result.lat, lng: result.lng, tempC });
+      } else {
+        cursorRef.current?.update(null);
+      }
+    } else {
+      cursorRef.current?.update(null);
+    }
+
+    // Precipitation cursor
+    const precipLayer = layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation');
+    if (precipLayer?.isVisible()) {
+      const precip = precipLayer.getPrecipAtLatLng(result.lat, result.lng);
+      if (precip) {
+        precipCursorRef.current?.update({ x, y, lat: result.lat, lng: result.lng, rate: precip.rate, type: precip.type });
+      } else {
+        precipCursorRef.current?.update(null);
+      }
+    } else {
+      precipCursorRef.current?.update(null);
+    }
   }, []);
 
   const handleEarthViewReady = useCallback(() => {
@@ -254,6 +324,7 @@ const GlobePage = () => {
         cloudsEnabled={cloudsEnabled}
         lightningEnabled={lightningEnabled}
         temperatureEnabled={temperatureEnabled}
+        precipitationEnabled={precipitationEnabled}
         restoredView={restoredView}
         onEarthViewReady={handleEarthViewReady}
         cameraTargetRef={cameraTargetRef}
@@ -278,12 +349,22 @@ const GlobePage = () => {
         onToggleLightning={handleToggleLightning}
         temperatureEnabled={temperatureEnabled}
         onToggleTemperature={handleToggleTemperature}
+        precipitationEnabled={precipitationEnabled}
+        onTogglePrecipitation={handleTogglePrecipitation}
         connectionStatus={connectionStatus}
         lastUpdate={lastUpdate}
         lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
       />
       <TemperatureLegend visible={temperatureEnabled} unit={tempUnit} onUnitChange={setTempUnit} />
       <TemperatureCursor ref={cursorRef} unit={tempUnit} />
+      <PrecipitationLegend visible={precipitationEnabled} />
+      <PrecipitationCursor ref={precipCursorRef} />
+      <PrecipitationTimeline
+        visible={precipitationEnabled}
+        frames={precipFrames}
+        currentFrameId={precipCurrentFrameId}
+        onFrameChange={handlePrecipFrameChange}
+      />
       <NavigationIcons currentPage="globe" />
     </div>
   );

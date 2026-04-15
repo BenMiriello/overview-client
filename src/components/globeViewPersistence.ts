@@ -37,6 +37,7 @@ export interface StoredView {
   cloudsEnabled?: boolean;
   lightningEnabled?: boolean;
   temperatureEnabled?: boolean;
+  precipitationEnabled?: boolean;
   mode: 'far' | 'close' | 'moon' | 'moonClose';
   far?: FarSnapshot;
   close?: CloseSnapshot;
