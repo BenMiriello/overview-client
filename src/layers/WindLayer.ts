@@ -431,7 +431,7 @@ export class WindLayer extends BaseLayer<void> {
       const t = Math.min(1, (now - this.fadeStartMs) / WindLayer.FADE_MS);
       const opacity = this.fadeFrom + (this.fadeTarget - this.fadeFrom) * t;
       mat.uniforms.uOpacity.value = opacity;
-      setMapDesaturate(opacity / MAX_OPACITY);
+      if (this.fadeTarget > 0) setMapDesaturate(opacity / MAX_OPACITY);
       if (t >= 1) {
         this.isFading = false;
         if (this.fadeTarget === 0) {

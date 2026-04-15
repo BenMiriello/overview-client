@@ -14,6 +14,7 @@ interface Props {
   onFrameChange: (runId: string) => void;
   readyFrameIds?: Set<string>;
   onRequestPrefetch?: () => void;
+  onPlayingChange?: (playing: boolean) => void;
 }
 
 function formatHour(ts: number): string {
@@ -38,7 +39,7 @@ function formatDate(ts: number): string {
 
 export const WeatherTimeline: React.FC<Props> = ({
   visible, frames, currentFrameId, onFrameChange,
-  readyFrameIds, onRequestPrefetch,
+  readyFrameIds, onRequestPrefetch, onPlayingChange,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -51,6 +52,11 @@ export const WeatherTimeline: React.FC<Props> = ({
   const allReady = !readyFrameIds
     ? true
     : frames.every(f => readyFrameIds.has(f.runId));
+
+  // Notify parent of playing state changes
+  useEffect(() => {
+    onPlayingChange?.(isPlaying);
+  }, [isPlaying, onPlayingChange]);
 
   // When loading and all frames become ready, start playback
   useEffect(() => {

@@ -330,6 +330,20 @@ const GlobePage = () => {
     layerManagerRef.current?.getLayer<WindLayer>('wind')?.prefetchAllFrames();
   }, []);
 
+  // Hide lightning during timeline playback, restore when stopped
+  const lightningEnabledBeforePlaybackRef = useRef<boolean | null>(null);
+  const handleTimelinePlayingChange = useCallback((playing: boolean) => {
+    const layer = layerManagerRef.current?.getLayer<LightningLayer>('lightning');
+    if (!layer) return;
+    if (playing) {
+      lightningEnabledBeforePlaybackRef.current = layer.isVisible();
+      if (layer.isVisible()) layer.hide();
+    } else {
+      if (lightningEnabledBeforePlaybackRef.current) layer.show();
+      lightningEnabledBeforePlaybackRef.current = null;
+    }
+  }, []);
+
   const handleSurfaceHover = useCallback((result: { lat: number; lng: number } | null, x: number, y: number) => {
     if (!result) {
       cursorRef.current?.update(null);
@@ -460,6 +474,7 @@ const GlobePage = () => {
         onFrameChange={handleTempFrameChange}
         readyFrameIds={tempReadyIds}
         onRequestPrefetch={handleTempPrefetch}
+        onPlayingChange={handleTimelinePlayingChange}
       />
       <PrecipitationLegend visible={precipitationEnabled} />
       <PrecipitationCursor ref={precipCursorRef} />
@@ -470,6 +485,7 @@ const GlobePage = () => {
         onFrameChange={handlePrecipFrameChange}
         readyFrameIds={precipReadyIds}
         onRequestPrefetch={handlePrecipPrefetch}
+        onPlayingChange={handleTimelinePlayingChange}
       />
       <WindLegend visible={windEnabled} unit={windUnit} onUnitChange={setWindUnit} />
       <WindCursor ref={windCursorRef} unit={windUnit} />
@@ -480,6 +496,7 @@ const GlobePage = () => {
         onFrameChange={handleWindFrameChange}
         readyFrameIds={windReadyIds}
         onRequestPrefetch={handleWindPrefetch}
+        onPlayingChange={handleTimelinePlayingChange}
       />
       <NavigationIcons currentPage="globe" />
     </div>
