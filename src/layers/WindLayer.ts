@@ -11,12 +11,12 @@ const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:3001';
 const MAX_OPACITY = 0.65;
 const DEG_TO_RAD = Math.PI / 180;
 
-const MAX_PARTICLES = 5000;
+const MAX_PARTICLES = 8000;
 const PARTICLE_RADIUS = EARTH_RADIUS * 1.005;
 const TRAIL_HISTORY = 15;
 const VERTS_PER_PARTICLE = TRAIL_HISTORY * 2;
 const INDICES_PER_PARTICLE = (TRAIL_HISTORY - 1) * 6;
-const PIXELS_PER_PARTICLE = 200;
+const PIXELS_PER_PARTICLE = 120;
 const TRAIL_WIDTH_PX = 2.0;
 
 const SPEED_COLORMAP: [number, [number, number, number]][] = [

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff, Info, Zap, Thermometer, CloudRain, Wind, Play, X } from 'lucide-react';
 import { ConnectionStatus } from '../services/dataStreams/hooks';
 import { LightningLayer } from '../layers';
@@ -56,17 +56,74 @@ interface CtrlBtnProps {
   children: React.ReactNode;
 }
 
-const CtrlBtn: React.FC<CtrlBtnProps> = ({ className, onClick, ariaLabel, tooltip, leftAlignTooltip, tooltipExtra, children }) => (
-  <div className="ctrl-btn-wrap">
-    <button className={className} onClick={onClick} aria-label={ariaLabel}>
-      {children}
-    </button>
-    <div className={`ctrl-tooltip${leftAlignTooltip ? ' left-align' : ''}`}>
-      {tooltip}
-      {tooltipExtra}
+// Tracks the deactivate function of the currently active interactive tooltip
+let activeTooltipDeactivate: (() => void) | null = null;
+
+const CtrlBtn: React.FC<CtrlBtnProps> = ({ className, onClick, ariaLabel, tooltip, leftAlignTooltip, tooltipExtra, children }) => {
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const btnHovered = useRef(false);
+  const hasExtra = !!tooltipExtra;
+
+  const deactivateNow = useCallback(() => {
+    if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+    tooltipRef.current?.classList.remove('tooltip-active');
+  }, []);
+
+  const activate = useCallback(() => {
+    if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+    tooltipRef.current?.classList.add('tooltip-active');
+    activeTooltipDeactivate = deactivateNow;
+  }, [deactivateNow]);
+
+  const cancelHide = useCallback(() => {
+    if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+  }, []);
+
+  const scheduleDeactivate = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => {
+      tooltipRef.current?.classList.remove('tooltip-active');
+      hideTimer.current = null;
+    }, 300);
+  }, []);
+
+  // When hasExtra becomes true while button is hovered, activate immediately
+  useEffect(() => {
+    if (hasExtra && btnHovered.current) activate();
+  }, [hasExtra, activate]);
+
+  return (
+    <div className="ctrl-btn-wrap">
+      <button
+        className={className}
+        onClick={onClick}
+        aria-label={ariaLabel}
+        onMouseEnter={() => {
+          btnHovered.current = true;
+          // Close any other active interactive tooltip immediately
+          if (activeTooltipDeactivate && activeTooltipDeactivate !== deactivateNow) {
+            activeTooltipDeactivate();
+            activeTooltipDeactivate = null;
+          }
+          if (hasExtra) activate();
+        }}
+        onMouseLeave={() => { btnHovered.current = false; if (hasExtra) scheduleDeactivate(); }}
+      >
+        {children}
+      </button>
+      <div
+        ref={tooltipRef}
+        className={`ctrl-tooltip${leftAlignTooltip ? ' left-align' : ''}${hasExtra ? ' tooltip-interactive' : ''}`}
+        onMouseEnter={hasExtra ? cancelHide : undefined}
+        onMouseLeave={hasExtra ? scheduleDeactivate : undefined}
+      >
+        {tooltip}
+        {tooltipExtra}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export const GlobeControls: React.FC<GlobeControlsProps> = ({
   is3D,

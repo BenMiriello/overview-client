@@ -91,13 +91,20 @@
     text-align: left;
     opacity: 0;
     transition: opacity 0.15s ease;
-    /* drop-shadow traces the full element shape including the caret pseudo-element,
-       so the outline wraps the whole speech bubble without a seam at the caret join */
     filter: drop-shadow(0 0 0.5px rgba(255, 255, 255, 0.45))
             drop-shadow(0 0 1px rgba(255, 255, 255, 0.2));
 }
 
-.ctrl-btn-wrap:hover .ctrl-tooltip {
+/* Non-interactive tooltips: show on button hover via CSS */
+.ctrl-btn-wrap:hover .ctrl-tooltip:not(.tooltip-interactive) {
+    opacity: 1;
+}
+
+/* Interactive tooltips: visibility controlled entirely by JS via .tooltip-active class.
+   Never use CSS :hover — it creates self-sustaining loops because hover
+   propagates from absolutely-positioned children to parents. */
+.ctrl-tooltip.tooltip-active {
+    pointer-events: auto;
     opacity: 1;
 }
 
@@ -279,7 +286,6 @@
     font-size: 11px;
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
-    pointer-events: auto;
     transition: color 0.15s;
 }
 
@@ -292,12 +298,10 @@
 }
 
 /* Make tooltip interactive when it has history toggle */
-.ctrl-btn-wrap:hover .ctrl-tooltip:has(.ctrl-tooltip-history) {
-    pointer-events: auto;
-}
-
 .cloud-history-toggle {
     margin-top: 4px;
     padding-top: 4px;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-family: 'Roboto', sans-serif;
+    font-size: 11px;
 }

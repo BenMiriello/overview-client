@@ -16,6 +16,8 @@ interface Props {
   onRequestPrefetch?: () => void;
   onPlayingChange?: (playing: boolean) => void;
   onClose?: () => void;
+  error?: string | null;
+  onDismissError?: () => void;
 }
 
 function formatHour(ts: number): string {
@@ -41,9 +43,12 @@ function formatDate(ts: number): string {
 export const WeatherTimeline: React.FC<Props> = ({
   visible, frames, currentFrameId, onFrameChange,
   readyFrameIds, onRequestPrefetch, onPlayingChange, onClose,
+  error, onDismissError,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorFading, setErrorFading] = useState(false);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -88,6 +93,18 @@ export const WeatherTimeline: React.FC<Props> = ({
       if (playIntervalRef.current) clearInterval(playIntervalRef.current);
     };
   }, [isPlaying, frames, currentFrameId, onFrameChange, readyFrameIds]);
+
+  // Auto-dismiss error after 8 seconds
+  useEffect(() => {
+    if (!error) { setErrorFading(false); return; }
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    setErrorFading(false);
+    errorTimerRef.current = setTimeout(() => {
+      setErrorFading(true);
+      setTimeout(() => { onDismissError?.(); setErrorFading(false); }, 300);
+    }, 8000);
+    return () => { if (errorTimerRef.current) clearTimeout(errorTimerRef.current); };
+  }, [error, onDismissError]);
 
   useEffect(() => {
     if (!visible) { setIsPlaying(false); setIsLoading(false); }
@@ -151,7 +168,26 @@ export const WeatherTimeline: React.FC<Props> = ({
     }
   }, [frames, currentFrameId, onFrameChange, cancelPlayback]);
 
-  if (!visible || frames.length === 0) return null;
+  if (!visible) return null;
+
+  if (frames.length < 2) {
+    return (
+      <div className="weather-timeline weather-timeline-empty">
+        {onClose && (
+          <button className="weather-timeline-close" onClick={onClose} aria-label="Close timeline">
+            <X size={12} />
+          </button>
+        )}
+        <div className="weather-timeline-track-wrap">
+          <div className="weather-timeline-current">
+            {frames.length === 1 ? formatTimeFull(frames[0].timestamp) : ''}
+          </div>
+          <span className="weather-timeline-empty-msg">No playback history is available. Please try again later.</span>
+        </div>
+        <div className="weather-timeline-now-label" style={{ visibility: 'hidden' }}>NOW</div>
+      </div>
+    );
+  }
 
   const thumbPct = frames.length > 1
     ? (currentIndex / (frames.length - 1)) * 100
@@ -172,6 +208,15 @@ export const WeatherTimeline: React.FC<Props> = ({
 
   return (
     <div className="weather-timeline" tabIndex={0} onKeyDown={handleKeyDown}>
+      {onClose && (
+        <button
+          className="weather-timeline-close"
+          onClick={() => { cancelPlayback(); onClose(); }}
+          aria-label="Close timeline"
+        >
+          <X size={12} />
+        </button>
+      )}
       <button
         className={`weather-timeline-play${isLoading ? ' loading' : ''}`}
         onClick={handlePlayClick}
@@ -244,14 +289,13 @@ export const WeatherTimeline: React.FC<Props> = ({
       >
         NOW
       </div>
-      {onClose && (
-        <button
-          className="weather-timeline-close"
-          onClick={() => { cancelPlayback(); onClose(); }}
-          aria-label="Close timeline"
-        >
-          <X size={12} />
-        </button>
+      {error && (
+        <div className={`weather-timeline-error${errorFading ? ' fading' : ''}`}>
+          <button className="weather-timeline-error-dismiss" onClick={() => onDismissError?.()}>
+            <X size={10} />
+          </button>
+          <span>{error}</span>
+        </div>
       )}
     </div>
   );

@@ -167,12 +167,59 @@
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
   padding: 0;
-  margin-left: 4px;
 }
 
 .weather-timeline-close:hover {
   color: #fff;
   border-color: rgba(255, 255, 255, 0.4);
+}
+
+.weather-timeline-empty {
+  justify-content: center;
+}
+
+.weather-timeline-empty-msg {
+  font-size: 11px;
+  font-family: 'Roboto', sans-serif;
+  color: rgba(255, 255, 255, 0.45);
+  white-space: nowrap;
+}
+
+.weather-timeline-error {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: rgba(30, 10, 10, 0.85);
+  border: 1px solid rgba(200, 60, 60, 0.3);
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: 'Roboto', sans-serif;
+  color: #e06060;
+  transition: opacity 0.3s ease;
+}
+
+.weather-timeline-error.fading {
+  opacity: 0;
+}
+
+.weather-timeline-error-dismiss {
+  background: none;
+  border: none;
+  color: #e06060;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.weather-timeline-error-dismiss:hover {
+  color: #ff8080;
 }
 
 @media (max-width: 600px) {

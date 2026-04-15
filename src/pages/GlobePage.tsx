@@ -88,16 +88,18 @@ const GlobePage = () => {
   const [cloudCurrentFrameId, setCloudCurrentFrameId] = useState<string | null>(null);
   const [cloudReadyIds, setCloudReadyIds] = useState<Set<string>>(new Set());
 
-  // History timeline open/close state with localStorage persistence
-  const [tempHistoryOpen, setTempHistoryOpen] = useState(() => localStorage.getItem('lightning-history-temperature') !== 'false');
-  const [precipHistoryOpen, setPrecipHistoryOpen] = useState(() => localStorage.getItem('lightning-history-precipitation') !== 'false');
-  const [windHistoryOpen, setWindHistoryOpen] = useState(() => localStorage.getItem('lightning-history-wind') !== 'false');
-  const [cloudHistoryOpen, setCloudHistoryOpen] = useState(() => localStorage.getItem('lightning-history-clouds') === 'true');
+  // Which timeline is currently open (at most one at a time), persisted in localStorage
+  type TimelineId = 'temperature' | 'precipitation' | 'wind' | 'clouds' | null;
+  const [activeTimeline, setActiveTimeline] = useState<TimelineId>(() => {
+    const stored = localStorage.getItem('lightning-active-timeline');
+    if (stored === 'temperature' || stored === 'precipitation' || stored === 'wind' || stored === 'clouds') return stored;
+    return null;
+  });
+  useEffect(() => { localStorage.setItem('lightning-active-timeline', activeTimeline ?? ''); }, [activeTimeline]);
 
-  useEffect(() => { localStorage.setItem('lightning-history-temperature', String(tempHistoryOpen)); }, [tempHistoryOpen]);
-  useEffect(() => { localStorage.setItem('lightning-history-precipitation', String(precipHistoryOpen)); }, [precipHistoryOpen]);
-  useEffect(() => { localStorage.setItem('lightning-history-wind', String(windHistoryOpen)); }, [windHistoryOpen]);
-  useEffect(() => { localStorage.setItem('lightning-history-clouds', String(cloudHistoryOpen)); }, [cloudHistoryOpen]);
+  const toggleTimeline = useCallback((id: TimelineId) => {
+    setActiveTimeline(prev => prev === id ? null : id);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('lightning-cloud-opacity', String(cloudOpacity));
@@ -345,14 +347,22 @@ const GlobePage = () => {
     layer?.setFrame(runId);
   }, []);
 
+  const [tempError, setTempError] = useState<string | null>(null);
+  const [precipError, setPrecipError] = useState<string | null>(null);
+  const [windError, setWindError] = useState<string | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+
   const handleTempPrefetch = useCallback(() => {
-    layerManagerRef.current?.getLayer<TemperatureLayer>('temperature')?.prefetchAllFrames();
+    layerManagerRef.current?.getLayer<TemperatureLayer>('temperature')?.prefetchAllFrames()
+      .catch(() => setTempError('Unable to fetch temperature playback data. Please try again later.'));
   }, []);
   const handlePrecipPrefetch = useCallback(() => {
-    layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation')?.prefetchAllFrames();
+    layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation')?.prefetchAllFrames()
+      .catch(() => setPrecipError('Unable to fetch precipitation playback data. Please try again later.'));
   }, []);
   const handleWindPrefetch = useCallback(() => {
-    layerManagerRef.current?.getLayer<WindLayer>('wind')?.prefetchAllFrames();
+    layerManagerRef.current?.getLayer<WindLayer>('wind')?.prefetchAllFrames()
+      .catch(() => setWindError('Unable to fetch wind playback data. Please try again later.'));
   }, []);
 
   const handleCloudFrameChange = useCallback((runId: string) => {
@@ -361,7 +371,8 @@ const GlobePage = () => {
     layer?.setHistoryFrame(runId);
   }, []);
   const handleCloudPrefetch = useCallback(() => {
-    layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.prefetchAllFrames();
+    layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.prefetchAllFrames()
+      .catch(() => setCloudError('Unable to fetch cloud playback data. Please try again later.'));
   }, []);
 
   // Hide lightning during timeline playback, restore when stopped
@@ -495,14 +506,14 @@ const GlobePage = () => {
         onTogglePrecipitation={handleTogglePrecipitation}
         windEnabled={windEnabled}
         onToggleWind={handleToggleWind}
-        tempHistoryOpen={tempHistoryOpen}
-        onToggleTempHistory={() => setTempHistoryOpen(v => !v)}
-        precipHistoryOpen={precipHistoryOpen}
-        onTogglePrecipHistory={() => setPrecipHistoryOpen(v => !v)}
-        windHistoryOpen={windHistoryOpen}
-        onToggleWindHistory={() => setWindHistoryOpen(v => !v)}
-        cloudHistoryOpen={cloudHistoryOpen}
-        onToggleCloudHistory={() => setCloudHistoryOpen(v => !v)}
+        tempHistoryOpen={activeTimeline === 'temperature'}
+        onToggleTempHistory={() => toggleTimeline('temperature')}
+        precipHistoryOpen={activeTimeline === 'precipitation'}
+        onTogglePrecipHistory={() => toggleTimeline('precipitation')}
+        windHistoryOpen={activeTimeline === 'wind'}
+        onToggleWindHistory={() => toggleTimeline('wind')}
+        cloudHistoryOpen={activeTimeline === 'clouds'}
+        onToggleCloudHistory={() => toggleTimeline('clouds')}
         connectionStatus={connectionStatus}
         lastUpdate={lastUpdate}
         lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
@@ -510,48 +521,56 @@ const GlobePage = () => {
       <TemperatureLegend visible={temperatureEnabled} unit={tempUnit} onUnitChange={setTempUnit} />
       <TemperatureCursor ref={cursorRef} unit={tempUnit} />
       <WeatherTimeline
-        visible={temperatureEnabled && tempHistoryOpen}
+        visible={temperatureEnabled && activeTimeline === 'temperature'}
         frames={tempFrames}
         currentFrameId={tempCurrentFrameId}
         onFrameChange={handleTempFrameChange}
         readyFrameIds={tempReadyIds}
         onRequestPrefetch={handleTempPrefetch}
         onPlayingChange={handleTimelinePlayingChange}
-        onClose={() => setTempHistoryOpen(false)}
+        onClose={() => setActiveTimeline(null)}
+        error={tempError}
+        onDismissError={() => setTempError(null)}
       />
       <PrecipitationLegend visible={precipitationEnabled} />
       <PrecipitationCursor ref={precipCursorRef} />
       <WeatherTimeline
-        visible={precipitationEnabled && precipHistoryOpen}
+        visible={precipitationEnabled && activeTimeline === 'precipitation'}
         frames={precipFrames}
         currentFrameId={precipCurrentFrameId}
         onFrameChange={handlePrecipFrameChange}
         readyFrameIds={precipReadyIds}
         onRequestPrefetch={handlePrecipPrefetch}
         onPlayingChange={handleTimelinePlayingChange}
-        onClose={() => setPrecipHistoryOpen(false)}
+        onClose={() => setActiveTimeline(null)}
+        error={precipError}
+        onDismissError={() => setPrecipError(null)}
       />
       <WindLegend visible={windEnabled} unit={windUnit} onUnitChange={setWindUnit} />
       <WindCursor ref={windCursorRef} unit={windUnit} />
       <WeatherTimeline
-        visible={windEnabled && windHistoryOpen}
+        visible={windEnabled && activeTimeline === 'wind'}
         frames={windFrames}
         currentFrameId={windCurrentFrameId}
         onFrameChange={handleWindFrameChange}
         readyFrameIds={windReadyIds}
         onRequestPrefetch={handleWindPrefetch}
         onPlayingChange={handleTimelinePlayingChange}
-        onClose={() => setWindHistoryOpen(false)}
+        onClose={() => setActiveTimeline(null)}
+        error={windError}
+        onDismissError={() => setWindError(null)}
       />
       <WeatherTimeline
-        visible={cloudsEnabled && cloudHistoryOpen && cloudFrames.length > 1}
+        visible={cloudsEnabled && activeTimeline === 'clouds'}
         frames={cloudFrames}
         currentFrameId={cloudCurrentFrameId}
         onFrameChange={handleCloudFrameChange}
         readyFrameIds={cloudReadyIds}
         onRequestPrefetch={handleCloudPrefetch}
         onPlayingChange={handleTimelinePlayingChange}
-        onClose={() => setCloudHistoryOpen(false)}
+        onClose={() => setActiveTimeline(null)}
+        error={cloudError}
+        onDismissError={() => setCloudError(null)}
       />
       <NavigationIcons currentPage="globe" />
     </div>
