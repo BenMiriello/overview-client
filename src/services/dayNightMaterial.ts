@@ -19,7 +19,18 @@ export const sharedNightUniforms = {
 
 /** Drive map desaturation; called by TemperatureLayer to sync with fade. */
 export function setMapDesaturate(amount: number): void {
-  sharedNightUniforms.desaturate.value = Math.max(0, Math.min(1, amount));
+  setLayerDesaturate('legacy', amount);
+}
+
+const desaturateSources = new Map<string, number>();
+
+/** Per-layer desaturation registry. The uniform is set to the max across all layers. */
+export function setLayerDesaturate(layerId: string, amount: number): void {
+  if (amount <= 0.001) desaturateSources.delete(layerId);
+  else desaturateSources.set(layerId, Math.min(1, amount));
+  let max = 0;
+  desaturateSources.forEach(v => { if (v > max) max = v; });
+  sharedNightUniforms.desaturate.value = max;
 }
 
 /**

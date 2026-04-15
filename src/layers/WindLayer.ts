@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { BaseLayer } from './LayerInterface';
 import { LAYERS } from '../services/renderLayers';
-import { setMapDesaturate } from '../services/dayNightMaterial';
+import { setLayerDesaturate } from '../services/dayNightMaterial';
 
 const EARTH_RADIUS = 100;
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
@@ -431,7 +431,7 @@ export class WindLayer extends BaseLayer<void> {
       const t = Math.min(1, (now - this.fadeStartMs) / WindLayer.FADE_MS);
       const opacity = this.fadeFrom + (this.fadeTarget - this.fadeFrom) * t;
       mat.uniforms.uOpacity.value = opacity;
-      if (this.fadeTarget > 0) setMapDesaturate(opacity / MAX_OPACITY);
+      setLayerDesaturate('wind', opacity / MAX_OPACITY);
       if (t >= 1) {
         this.isFading = false;
         if (this.fadeTarget === 0) {
@@ -603,7 +603,7 @@ export class WindLayer extends BaseLayer<void> {
   addData(_data: void): void {}
 
   clear(): void {
-    setMapDesaturate(0);
+    setLayerDesaturate('wind', 0);
     if (this.refreshTimer !== null) { clearInterval(this.refreshTimer); this.refreshTimer = null; }
     if (this.overlayMesh) { this.scene?.remove(this.overlayMesh); (this.overlayMesh.material as THREE.Material).dispose(); this.overlayMesh = null; }
     this.overlayGeometry?.dispose(); this.overlayGeometry = null;
