@@ -161,75 +161,52 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   lightningLayer,
 }) => {
   const [infoVisible, setInfoVisible] = useState(false);
-  const [cloudPanelOpen, setCloudPanelOpen] = useState(false);
-  const cloudOuterRef = useRef<HTMLDivElement>(null);
   const sliderTrackRef = useRef<HTMLDivElement>(null);
-  const cloudHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cloudDraggingRef = useRef(false);
 
-  const cancelCloudHideTimer = useCallback(() => {
-    if (cloudHideTimerRef.current) {
-      clearTimeout(cloudHideTimerRef.current);
-      cloudHideTimerRef.current = null;
-    }
-  }, []);
-
-  const scheduleCloudHide = useCallback(() => {
-    if (cloudDraggingRef.current) return;
-    cancelCloudHideTimer();
-    cloudHideTimerRef.current = setTimeout(() => {
-      setCloudPanelOpen(false);
-      cloudHideTimerRef.current = null;
-    }, 500);
-  }, [cancelCloudHideTimer]);
-
-  const handleCloudBtnEnter = useCallback(() => {
-    cancelCloudHideTimer();
-    setCloudPanelOpen(true);
-  }, [cancelCloudHideTimer]);
-
-  const handleCloudOuterEnter = useCallback(() => {
-    cancelCloudHideTimer();
-  }, [cancelCloudHideTimer]);
-
-  const handleCloudOuterLeave = useCallback(() => {
-    scheduleCloudHide();
-  }, [scheduleCloudHide]);
-
-  const handleSliderInteraction = useCallback((clientY: number) => {
+  const handleSliderInteraction = useCallback((clientX: number) => {
     const track = sliderTrackRef.current;
     if (!track) return;
     const rect = track.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (rect.bottom - clientY) / rect.height));
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     onCloudOpacityChange?.(pct);
   }, [onCloudOpacityChange]);
 
   const handleSliderMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    cloudDraggingRef.current = true;
-    handleSliderInteraction(e.clientY);
-    const onMove = (ev: MouseEvent) => handleSliderInteraction(ev.clientY);
+    e.stopPropagation();
+    handleSliderInteraction(e.clientX);
+    const onMove = (ev: MouseEvent) => handleSliderInteraction(ev.clientX);
     const onUp = () => {
-      cloudDraggingRef.current = false;
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      if (cloudOuterRef.current && !cloudOuterRef.current.matches(':hover')) {
-        scheduleCloudHide();
-      }
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [handleSliderInteraction, scheduleCloudHide]);
+  }, [handleSliderInteraction]);
 
   const isMoonView = viewTarget === 'moon';
   const hasData = !!hotspot;
 
-  const historyRow = (isOpen: boolean | undefined, onToggle: (() => void) | undefined) => {
+  const historyRow = (
+    isOpen: boolean | undefined,
+    onToggle: (() => void) | undefined,
+    layerActive: boolean,
+    onActivateLayer?: () => void,
+  ) => {
     if (!onToggle) return null;
+    const handleClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!layerActive && onActivateLayer) {
+        onActivateLayer();
+        onToggle();
+      } else {
+        onToggle();
+      }
+    };
     return (
-      <div className="ctrl-tooltip-history" onClick={(e) => { e.stopPropagation(); onToggle(); }}>
-        {isOpen ? <X size={10} /> : <Play size={10} />}
-        <span>{isOpen ? 'Close history' : 'View history'}</span>
+      <div className={`ctrl-tooltip-history${!layerActive ? ' inactive' : ''}`} onClick={handleClick}>
+        {isOpen && layerActive ? <X size={10} /> : <Play size={10} />}
+        <span>{isOpen && layerActive ? 'Close history' : 'View history'}</span>
       </div>
     );
   };
@@ -271,15 +248,15 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         : <Earth size={16} />
         }
       </CtrlBtn>
-      <div
-        className={`cloud-ctrl-outer${cloudPanelOpen ? ' panel-open' : ''}`}
-        ref={cloudOuterRef}
-        onMouseEnter={handleCloudOuterEnter}
-        onMouseLeave={handleCloudOuterLeave}
-      >
-        <div className="cloud-opacity-panel">
-          <div className="cloud-opacity-row">
-            <div className="cloud-slider-wrap">
+      <CtrlBtn
+        className={`globe-ctrl-btn ${cloudsEnabled ? 'active' : ''}`}
+        onClick={onToggleClouds}
+        ariaLabel={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
+        tooltip="Clouds"
+        tooltipExtra={
+          <>
+            <div className="cloud-slider-inline">
+              <span className="cloud-slider-pct">{Math.round(cloudOpacity * 100)}% visibility</span>
               <div
                 className="cloud-slider-track"
                 ref={sliderTrackRef}
@@ -287,37 +264,20 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
               >
                 <div
                   className="cloud-slider-fill"
-                  style={{ height: `${Math.round(cloudOpacity * 100)}%` }}
+                  style={{ width: `${Math.round(cloudOpacity * 100)}%` }}
                 />
                 <div
                   className="cloud-slider-thumb"
-                  style={{ bottom: `${Math.round(cloudOpacity * 100)}%` }}
+                  style={{ left: `${Math.round(cloudOpacity * 100)}%` }}
                 />
               </div>
             </div>
-            <div className="cloud-opacity-side">
-              <span className="cloud-opacity-pct">{Math.round(cloudOpacity * 100)}%</span>
-              <button className="cloud-visibility-btn" onClick={onToggleClouds}>
-                {cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
-              </button>
-              {cloudsEnabled && onToggleCloudHistory && (
-                <div className="ctrl-tooltip-history cloud-history-toggle" onClick={onToggleCloudHistory}>
-                  {cloudHistoryOpen ? <X size={10} /> : <Play size={10} />}
-                  <span>{cloudHistoryOpen ? 'Close history' : 'View history'}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        <button
-          className={`globe-ctrl-btn ${cloudsEnabled ? 'active' : ''}`}
-          onClick={onToggleClouds}
-          onMouseEnter={handleCloudBtnEnter}
-          aria-label={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
-        >
-          {cloudsEnabled ? <Cloud size={16} /> : <CloudOff size={16} />}
-        </button>
-      </div>
+            {historyRow(cloudHistoryOpen, onToggleCloudHistory, cloudsEnabled, onToggleClouds)}
+          </>
+        }
+      >
+        {cloudsEnabled ? <Cloud size={16} /> : <CloudOff size={16} />}
+      </CtrlBtn>
       <CtrlBtn
         className={`globe-ctrl-btn ${lightningEnabled ? 'active' : ''}`}
         onClick={onToggleLightning}
@@ -331,7 +291,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onToggleTemperature}
         ariaLabel={temperatureEnabled ? 'Hide temperature' : 'Show temperature'}
         tooltip={temperatureEnabled ? 'Hide temperature overlay' : 'Show temperature overlay'}
-        tooltipExtra={temperatureEnabled ? historyRow(tempHistoryOpen, onToggleTempHistory) : undefined}
+        tooltipExtra={historyRow(tempHistoryOpen, onToggleTempHistory, temperatureEnabled, onToggleTemperature)}
       >
         <Thermometer size={16} />
       </CtrlBtn>
@@ -340,7 +300,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onTogglePrecipitation}
         ariaLabel={precipitationEnabled ? 'Hide precipitation' : 'Show precipitation'}
         tooltip={precipitationEnabled ? 'Hide precipitation overlay' : 'Show precipitation overlay'}
-        tooltipExtra={precipitationEnabled ? historyRow(precipHistoryOpen, onTogglePrecipHistory) : undefined}
+        tooltipExtra={historyRow(precipHistoryOpen, onTogglePrecipHistory, precipitationEnabled, onTogglePrecipitation)}
       >
         <CloudRain size={16} />
       </CtrlBtn>
@@ -349,7 +309,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onToggleWind}
         ariaLabel={windEnabled ? 'Hide wind' : 'Show wind'}
         tooltip={windEnabled ? 'Hide wind overlay' : 'Show wind overlay'}
-        tooltipExtra={windEnabled ? historyRow(windHistoryOpen, onToggleWindHistory) : undefined}
+        tooltipExtra={historyRow(windHistoryOpen, onToggleWindHistory, windEnabled, onToggleWind)}
       >
         <Wind size={16} />
       </CtrlBtn>

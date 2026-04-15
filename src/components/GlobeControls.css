@@ -293,11 +293,72 @@
     color: #fff;
 }
 
+.ctrl-tooltip-history.inactive {
+    color: rgba(255, 255, 255, 0.25);
+}
+
+.ctrl-tooltip-history.inactive:hover {
+    color: rgba(255, 255, 255, 0.45);
+}
+
+/* Fixed width so tooltip doesn't resize when text changes */
+.ctrl-tooltip-history span {
+    display: inline-block;
+    width: 80px;
+}
+
 .ctrl-tooltip-history span {
     white-space: nowrap;
 }
 
 /* Make tooltip interactive when it has history toggle */
+.cloud-slider-inline {
+    margin-top: 6px;
+    padding: 6px 0 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.cloud-slider-pct {
+    font-size: 10px;
+    font-family: 'Roboto', sans-serif;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.cloud-slider-inline .cloud-slider-track {
+    width: 100%;
+    height: 4px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.15);
+    position: relative;
+    cursor: pointer;
+}
+
+.cloud-slider-inline .cloud-slider-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.4);
+    pointer-events: none;
+}
+
+.cloud-slider-inline .cloud-slider-thumb {
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 14px;
+    height: 14px;
+    background: #fff;
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
 .cloud-history-toggle {
     margin-top: 4px;
     padding-top: 4px;
