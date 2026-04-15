@@ -293,6 +293,110 @@ export class CloudLayer extends BaseLayer<void> {
     }
   }
 
+  // --- Multi-frame history support ---
+
+  private cloudHistoryFrames: { runId: string; timestamp: number }[] = [];
+  private cloudHistoryTextures = new Map<string, THREE.Texture>();
+  private currentHistoryFrameId: string | null = null;
+  private onHistoryFrameListChange: ((frames: { runId: string; timestamp: number }[]) => void) | null = null;
+  private onHistoryFrameReady: ((readyIds: Set<string>) => void) | null = null;
+
+  private get serverUrl(): string {
+    return (import.meta as any).env?.VITE_SERVER_URL ?? 'http://localhost:3001';
+  }
+
+  async refreshCloudFrameList(): Promise<void> {
+    try {
+      const res = await fetch(`${this.serverUrl}/api/clouds/frames`);
+      if (!res.ok) return;
+      const frames: { timestamp: number }[] = await res.json();
+      this.cloudHistoryFrames = frames.map(f => ({
+        runId: String(f.timestamp),
+        timestamp: f.timestamp,
+      }));
+      if (!this.currentHistoryFrameId && this.cloudHistoryFrames.length > 0) {
+        this.currentHistoryFrameId = this.cloudHistoryFrames[this.cloudHistoryFrames.length - 1].runId;
+      }
+      this.onHistoryFrameListChange?.(this.cloudHistoryFrames);
+    } catch (err) {
+      console.error('[CloudLayer] frame list fetch failed:', err);
+    }
+  }
+
+  async setHistoryFrame(runId: string): Promise<void> {
+    this.currentHistoryFrameId = runId;
+    let texture = this.cloudHistoryTextures.get(runId);
+    if (!texture) {
+      const loader = new THREE.TextureLoader();
+      loader.setCrossOrigin('anonymous');
+      texture = await new Promise<THREE.Texture>((resolve, reject) => {
+        loader.load(
+          `${this.serverUrl}/api/clouds/history/${runId}`,
+          tex => resolve(tex),
+          undefined,
+          () => reject(new Error(`Failed to load cloud frame ${runId}`)),
+        );
+      });
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      this.cloudHistoryTextures.set(runId, texture);
+      this.onHistoryFrameReady?.(this.getReadyFrameIds());
+    }
+    // Apply to shells
+    this.baseTexture = texture;
+    sharedNightUniforms.cloudTex.value = texture;
+    for (const { mesh } of this.shells) {
+      const mat = mesh.material as THREE.ShaderMaterial;
+      mat.uniforms.uMap.value = texture;
+    }
+  }
+
+  setOnHistoryFrameListChange(cb: ((frames: { runId: string; timestamp: number }[]) => void) | null): void {
+    this.onHistoryFrameListChange = cb;
+    if (cb && this.cloudHistoryFrames.length > 0) cb(this.cloudHistoryFrames);
+  }
+
+  setOnFrameReady(cb: ((readyIds: Set<string>) => void) | null): void {
+    this.onHistoryFrameReady = cb;
+  }
+
+  getReadyFrameIds(): Set<string> {
+    return new Set(this.cloudHistoryTextures.keys());
+  }
+
+  getHistoryFrameList(): { runId: string; timestamp: number }[] {
+    return this.cloudHistoryFrames;
+  }
+
+  getCurrentHistoryFrameId(): string | null {
+    return this.currentHistoryFrameId;
+  }
+
+  async prefetchAllFrames(): Promise<void> {
+    for (const info of this.cloudHistoryFrames) {
+      if (this.cloudHistoryTextures.has(info.runId)) continue;
+      try {
+        await this.setHistoryFrame(info.runId);
+      } catch (err) {
+        console.warn(`[CloudLayer] prefetch ${info.runId} failed:`, err);
+      }
+    }
+    // Restore current frame's texture after prefetch
+    if (this.currentHistoryFrameId) {
+      const tex = this.cloudHistoryTextures.get(this.currentHistoryFrameId);
+      if (tex) {
+        this.baseTexture = tex;
+        sharedNightUniforms.cloudTex.value = tex;
+        for (const { mesh } of this.shells) {
+          (mesh.material as THREE.ShaderMaterial).uniforms.uMap.value = tex;
+        }
+      }
+    }
+  }
+
   setCloudsEnabled(enabled: boolean): void {
     this.userCloudsEnabled = enabled;
     sharedNightUniforms.cloudShadowEnabled.value = enabled ? 1.0 : 0.0;

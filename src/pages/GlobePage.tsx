@@ -84,6 +84,9 @@ const GlobePage = () => {
   const [windFrames, setWindFrames] = useState<{ runId: string; timestamp: number }[]>([]);
   const [windCurrentFrameId, setWindCurrentFrameId] = useState<string | null>(null);
   const [windReadyIds, setWindReadyIds] = useState<Set<string>>(new Set());
+  const [cloudFrames, setCloudFrames] = useState<{ runId: string; timestamp: number }[]>([]);
+  const [cloudCurrentFrameId, setCloudCurrentFrameId] = useState<string | null>(null);
+  const [cloudReadyIds, setCloudReadyIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     localStorage.setItem('lightning-cloud-opacity', String(cloudOpacity));
@@ -168,6 +171,17 @@ const GlobePage = () => {
       cloudLayer.setCloudsEnabled(cloudsEnabledRef.current);
       cloudLayer.setUserOpacity(cloudOpacityRef.current);
       cloudLayer.setTemperatureEnabled(temperatureEnabledRef.current);
+      cloudLayer.setOnHistoryFrameListChange(frames => {
+        setCloudFrames(frames);
+        setCloudReadyIds(cloudLayer.getReadyFrameIds());
+        if (frames.length > 0 && !cloudLayer.getCurrentHistoryFrameId()) {
+          setCloudCurrentFrameId(frames[frames.length - 1].runId);
+        } else {
+          setCloudCurrentFrameId(cloudLayer.getCurrentHistoryFrameId());
+        }
+      });
+      cloudLayer.setOnFrameReady(ids => setCloudReadyIds(ids));
+      cloudLayer.refreshCloudFrameList();
     }
     const lightningLayer = manager.createLayer<LightningLayer>('lightning', 'lightning');
     if (lightningLayer) {
@@ -328,6 +342,15 @@ const GlobePage = () => {
   }, []);
   const handleWindPrefetch = useCallback(() => {
     layerManagerRef.current?.getLayer<WindLayer>('wind')?.prefetchAllFrames();
+  }, []);
+
+  const handleCloudFrameChange = useCallback((runId: string) => {
+    setCloudCurrentFrameId(runId);
+    const layer = layerManagerRef.current?.getLayer<CloudLayer>('clouds');
+    layer?.setHistoryFrame(runId);
+  }, []);
+  const handleCloudPrefetch = useCallback(() => {
+    layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.prefetchAllFrames();
   }, []);
 
   // Hide lightning during timeline playback, restore when stopped
@@ -496,6 +519,15 @@ const GlobePage = () => {
         onFrameChange={handleWindFrameChange}
         readyFrameIds={windReadyIds}
         onRequestPrefetch={handleWindPrefetch}
+        onPlayingChange={handleTimelinePlayingChange}
+      />
+      <WeatherTimeline
+        visible={cloudsEnabled && cloudFrames.length > 1}
+        frames={cloudFrames}
+        currentFrameId={cloudCurrentFrameId}
+        onFrameChange={handleCloudFrameChange}
+        readyFrameIds={cloudReadyIds}
+        onRequestPrefetch={handleCloudPrefetch}
         onPlayingChange={handleTimelinePlayingChange}
       />
       <NavigationIcons currentPage="globe" />
