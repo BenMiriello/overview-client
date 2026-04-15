@@ -283,6 +283,25 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onToggleLightning}
         ariaLabel={lightningEnabled ? 'Hide lightning' : 'Show lightning'}
         tooltip={lightningEnabled ? 'Hide lightning' : 'Show lightning'}
+        tooltipExtra={
+          <div
+            className={`ctrl-tooltip-history${
+              isMoonView || !hasData || !lightningEnabled ? ' inactive' : ''
+            }${!isMoonView && hasData && hasNewHotspot ? ' new-hotspot' : ''}`}
+            onClick={(e) => { e.stopPropagation(); onGoToHotspot?.(); }}
+          >
+            <Flame size={10} />
+            <span className="hotspot-row-text">{
+              isMoonView
+                ? 'Hotspots on Earth'
+                : !hasData
+                  ? 'Finding hotspot...'
+                  : isViewingHotspot
+                    ? 'At hotspot'
+                    : 'Go to hotspot'
+            }</span>
+          </div>
+        }
       >
         <Zap size={16} />
       </CtrlBtn>
@@ -314,12 +333,12 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         <Wind size={16} />
       </CtrlBtn>
       <CtrlBtn
-        className={hotspotClass}
-        onClick={onGoToHotspot}
-        ariaLabel="Go to hotspot"
-        tooltip={hotspotTooltip}
+        className={`globe-ctrl-btn ${is3D ? 'active' : ''}`}
+        onClick={onToggle3D}
+        ariaLabel={is3D ? 'Switch to 2D view' : 'Switch to 3D view'}
+        tooltip={is3D ? 'Switch to 2D view' : 'Switch to 3D view'}
       >
-        <Flame size={16} />
+        {is3D ? '3D' : '2D'}
       </CtrlBtn>
       <CtrlBtn
         className={`globe-ctrl-btn ${isOrbiting ? 'active' : ''}`}
@@ -328,14 +347,6 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         tooltip={isOrbiting ? 'Stop auto-rotation' : 'Start auto-rotation'}
       >
         <RotateCcw size={16} />
-      </CtrlBtn>
-      <CtrlBtn
-        className={`globe-ctrl-btn ${is3D ? 'active' : ''}`}
-        onClick={onToggle3D}
-        ariaLabel={is3D ? 'Switch to 2D view' : 'Switch to 3D view'}
-        tooltip={is3D ? 'Switch to 2D view' : 'Switch to 3D view'}
-      >
-        {is3D ? '3D' : '2D'}
       </CtrlBtn>
       <CtrlBtn
         className={`globe-ctrl-btn ${infoVisible ? 'active' : ''}`}
