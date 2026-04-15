@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff, Info, Zap, Thermometer, CloudRain } from 'lucide-react';
+import { Flame, RotateCcw, Moon, Earth, Cloud, CloudOff, Info, Zap, Thermometer, CloudRain, Wind } from 'lucide-react';
 import { ConnectionStatus } from '../services/dataStreams/hooks';
 import { LightningLayer } from '../layers';
 import './GlobeControls.css';
@@ -31,6 +31,8 @@ interface GlobeControlsProps {
   onToggleTemperature?: () => void;
   precipitationEnabled?: boolean;
   onTogglePrecipitation?: () => void;
+  windEnabled?: boolean;
+  onToggleWind?: () => void;
   connectionStatus?: ConnectionStatus;
   lastUpdate?: string;
   lightningLayer?: LightningLayer | null;
@@ -77,6 +79,8 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
   onToggleTemperature,
   precipitationEnabled = false,
   onTogglePrecipitation,
+  windEnabled = false,
+  onToggleWind,
   connectionStatus,
   lastUpdate,
   lightningLayer,
@@ -246,6 +250,14 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         tooltip={precipitationEnabled ? 'Hide precipitation overlay' : 'Show precipitation overlay'}
       >
         <CloudRain size={16} />
+      </CtrlBtn>
+      <CtrlBtn
+        className={`globe-ctrl-btn ${windEnabled ? 'active' : ''}`}
+        onClick={onToggleWind}
+        ariaLabel={windEnabled ? 'Hide wind' : 'Show wind'}
+        tooltip={windEnabled ? 'Hide wind overlay' : 'Show wind overlay'}
+      >
+        <Wind size={16} />
       </CtrlBtn>
       <CtrlBtn
         className={hotspotClass}

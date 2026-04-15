@@ -4,15 +4,13 @@ import { LAYERS } from '../services/renderLayers';
 import { setMapDesaturate } from '../services/dayNightMaterial';
 
 const EARTH_RADIUS = 100;
-const REFRESH_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 
-// 0.25° grid: 1440 lng columns × 721 lat rows = 1,038,240 points (matches server temperatureCache.js)
 const GRID_W = 1440;
 const GRID_H = 721;
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:3001';
 
-// 0.65 opacity: 35% tile bleed provides consistent surface structure on both day and night sides.
 const MAX_OPACITY = 0.65;
 
 const tempVertexShader = /* glsl */`
@@ -23,9 +21,6 @@ const tempVertexShader = /* glsl */`
   }
 `;
 
-// Flat opacity across day and night — tile structure bleeds through consistently on both sides.
-// The day tile desaturation (B&W via sharedNightUniforms.desaturate) provides visual
-// contrast between day and night without making the temperature go opaque on one side.
 const tempFragmentShader = /* glsl */`
   precision highp float;
   uniform sampler2D uTempMap;
@@ -37,19 +32,16 @@ const tempFragmentShader = /* glsl */`
   }
 `;
 
-// Temperature color stops [°C, [r, g, b]]
-// Calibrated so the common surface range (−10 to +38°C) spans the full spectrum.
-// Matches the conventional rainbow scale used by Windy, Ventusky, earth.nullschool.
 const COLORMAP: [number, [number, number, number]][] = [
-  [-40, [120,   0, 180]],  // violet        — polar/arctic
-  [-25, [ 30,  30, 220]],  // deep blue     — very cold
-  [-10, [  0, 130, 255]],  // sky blue      — cold
-  [  0, [  0, 220, 220]],  // cyan          — freezing point (prominent landmark)
-  [ 10, [  0, 200,  60]],  // green         — cool
-  [ 20, [200, 230,   0]],  // yellow-green  — mild/warm
-  [ 28, [255, 165,   0]],  // orange        — hot
-  [ 38, [220,   0,   0]],  // red           — very hot
-  [ 48, [120,   0,  40]],  // dark crimson  — extreme heat
+  [-40, [120,   0, 180]],
+  [-25, [ 30,  30, 220]],
+  [-10, [  0, 130, 255]],
+  [  0, [  0, 220, 220]],
+  [ 10, [  0, 200,  60]],
+  [ 20, [200, 230,   0]],
+  [ 28, [255, 165,   0]],
+  [ 38, [220,   0,   0]],
+  [ 48, [120,   0,  40]],
 ];
 
 export function tempToRGB(temp: number): [number, number, number] {
@@ -69,6 +61,11 @@ export function tempToRGB(temp: number): [number, number, number] {
   return COLORMAP[COLORMAP.length - 1][1];
 }
 
+interface FrameInfo {
+  runId: string;
+  timestamp: number;
+}
+
 async function fetchTemperatureGrid(): Promise<Float32Array> {
   const res = await fetch(`${SERVER_URL}/api/temperature?v=${GRID_W}x${GRID_H}`);
   if (!res.ok) throw new Error(`/api/temperature ${res.status}`);
@@ -79,8 +76,21 @@ async function fetchTemperatureGrid(): Promise<Float32Array> {
   return new Float32Array(json);
 }
 
-async function buildTemperatureTexture(temps: Float32Array): Promise<THREE.CanvasTexture> {
+async function fetchFrameList(): Promise<FrameInfo[]> {
+  const res = await fetch(`${SERVER_URL}/api/temperature/frames`);
+  if (!res.ok) throw new Error(`/api/temperature/frames ${res.status}`);
+  return res.json();
+}
 
+async function fetchFrame(runId: string): Promise<Float32Array> {
+  const encoded = runId.replace('/', '_');
+  const res = await fetch(`${SERVER_URL}/api/temperature/${encoded}`);
+  if (!res.ok) throw new Error(`/api/temperature/${encoded} ${res.status}`);
+  const json: number[] = await res.json();
+  return new Float32Array(json);
+}
+
+async function buildTemperatureTexture(temps: Float32Array): Promise<THREE.CanvasTexture> {
   const small = document.createElement('canvas');
   small.width = GRID_W;
   small.height = GRID_H;
@@ -91,7 +101,6 @@ async function buildTemperatureTexture(temps: Float32Array): Promise<THREE.Canva
     for (let lngIdx = 0; lngIdx < GRID_W; lngIdx++) {
       const temp = temps[latIdx * GRID_W + lngIdx];
       const [r, g, b] = tempToRGB(temp);
-      // flipY=true (default): canvas y=0 → north, so north lats go at top
       const canvasY = (GRID_H - 1) - latIdx;
       const px = (canvasY * GRID_W + lngIdx) * 4;
       imgData.data[px]     = r;
@@ -102,7 +111,6 @@ async function buildTemperatureTexture(temps: Float32Array): Promise<THREE.Canva
   }
   ctx.putImageData(imgData, 0, 0);
 
-  // 2× upscale: bilinear interpolation smooths data point boundaries on the sphere
   const large = document.createElement('canvas');
   large.width  = GRID_W * 2;
   large.height = GRID_H * 2;
@@ -120,6 +128,13 @@ export class TemperatureLayer extends BaseLayer<void> {
   private texture: THREE.CanvasTexture | null = null;
   private grid: Float32Array | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+  // Multi-frame support — capped to avoid OOM on large frame lists
+  private static readonly MAX_CACHED_FRAMES = 8;
+  private frames = new Map<string, Float32Array>();
+  private frameList: FrameInfo[] = [];
+  private currentFrameId: string | null = null;
+  private onFrameListChange: ((frames: FrameInfo[]) => void) | null = null;
 
   initialize(globeEl: any): void {
     super.initialize(globeEl);
@@ -154,6 +169,7 @@ export class TemperatureLayer extends BaseLayer<void> {
     fetchTemperatureGrid()
       .then(async grid => {
         this.grid = grid;
+        this.frames.set('__latest__', grid);
         const texture = await buildTemperatureTexture(grid);
         if (!this.mesh) { texture.dispose(); return; }
         const mat = this.mesh.material as THREE.ShaderMaterial;
@@ -161,13 +177,88 @@ export class TemperatureLayer extends BaseLayer<void> {
         this.texture = texture;
         mat.uniforms.uTempMap.value = texture;
         old?.dispose();
-        // If show() was called before the texture was ready, trigger the fade now.
         if (this.pendingShow) {
           this.pendingShow = false;
           this.startFade(MAX_OPACITY);
         }
+        this.refreshFrameList();
       })
       .catch(err => console.error('[TemperatureLayer] fetch/build failed:', err));
+  }
+
+  private async refreshFrameList(): Promise<void> {
+    try {
+      this.frameList = await fetchFrameList();
+      if (!this.currentFrameId || this.currentFrameId === '__latest__') {
+        this.currentFrameId = this.frameList.length > 0
+          ? this.frameList[this.frameList.length - 1].runId
+          : null;
+      }
+      this.onFrameListChange?.(this.frameList);
+    } catch (err) {
+      console.error('[TemperatureLayer] frame list fetch failed:', err);
+    }
+  }
+
+  async setFrame(runId: string): Promise<void> {
+    this.currentFrameId = runId;
+
+    let grid = this.frames.get(runId);
+    if (!grid) {
+      grid = await fetchFrame(runId);
+      this.cacheFrame(runId, grid);
+    }
+
+    this.grid = grid;
+    const texture = await buildTemperatureTexture(grid);
+    if (!this.mesh) { texture.dispose(); return; }
+    const mat = this.mesh.material as THREE.ShaderMaterial;
+    const old = this.texture;
+    this.texture = texture;
+    mat.uniforms.uTempMap.value = texture;
+    old?.dispose();
+  }
+
+  setOnFrameListChange(cb: ((frames: FrameInfo[]) => void) | null): void {
+    this.onFrameListChange = cb;
+    if (cb && this.frameList.length > 0) cb(this.frameList);
+  }
+
+  getFrameList(): FrameInfo[] {
+    return this.frameList;
+  }
+
+  getCurrentFrameId(): string | null {
+    return this.currentFrameId;
+  }
+
+  private cacheFrame(runId: string, data: Float32Array): void {
+    this.frames.set(runId, data);
+    // Evict oldest entries beyond the cap (Map preserves insertion order)
+    if (this.frames.size > TemperatureLayer.MAX_CACHED_FRAMES) {
+      const oldest = this.frames.keys().next().value;
+      if (oldest && oldest !== '__latest__' && oldest !== this.currentFrameId) {
+        this.frames.delete(oldest);
+      }
+    }
+  }
+
+  async prefetchAllFrames(): Promise<void> {
+    const currentIdx = this.frameList.findIndex(f => f.runId === this.currentFrameId);
+    const toFetch = this.frameList.filter((info, i) => {
+      if (this.frames.has(info.runId)) return false;
+      // Only prefetch frames adjacent to current
+      return Math.abs(i - currentIdx) <= 3;
+    });
+
+    for (const info of toFetch) {
+      try {
+        const grid = await fetchFrame(info.runId);
+        this.cacheFrame(info.runId, grid);
+      } catch (err) {
+        console.warn(`[TemperatureLayer] prefetch ${info.runId} failed:`, err);
+      }
+    }
   }
 
   getTempAtLatLng(lat: number, lng: number): number | null {
@@ -193,7 +284,6 @@ export class TemperatureLayer extends BaseLayer<void> {
     this.isFading = true;
   }
 
-  // Keep the layer in the update loop while fading so opacity animates.
   isVisible(): boolean {
     return this.isFading || super.isVisible();
   }
@@ -204,7 +294,6 @@ export class TemperatureLayer extends BaseLayer<void> {
     if (this.texture) {
       this.startFade(MAX_OPACITY);
     } else {
-      // Texture not yet ready — loadTexture() will call startFade once it lands
       this.pendingShow = true;
     }
   }
@@ -221,7 +310,6 @@ export class TemperatureLayer extends BaseLayer<void> {
     const t = Math.min(1, (performance.now() - this.fadeStartMs) / TemperatureLayer.FADE_MS);
     const opacity = this.fadeFrom + (this.fadeTarget - this.fadeFrom) * t;
     mat.uniforms.uOpacity.value = opacity;
-    // Desaturate the tile map in sync with the fade so tiles smoothly go B&W as temperature appears
     setMapDesaturate(opacity / MAX_OPACITY);
     if (t >= 1) {
       this.isFading = false;
@@ -246,5 +334,7 @@ export class TemperatureLayer extends BaseLayer<void> {
     this.geometry = null;
     this.texture?.dispose();
     this.texture = null;
+    this.frames.clear();
+    this.onFrameListChange = null;
   }
 }

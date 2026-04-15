@@ -167,7 +167,8 @@ export class PrecipitationLayer extends BaseLayer<void> {
   private texture: THREE.CanvasTexture | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
-  // Multi-frame support
+  // Multi-frame support — capped to avoid OOM on large frame lists
+  private static readonly MAX_CACHED_FRAMES = 8;
   private frames = new Map<string, PrecipFrame>();
   private frameList: FrameInfo[] = [];
   private currentFrameId: string | null = null;
@@ -255,7 +256,7 @@ export class PrecipitationLayer extends BaseLayer<void> {
     let frame = this.frames.get(runId);
     if (!frame) {
       frame = await fetchFrame(runId);
-      this.frames.set(runId, frame);
+      this.cacheFrame(runId, frame);
     }
 
     this.currentRates = frame.rates;
@@ -286,22 +287,35 @@ export class PrecipitationLayer extends BaseLayer<void> {
   getPrecipAtLatLng(lat: number, lng: number): { rate: number; type: number } | null {
     if (!this.currentRates || !this.currentTypes) return null;
     const latIdx = Math.round((lat + 90) / 0.25);
-    const lngIdx = Math.round((lng + 180) / 0.25);
+    const lngIdx = Math.round((lng + 90) / 0.25);
     const idx = latIdx * GRID_W + lngIdx;
     if (idx < 0 || idx >= this.currentRates.length) return null;
     return { rate: this.currentRates[idx], type: this.currentTypes[idx] };
   }
 
-  // Prefetch all historical frames for smooth scrubbing
+  private cacheFrame(runId: string, frame: PrecipFrame): void {
+    this.frames.set(runId, frame);
+    if (this.frames.size > PrecipitationLayer.MAX_CACHED_FRAMES) {
+      const oldest = this.frames.keys().next().value;
+      if (oldest && oldest !== '__latest__' && oldest !== this.currentFrameId) {
+        this.frames.delete(oldest);
+      }
+    }
+  }
+
   async prefetchAllFrames(): Promise<void> {
-    for (const info of this.frameList) {
-      if (!this.frames.has(info.runId)) {
-        try {
-          const frame = await fetchFrame(info.runId);
-          this.frames.set(info.runId, frame);
-        } catch (err) {
-          console.error(`[PrecipitationLayer] prefetch ${info.runId} failed:`, err);
-        }
+    const currentIdx = this.frameList.findIndex(f => f.runId === this.currentFrameId);
+    const toFetch = this.frameList.filter((info, i) => {
+      if (this.frames.has(info.runId)) return false;
+      return Math.abs(i - currentIdx) <= 3;
+    });
+
+    for (const info of toFetch) {
+      try {
+        const frame = await fetchFrame(info.runId);
+        this.cacheFrame(info.runId, frame);
+      } catch (err) {
+        console.warn(`[PrecipitationLayer] prefetch ${info.runId} failed:`, err);
       }
     }
   }

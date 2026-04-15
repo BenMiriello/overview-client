@@ -67,6 +67,7 @@ interface GlobeComponentProps {
   lightningEnabled?: boolean;
   temperatureEnabled?: boolean;
   precipitationEnabled?: boolean;
+  windEnabled?: boolean;
   restoredView?: StoredView | null;
   onEarthViewReady?: () => void;
   // Populated in close-mode with the camera ground target; null in far-mode.
@@ -423,6 +424,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   lightningEnabled = true,
   temperatureEnabled = false,
   precipitationEnabled = false,
+  windEnabled = false,
   restoredView = null,
   onEarthViewReady,
   cameraTargetRef,
@@ -461,6 +463,8 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   useEffect(() => { temperatureEnabledRef.current = temperatureEnabled; }, [temperatureEnabled]);
   const precipitationEnabledRef = useRef(precipitationEnabled);
   useEffect(() => { precipitationEnabledRef.current = precipitationEnabled; }, [precipitationEnabled]);
+  const windEnabledRef = useRef(windEnabled);
+  useEffect(() => { windEnabledRef.current = windEnabled; }, [windEnabled]);
 
   const dragVelocityRef  = useRef<{ dlat: number; dlng: number } | null>(null);
 
@@ -2420,6 +2424,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         lightningEnabled: lightningEnabledRef.current,
         temperatureEnabled: temperatureEnabledRef.current,
         precipitationEnabled: precipitationEnabledRef.current,
+        windEnabled: windEnabledRef.current,
         mode,
       };
 
@@ -2492,7 +2497,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   // ── Surface hover (raycasting for cursor tooltip) ───────────
   useEffect(() => {
     if (!isGlobeReady || !globeEl.current || !onSurfaceHover) return;
-    if ((!temperatureEnabled && !precipitationEnabled) || viewTarget !== 'earth') {
+    if ((!temperatureEnabled && !precipitationEnabled && !windEnabled) || viewTarget !== 'earth') {
       onSurfaceHover(null, 0, 0);
       return;
     }
@@ -2528,7 +2533,7 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       canvas.style.cursor = '';
       onSurfaceHover(null, 0, 0);
     };
-  }, [isGlobeReady, temperatureEnabled, precipitationEnabled, viewTarget, onSurfaceHover]);
+  }, [isGlobeReady, temperatureEnabled, precipitationEnabled, windEnabled, viewTarget, onSurfaceHover]);
 
   // ── Layer manager cleanup ────────────────────────────────────────────────
   useEffect(() => {

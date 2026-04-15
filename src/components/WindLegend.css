@@ -1,0 +1,95 @@
+.wind-legend {
+    position: fixed;
+    left: 20px;
+    bottom: 76px;
+    z-index: 1000;
+}
+
+.wind-legend-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.wind-legend-colorbar-wrap {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 5px;
+    padding: 14px 10px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0);
+    transition: background 0.25s ease;
+}
+
+.wind-legend-bar {
+    width: 12px;
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+
+.wind-legend-ticks {
+    position: relative;
+    width: 32px;
+    flex-shrink: 0;
+}
+
+.wind-legend-tick {
+    position: absolute;
+    left: 0;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.wind-legend-tick-dash {
+    display: inline-block;
+    width: 4px;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.3);
+    flex-shrink: 0;
+}
+
+.wind-legend-tick-label {
+    font-size: 11px;
+    font-family: 'Roboto', sans-serif;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.82);
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.wind-legend-unit-wrap {
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0);
+    transition: background 0.25s ease;
+}
+
+.wind-legend-unit-btn {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 11px;
+    font-family: 'Roboto', sans-serif;
+    font-weight: 500;
+    padding: 0;
+    line-height: 1;
+    cursor: pointer;
+    transition: color 0.15s ease;
+}
+
+.wind-legend-row:hover .wind-legend-colorbar-wrap,
+.wind-legend-row:hover .wind-legend-unit-wrap {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.wind-legend-row:hover .wind-legend-unit-btn {
+    color: #fff;
+}

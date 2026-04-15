@@ -23,6 +23,8 @@ export const LAYERS = {
   ATMOSPHERE: 20,
   TEMPERATURE: 25, // must be above atmosphere so it renders on night side
   PRECIPITATION: 26,
+  WIND_OVERLAY: 27,
+  WIND_PARTICLES: 28,
   MOON_SURFACE: 30,
   MOON_RELIEF: 31,
   MARKERS: 100,

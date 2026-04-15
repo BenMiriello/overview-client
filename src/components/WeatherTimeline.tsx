@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Play, Pause } from 'lucide-react';
-import './PrecipitationTimeline.css';
+import './WeatherTimeline.css';
 
 interface FrameInfo {
   runId: string;
@@ -34,7 +34,7 @@ function formatDate(ts: number): string {
   return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
-export const PrecipitationTimeline: React.FC<Props> = ({ visible, frames, currentFrameId, onFrameChange }) => {
+export const WeatherTimeline: React.FC<Props> = ({ visible, frames, currentFrameId, onFrameChange }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -43,7 +43,6 @@ export const PrecipitationTimeline: React.FC<Props> = ({ visible, frames, curren
   const currentIndex = frames.findIndex(f => f.runId === currentFrameId);
   const isAtNow = currentIndex === frames.length - 1;
 
-  // Auto-play
   useEffect(() => {
     if (!isPlaying || frames.length < 2) {
       if (playIntervalRef.current) clearInterval(playIntervalRef.current);
@@ -60,7 +59,6 @@ export const PrecipitationTimeline: React.FC<Props> = ({ visible, frames, curren
     };
   }, [isPlaying, frames, currentFrameId, onFrameChange]);
 
-  // Stop playing when hidden
   useEffect(() => {
     if (!visible) setIsPlaying(false);
   }, [visible]);
@@ -107,7 +105,6 @@ export const PrecipitationTimeline: React.FC<Props> = ({ visible, frames, curren
     ? (currentIndex / (frames.length - 1)) * 100
     : 50;
 
-  // Show date labels when frames span multiple days
   const dateLabels: { pct: number; label: string }[] = [];
   let lastDate = '';
   frames.forEach((f, i) => {
@@ -122,43 +119,43 @@ export const PrecipitationTimeline: React.FC<Props> = ({ visible, frames, curren
   });
 
   return (
-    <div className="precip-timeline" tabIndex={0} onKeyDown={handleKeyDown}>
+    <div className="weather-timeline" tabIndex={0} onKeyDown={handleKeyDown}>
       <button
-        className="precip-timeline-play"
+        className="weather-timeline-play"
         onClick={() => setIsPlaying(v => !v)}
         aria-label={isPlaying ? 'Pause' : 'Play'}
       >
         {isPlaying ? <Pause size={14} /> : <Play size={14} />}
       </button>
-      <div className="precip-timeline-track-wrap">
-        <div className="precip-timeline-current">
+      <div className="weather-timeline-track-wrap">
+        <div className="weather-timeline-current">
           {currentIndex >= 0
             ? formatTimeFull(frames[currentIndex].timestamp)
             : ''}
         </div>
         <div
-          className="precip-timeline-track"
+          className="weather-timeline-track"
           ref={trackRef}
           onMouseDown={handleMouseDown}
         >
-          <div className="precip-timeline-fill" style={{ width: `${thumbPct}%` }} />
+          <div className="weather-timeline-fill" style={{ width: `${thumbPct}%` }} />
           {frames.map((f, i) => (
             <div
               key={f.runId}
-              className={`precip-timeline-tick${f.runId === currentFrameId ? ' active' : ''}`}
+              className={`weather-timeline-tick${f.runId === currentFrameId ? ' active' : ''}`}
               style={{ left: `${frames.length > 1 ? (i / (frames.length - 1)) * 100 : 50}%` }}
             />
           ))}
           <div
-            className="precip-timeline-thumb"
+            className="weather-timeline-thumb"
             style={{ left: `${thumbPct}%` }}
           />
         </div>
-        <div className="precip-timeline-labels">
+        <div className="weather-timeline-labels">
           {frames.map((f, i) => (
             <div
               key={f.runId}
-              className="precip-timeline-time-label"
+              className="weather-timeline-time-label"
               style={{ left: `${frames.length > 1 ? (i / (frames.length - 1)) * 100 : 50}%` }}
             >
               {formatHour(f.timestamp)}
@@ -166,11 +163,11 @@ export const PrecipitationTimeline: React.FC<Props> = ({ visible, frames, curren
           ))}
         </div>
         {dateLabels.length > 1 && (
-          <div className="precip-timeline-date-labels">
+          <div className="weather-timeline-date-labels">
             {dateLabels.map(({ pct, label }) => (
               <div
                 key={`${pct}-${label}`}
-                className="precip-timeline-date-label"
+                className="weather-timeline-date-label"
                 style={{ left: `${pct}%` }}
               >
                 {label}
@@ -178,7 +175,7 @@ export const PrecipitationTimeline: React.FC<Props> = ({ visible, frames, curren
             ))}
           </div>
         )}
-        <div className="precip-timeline-now-label" style={{ left: '100%' }}>
+        <div className="weather-timeline-now-label" style={{ left: '100%' }}>
           {isAtNow ? 'NOW' : ''}
         </div>
       </div>

@@ -4,4 +4,5 @@ export * from './GlobeControls';
 export * from './Navigation';
 export * from './TemperatureLegend';
 export * from './PrecipitationLegend';
-export * from './PrecipitationTimeline';
+export * from './WeatherTimeline';
+export * from './WindLegend';

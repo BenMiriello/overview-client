@@ -1,10 +1,11 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { useLightningData } from '../services/dataStreams/hooks';
-import { GlobeComponent, GlobeControls, TemperatureLegend, PrecipitationLegend, PrecipitationTimeline } from '../components';
+import { GlobeComponent, GlobeControls, TemperatureLegend, PrecipitationLegend, WindLegend, WeatherTimeline } from '../components';
 import { TemperatureCursor, TemperatureCursorHandle } from '../components/TemperatureCursor';
 import { PrecipitationCursor, PrecipitationCursorHandle } from '../components/PrecipitationCursor';
+import { WindCursor, WindCursorHandle } from '../components/WindCursor';
 import { NavigationIcons } from '../components/Navigation';
-import { LightningLayer, CloudLayer, TemperatureLayer, PrecipitationLayer } from '../layers';
+import { LightningLayer, CloudLayer, TemperatureLayer, PrecipitationLayer, WindLayer } from '../layers';
 import { GlobeLayerManager } from '../managers';
 import { loadView, loadLegacyPrefer3D } from '../components/globeViewPersistence';
 
@@ -68,11 +69,18 @@ const GlobePage = () => {
   const [lightningEnabled, setLightningEnabled] = useState(() => restoredView?.lightningEnabled ?? true);
   const [temperatureEnabled, setTemperatureEnabled] = useState(() => restoredView?.temperatureEnabled ?? false);
   const [precipitationEnabled, setPrecipitationEnabled] = useState(() => restoredView?.precipitationEnabled ?? false);
+  const [windEnabled, setWindEnabled] = useState(() => restoredView?.windEnabled ?? false);
   const [tempUnit, setTempUnit] = useState<'C' | 'F'>('C');
+  const [windUnit, setWindUnit] = useState<'ms' | 'kmh' | 'kts'>('ms');
   const cursorRef = useRef<TemperatureCursorHandle>(null);
   const precipCursorRef = useRef<PrecipitationCursorHandle>(null);
+  const windCursorRef = useRef<WindCursorHandle>(null);
   const [precipFrames, setPrecipFrames] = useState<{ runId: string; timestamp: number }[]>([]);
   const [precipCurrentFrameId, setPrecipCurrentFrameId] = useState<string | null>(null);
+  const [tempFrames, setTempFrames] = useState<{ runId: string; timestamp: number }[]>([]);
+  const [tempCurrentFrameId, setTempCurrentFrameId] = useState<string | null>(null);
+  const [windFrames, setWindFrames] = useState<{ runId: string; timestamp: number }[]>([]);
+  const [windCurrentFrameId, setWindCurrentFrameId] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem('lightning-cloud-opacity', String(cloudOpacity));
@@ -147,6 +155,8 @@ const GlobePage = () => {
   temperatureEnabledRef.current = temperatureEnabled;
   const precipitationEnabledRef = useRef(precipitationEnabled);
   precipitationEnabledRef.current = precipitationEnabled;
+  const windEnabledRef = useRef(windEnabled);
+  windEnabledRef.current = windEnabled;
 
   const handleLayerManagerReady = useCallback((manager: GlobeLayerManager) => {
     layerManagerRef.current = manager;
@@ -164,6 +174,14 @@ const GlobePage = () => {
     const temperatureLayer = manager.createLayer<TemperatureLayer>('temperature', 'temperature');
     if (temperatureLayer) {
       temperatureEnabledRef.current ? temperatureLayer.show() : temperatureLayer.hide();
+      temperatureLayer.setOnFrameListChange(frames => {
+        setTempFrames(frames);
+        if (frames.length > 0 && !temperatureLayer.getCurrentFrameId()) {
+          setTempCurrentFrameId(frames[frames.length - 1].runId);
+        } else {
+          setTempCurrentFrameId(temperatureLayer.getCurrentFrameId());
+        }
+      });
     }
     const precipitationLayer = manager.createLayer<PrecipitationLayer>('precipitation', 'precipitation');
     if (precipitationLayer) {
@@ -175,7 +193,18 @@ const GlobePage = () => {
         } else {
           setPrecipCurrentFrameId(precipitationLayer.getCurrentFrameId());
         }
-        precipitationLayer.prefetchAllFrames();
+      });
+    }
+    const windLayer = manager.createLayer<WindLayer>('wind', 'wind');
+    if (windLayer) {
+      windEnabledRef.current ? windLayer.show() : windLayer.hide();
+      windLayer.setOnFrameListChange(frames => {
+        setWindFrames(frames);
+        if (frames.length > 0 && !windLayer.getCurrentFrameId()) {
+          setWindCurrentFrameId(frames[frames.length - 1].runId);
+        } else {
+          setWindCurrentFrameId(windLayer.getCurrentFrameId());
+        }
       });
     }
   }, [dataStream]);
@@ -217,33 +246,58 @@ const GlobePage = () => {
     });
   }, []);
 
+  const hideOtherOverlays = useCallback((except: 'temperature' | 'precipitation' | 'wind') => {
+    if (except !== 'temperature' && temperatureEnabled) {
+      setTemperatureEnabled(false);
+      layerManagerRef.current?.getLayer<TemperatureLayer>('temperature')?.hide();
+      layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setTemperatureEnabled(false);
+    }
+    if (except !== 'precipitation' && precipitationEnabled) {
+      setPrecipitationEnabled(false);
+      layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation')?.hide();
+    }
+    if (except !== 'wind' && windEnabled) {
+      setWindEnabled(false);
+      layerManagerRef.current?.getLayer<WindLayer>('wind')?.hide();
+    }
+  }, [temperatureEnabled, precipitationEnabled, windEnabled]);
+
   const handleToggleTemperature = useCallback(() => {
     setTemperatureEnabled(v => {
       const next = !v;
       const layer = layerManagerRef.current?.getLayer<TemperatureLayer>('temperature');
       next ? layer?.show() : layer?.hide();
       layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setTemperatureEnabled(next);
-      if (next && precipitationEnabled) {
-        setPrecipitationEnabled(false);
-        layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation')?.hide();
-      }
+      if (next) hideOtherOverlays('temperature');
       return next;
     });
-  }, [precipitationEnabled]);
+  }, [hideOtherOverlays]);
 
   const handleTogglePrecipitation = useCallback(() => {
     setPrecipitationEnabled(v => {
       const next = !v;
       const layer = layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation');
       next ? layer?.show() : layer?.hide();
-      if (next && temperatureEnabled) {
-        setTemperatureEnabled(false);
-        layerManagerRef.current?.getLayer<TemperatureLayer>('temperature')?.hide();
-        layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setTemperatureEnabled(false);
-      }
+      if (next) hideOtherOverlays('precipitation');
       return next;
     });
-  }, [temperatureEnabled]);
+  }, [hideOtherOverlays]);
+
+  const handleToggleWind = useCallback(() => {
+    setWindEnabled(v => {
+      const next = !v;
+      const layer = layerManagerRef.current?.getLayer<WindLayer>('wind');
+      next ? layer?.show() : layer?.hide();
+      if (next) hideOtherOverlays('wind');
+      return next;
+    });
+  }, [hideOtherOverlays]);
+
+  const handleTempFrameChange = useCallback((runId: string) => {
+    setTempCurrentFrameId(runId);
+    const layer = layerManagerRef.current?.getLayer<TemperatureLayer>('temperature');
+    layer?.setFrame(runId);
+  }, []);
 
   const handlePrecipFrameChange = useCallback((runId: string) => {
     setPrecipCurrentFrameId(runId);
@@ -251,10 +305,17 @@ const GlobePage = () => {
     layer?.setFrame(runId);
   }, []);
 
+  const handleWindFrameChange = useCallback((runId: string) => {
+    setWindCurrentFrameId(runId);
+    const layer = layerManagerRef.current?.getLayer<WindLayer>('wind');
+    layer?.setFrame(runId);
+  }, []);
+
   const handleSurfaceHover = useCallback((result: { lat: number; lng: number } | null, x: number, y: number) => {
     if (!result) {
       cursorRef.current?.update(null);
       precipCursorRef.current?.update(null);
+      windCursorRef.current?.update(null);
       return;
     }
 
@@ -282,6 +343,19 @@ const GlobePage = () => {
       }
     } else {
       precipCursorRef.current?.update(null);
+    }
+
+    // Wind cursor
+    const windLayer = layerManagerRef.current?.getLayer<WindLayer>('wind');
+    if (windLayer?.isVisible()) {
+      const wind = windLayer.getWindAtLatLng(result.lat, result.lng);
+      if (wind) {
+        windCursorRef.current?.update({ x, y, lat: result.lat, lng: result.lng, speed: wind.speed, direction: wind.direction });
+      } else {
+        windCursorRef.current?.update(null);
+      }
+    } else {
+      windCursorRef.current?.update(null);
     }
   }, []);
 
@@ -325,6 +399,7 @@ const GlobePage = () => {
         lightningEnabled={lightningEnabled}
         temperatureEnabled={temperatureEnabled}
         precipitationEnabled={precipitationEnabled}
+        windEnabled={windEnabled}
         restoredView={restoredView}
         onEarthViewReady={handleEarthViewReady}
         cameraTargetRef={cameraTargetRef}
@@ -351,19 +426,35 @@ const GlobePage = () => {
         onToggleTemperature={handleToggleTemperature}
         precipitationEnabled={precipitationEnabled}
         onTogglePrecipitation={handleTogglePrecipitation}
+        windEnabled={windEnabled}
+        onToggleWind={handleToggleWind}
         connectionStatus={connectionStatus}
         lastUpdate={lastUpdate}
         lightningLayer={layerManagerRef.current?.getLayer<LightningLayer>('lightning') || null}
       />
       <TemperatureLegend visible={temperatureEnabled} unit={tempUnit} onUnitChange={setTempUnit} />
       <TemperatureCursor ref={cursorRef} unit={tempUnit} />
+      <WeatherTimeline
+        visible={temperatureEnabled}
+        frames={tempFrames}
+        currentFrameId={tempCurrentFrameId}
+        onFrameChange={handleTempFrameChange}
+      />
       <PrecipitationLegend visible={precipitationEnabled} />
       <PrecipitationCursor ref={precipCursorRef} />
-      <PrecipitationTimeline
+      <WeatherTimeline
         visible={precipitationEnabled}
         frames={precipFrames}
         currentFrameId={precipCurrentFrameId}
         onFrameChange={handlePrecipFrameChange}
+      />
+      <WindLegend visible={windEnabled} unit={windUnit} onUnitChange={setWindUnit} />
+      <WindCursor ref={windCursorRef} unit={windUnit} />
+      <WeatherTimeline
+        visible={windEnabled}
+        frames={windFrames}
+        currentFrameId={windCurrentFrameId}
+        onFrameChange={handleWindFrameChange}
       />
       <NavigationIcons currentPage="globe" />
     </div>

@@ -3,6 +3,7 @@ import { LightningLayer } from './LightningLayer';
 import { CloudLayer } from './CloudLayer';
 import { TemperatureLayer } from './TemperatureLayer';
 import { PrecipitationLayer } from './PrecipitationLayer';
+import { WindLayer } from './WindLayer';
 
 /**
  * Factory for creating different types of data layers
@@ -30,6 +31,8 @@ export class LayerFactory {
         return new TemperatureLayer();
       case 'precipitation':
         return new PrecipitationLayer();
+      case 'wind':
+        return new WindLayer();
       default:
         console.warn(`Unknown layer type: ${type}`);
         return null;

@@ -1,4 +1,4 @@
-.precip-timeline {
+.weather-timeline {
   position: fixed;
   bottom: 56px;
   left: 50%;
@@ -16,7 +16,7 @@
   outline: none;
 }
 
-.precip-timeline-play {
+.weather-timeline-play {
   background: none;
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: rgba(255, 255, 255, 0.8);
@@ -31,17 +31,17 @@
   transition: border-color 0.15s, color 0.15s;
 }
 
-.precip-timeline-play:hover {
+.weather-timeline-play:hover {
   border-color: rgba(255, 255, 255, 0.5);
   color: #fff;
 }
 
-.precip-timeline-track-wrap {
+.weather-timeline-track-wrap {
   position: relative;
   width: 320px;
 }
 
-.precip-timeline-current {
+.weather-timeline-current {
   font-size: 11px;
   font-family: 'Roboto', sans-serif;
   color: rgba(255, 255, 255, 0.7);
@@ -50,7 +50,7 @@
   height: 14px;
 }
 
-.precip-timeline-track {
+.weather-timeline-track {
   position: relative;
   height: 6px;
   background: rgba(255, 255, 255, 0.1);
@@ -58,7 +58,7 @@
   cursor: pointer;
 }
 
-.precip-timeline-fill {
+.weather-timeline-fill {
   position: absolute;
   left: 0;
   top: 0;
@@ -68,7 +68,7 @@
   pointer-events: none;
 }
 
-.precip-timeline-tick {
+.weather-timeline-tick {
   position: absolute;
   top: -2px;
   width: 2px;
@@ -79,11 +79,11 @@
   pointer-events: none;
 }
 
-.precip-timeline-tick.active {
+.weather-timeline-tick.active {
   background: rgba(255, 255, 255, 0.6);
 }
 
-.precip-timeline-thumb {
+.weather-timeline-thumb {
   position: absolute;
   top: 50%;
   width: 14px;
@@ -95,13 +95,13 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
-.precip-timeline-labels {
+.weather-timeline-labels {
   position: relative;
   height: 16px;
   margin-top: 4px;
 }
 
-.precip-timeline-time-label {
+.weather-timeline-time-label {
   position: absolute;
   transform: translateX(-50%);
   font-size: 9px;
@@ -110,12 +110,12 @@
   white-space: nowrap;
 }
 
-.precip-timeline-date-labels {
+.weather-timeline-date-labels {
   position: relative;
   height: 14px;
 }
 
-.precip-timeline-date-label {
+.weather-timeline-date-label {
   position: absolute;
   transform: translateX(-50%);
   font-size: 9px;
@@ -124,7 +124,7 @@
   white-space: nowrap;
 }
 
-.precip-timeline-now-label {
+.weather-timeline-now-label {
   position: absolute;
   top: -18px;
   transform: translateX(-50%);
@@ -136,7 +136,7 @@
 }
 
 @media (max-width: 600px) {
-  .precip-timeline-track-wrap {
+  .weather-timeline-track-wrap {
     width: 200px;
   }
 }

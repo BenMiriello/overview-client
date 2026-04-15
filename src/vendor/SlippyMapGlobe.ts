@@ -670,10 +670,13 @@ export default class SlippyMapGlobe extends Group {
     // Stuck-state recovery: if we have slots but zero candidates, check whether
     // all unloaded tiles are simply in backoff (not genuinely done). If so and
     // nothing has loaded in 20s, reset all backoffs and retry immediately.
+    // Tiles that have failed many times (e.g. persistent 404s) are excluded —
+    // no point resetting backoff for tiles that will never load.
     const STUCK_TIMEOUT_MS = 20_000;
+    const MAX_FAIL_COUNT = 5;
     if (slots > 0 && candidates.length === 0) {
       const hasBackoffedTiles = tiles.some(
-        (d) => !d.loading && !(d.obj && d.obj.parent) && d.failedAt !== undefined,
+        (d) => !d.loading && !(d.obj && d.obj.parent) && d.failedAt !== undefined && (d.failCount ?? 0) < MAX_FAIL_COUNT,
       );
       if (hasBackoffedTiles && performance.now() - this.#lastTileLoadedAt > STUCK_TIMEOUT_MS) {
         this.resetBackoff();
