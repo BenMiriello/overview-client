@@ -11,16 +11,13 @@ const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:3001';
 const MAX_OPACITY = 0.65;
 const DEG_TO_RAD = Math.PI / 180;
 
-const PARTICLE_COUNT = 2000;
+const MAX_PARTICLES = 5000;
 const PARTICLE_RADIUS = EARTH_RADIUS * 1.005;
-const TRAIL_SEGMENTS = 3;        // 3 quad segments per particle (4 sample points)
-const VERTS_PER_PARTICLE = (TRAIL_SEGMENTS + 1) * 2;  // 8
-const INDICES_PER_PARTICLE = TRAIL_SEGMENTS * 6;       // 18
-
-// Screen-space sizing (pixels)
+const TRAIL_HISTORY = 15;
+const VERTS_PER_PARTICLE = TRAIL_HISTORY * 2;
+const INDICES_PER_PARTICLE = (TRAIL_HISTORY - 1) * 6;
+const PIXELS_PER_PARTICLE = 280;
 const TRAIL_WIDTH_PX = 2.0;
-const TRAIL_LENGTH_PX = 25;       // base length in pixels
-const TRAIL_SPEED_SCALE_PX = 2;   // extra pixels per m/s
 
 const SPEED_COLORMAP: [number, [number, number, number]][] = [
   [ 0, [ 68,  68, 170]], [ 2, [ 68, 136, 221]], [ 5, [ 68, 204,  68]],
@@ -77,7 +74,15 @@ const quadFS = /* glsl */`
 
 interface FrameInfo { runId: string; timestamp: number; }
 interface WindFrame { u: Float32Array; v: Float32Array; }
-interface Particle { lat: number; lng: number; age: number; maxAge: number; }
+
+interface Particle {
+  age: number;
+  maxAge: number;
+  histLat: Float32Array;
+  histLng: Float32Array;
+  histIdx: number;
+  histLen: number;
+}
 
 async function fetchLatestFrame(): Promise<WindFrame> {
   const res = await fetch(`${SERVER_URL}/api/wind`);
@@ -100,15 +105,15 @@ async function fetchFrame(runId: string): Promise<WindFrame> {
 
 function sampleWind(u: Float32Array, v: Float32Array, lat: number, lng: number): [number, number] {
   const latIdx = (lat + 90) / 0.25;
-  const lngIdx = ((lng % 360 + 360) % 360) / 0.25;
+  const lngIdx = (lng + 180) / 0.25;
   const lat0 = Math.max(0, Math.min(GRID_H - 2, Math.floor(latIdx)));
   const lng0 = Math.floor(lngIdx);
   const lat1 = lat0 + 1;
   const fLat = latIdx - lat0;
   const fLng = lngIdx - lng0;
   const lng0w = lng0 % GRID_W, lng1w = (lng0 + 1) % GRID_W;
-  const i00 = lat0 * GRID_W + lng0w, i10 = lat1 * GRID_W + lng0w;
-  const i01 = lat0 * GRID_W + lng1w, i11 = lat1 * GRID_W + lng1w;
+  const i00 = lat0*GRID_W+lng0w, i10 = lat1*GRID_W+lng0w;
+  const i01 = lat0*GRID_W+lng1w, i11 = lat1*GRID_W+lng1w;
   return [
     u[i00]*(1-fLat)*(1-fLng) + u[i10]*fLat*(1-fLng) + u[i01]*(1-fLat)*fLng + u[i11]*fLat*fLng,
     v[i00]*(1-fLat)*(1-fLng) + v[i10]*fLat*(1-fLng) + v[i01]*(1-fLat)*fLng + v[i11]*fLat*fLng,
@@ -147,8 +152,6 @@ function buildSpeedTexture(u: Float32Array, v: Float32Array): THREE.CanvasTextur
   return new THREE.CanvasTexture(large);
 }
 
-// Front-face visibility check: matches cloudShaders.ts line 117.
-// dot(surfaceNormal, toCamera) > -0.05 means the surface faces the camera.
 function isFacingCamera(
   px: number, py: number, pz: number,
   camX: number, camY: number, camZ: number,
@@ -157,8 +160,7 @@ function isFacingCamera(
   const toCamX = camX - px, toCamY = camY - py, toCamZ = camZ - pz;
   const toCamLen = Math.sqrt(toCamX*toCamX + toCamY*toCamY + toCamZ*toCamZ);
   if (toCamLen < 0.001) return true;
-  const dot = (nx*toCamX + ny*toCamY + nz*toCamZ) / toCamLen;
-  return dot > -0.05;
+  return (nx*toCamX + ny*toCamY + nz*toCamZ) / toCamLen > -0.05;
 }
 
 export class WindLayer extends BaseLayer<void> {
@@ -172,6 +174,7 @@ export class WindLayer extends BaseLayer<void> {
   private alphas: Float32Array | null = null;
   private sides: Float32Array | null = null;
   private particles: Particle[] = [];
+  private activeCount = 0;
 
   private currentU: Float32Array | null = null;
   private currentV: Float32Array | null = null;
@@ -189,13 +192,6 @@ export class WindLayer extends BaseLayer<void> {
   private camY = 0;
   private camZ = 300;
   private pixelWorldSize = 1;
-  // Pre-allocated trail point buffer: (TRAIL_SEGMENTS+1) * 3 floats
-  private trailPts = new Float32Array((TRAIL_SEGMENTS + 1) * 3);
-  // Camera target lat/lng (derived from camera position, not pointOfView)
-  private camLat = 0;
-  private camLng = 0;
-  // Visible radius on globe surface in degrees
-  private visibleDeg = 80;
 
   initialize(globeEl: any): void {
     super.initialize(globeEl);
@@ -212,22 +208,21 @@ export class WindLayer extends BaseLayer<void> {
     this.overlayMesh.visible = this.visible;
     this.scene.add(this.overlayMesh);
 
-    // Quad geometry: VERTS_PER_PARTICLE verts, INDICES_PER_PARTICLE indices per particle
-    const totalVerts = PARTICLE_COUNT * VERTS_PER_PARTICLE;
+    const totalVerts = MAX_PARTICLES * VERTS_PER_PARTICLE;
     this.positions = new Float32Array(totalVerts * 3);
     this.alphas = new Float32Array(totalVerts);
-    // Side attribute: -1 for left vertices, +1 for right (static pattern)
     this.sides = new Float32Array(totalVerts);
     for (let i = 0; i < totalVerts; i++) this.sides[i] = (i % 2 === 0) ? -1 : 1;
-    const indices = new Uint32Array(PARTICLE_COUNT * INDICES_PER_PARTICLE);
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
+
+    const indices = new Uint32Array(MAX_PARTICLES * INDICES_PER_PARTICLE);
+    for (let i = 0; i < MAX_PARTICLES; i++) {
       const vBase = i * VERTS_PER_PARTICLE;
       const iBase = i * INDICES_PER_PARTICLE;
-      for (let s = 0; s < TRAIL_SEGMENTS; s++) {
+      for (let s = 0; s < TRAIL_HISTORY - 1; s++) {
         const v = vBase + s * 2;
         const ii = iBase + s * 6;
-        indices[ii]   = v;   indices[ii+1] = v+1; indices[ii+2] = v+2;
-        indices[ii+3] = v+1; indices[ii+4] = v+3; indices[ii+5] = v+2;
+        indices[ii]=v; indices[ii+1]=v+1; indices[ii+2]=v+2;
+        indices[ii+3]=v+1; indices[ii+4]=v+3; indices[ii+5]=v+2;
       }
     }
 
@@ -254,31 +249,74 @@ export class WindLayer extends BaseLayer<void> {
 
   private initParticles(): void {
     this.particles = [];
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
+    for (let i = 0; i < MAX_PARTICLES; i++) {
       this.particles.push({
-        lat: Math.random() * 170 - 85,
-        lng: Math.random() * 360 - 180,
         age: Math.random(),
         maxAge: 1.0 + Math.random() * 2.0,
+        histLat: new Float32Array(TRAIL_HISTORY),
+        histLng: new Float32Array(TRAIL_HISTORY),
+        histIdx: 0,
+        histLen: 0,
       });
+    }
+    // Seed initial positions globally
+    for (const p of this.particles) {
+      const lat = Math.random() * 170 - 85;
+      const lng = Math.random() * 360 - 180;
+      p.histLat[0] = lat;
+      p.histLng[0] = lng;
+      p.histIdx = 0;
+      p.histLen = 1;
     }
   }
 
   private respawnParticle(p: Particle): void {
-    // Respawn within the visible cone on the globe surface
-    const angle = Math.random() * 2 * Math.PI;
-    const dist = Math.sqrt(Math.random()) * this.visibleDeg;
-    const cosC = Math.cos(this.camLat * DEG_TO_RAD);
-    p.lat = this.camLat + dist * Math.cos(angle);
-    p.lng = this.camLng + dist * Math.sin(angle) / Math.max(0.15, cosC);
-    p.lat = Math.max(-85, Math.min(85, p.lat));
-    if (p.lng > 180) p.lng -= 360;
-    if (p.lng < -180) p.lng += 360;
+    // Spawn uniformly on the visible spherical cap
+    const horizonAngle = Math.acos(Math.min(1, EARTH_RADIUS / Math.max(EARTH_RADIUS + 1, this.camDist)));
+    const cosHA = Math.cos(horizonAngle);
+
+    // Uniform random on spherical cap: cosTheta in [cosHA, 1]
+    const cosTheta = cosHA + Math.random() * (1 - cosHA);
+    const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
+    const phi = Math.random() * 2 * Math.PI;
+
+    // Local frame point (Z = camera direction)
+    const lx = sinTheta * Math.cos(phi);
+    const ly = sinTheta * Math.sin(phi);
+    const lz = cosTheta;
+
+    // Camera direction (normalized camera position, globe at origin)
+    const cl = this.camDist || 1;
+    const cdx = this.camX / cl, cdy = this.camY / cl, cdz = this.camZ / cl;
+
+    // Orthonormal basis: right, up, camDir
+    let rx: number, ry: number, rz: number;
+    if (Math.abs(cdy) < 0.9) {
+      rx = cdz; ry = 0; rz = -cdx;
+    } else {
+      rx = 0; ry = -cdz; rz = cdy;
+    }
+    const rLen = Math.sqrt(rx*rx + ry*ry + rz*rz) || 1;
+    rx /= rLen; ry /= rLen; rz /= rLen;
+    const ux = ry*cdz - rz*cdy;
+    const uy = rz*cdx - rx*cdz;
+    const uz = rx*cdy - ry*cdx;
+
+    // World-space point on unit sphere → lat/lng
+    const wx = lx*rx + ly*ux + lz*cdx;
+    const wy = lx*ry + ly*uy + lz*cdy;
+    const wz = lx*rz + ly*uz + lz*cdz;
+    const ll = xyzToLatLng(wx, wy, wz);
+
     p.age = 0;
     p.maxAge = 1.0 + Math.random() * 2.0;
+    p.histLat[0] = ll.lat;
+    p.histLng[0] = ll.lng;
+    p.histIdx = 0;
+    p.histLen = 1;
   }
 
-  // --- data loading / frame management (unchanged) ---
+  // --- data loading / frame management ---
 
   private async loadLatest(): Promise<void> {
     try {
@@ -384,7 +422,6 @@ export class WindLayer extends BaseLayer<void> {
   update(_currentTime: number): void {
     const now = performance.now();
 
-    // Fade
     if (this.overlayMesh && this.isFading) {
       const mat = this.overlayMesh.material as THREE.ShaderMaterial;
       const t = Math.min(1, (now - this.fadeStartMs) / WindLayer.FADE_MS);
@@ -407,103 +444,132 @@ export class WindLayer extends BaseLayer<void> {
     this.lastUpdateTime = now;
 
     // Camera
+    let vpW = 1440, vpH = 900, fovRad = 50 * DEG_TO_RAD;
     if (this.globeEl) {
       try {
         const cam = this.globeEl.camera() as THREE.PerspectiveCamera;
         if (cam) {
           this.camX = cam.position.x; this.camY = cam.position.y; this.camZ = cam.position.z;
           this.camDist = cam.position.length();
-          const fovRad = cam.fov * DEG_TO_RAD;
+          fovRad = cam.fov * DEG_TO_RAD;
           const surfDist = Math.max(1, this.camDist - EARTH_RADIUS);
-          const vpH = this.globeEl.renderer()?.domElement?.clientHeight || 800;
+          const domEl = this.globeEl.renderer()?.domElement;
+          vpH = domEl?.clientHeight || 900;
+          vpW = domEl?.clientWidth || 1440;
           this.pixelWorldSize = 2 * Math.tan(fovRad / 2) * surfDist / vpH;
-          // Camera target lat/lng from position vector
-          const ll = xyzToLatLng(this.camX, this.camY, this.camZ);
-          this.camLat = ll.lat; this.camLng = ll.lng;
-          // Visible cone angle on the globe surface (degrees)
-          this.visibleDeg = Math.min(70, Math.max(3,
-            surfDist * Math.tan(fovRad / 2) * 180 / (Math.PI * EARTH_RADIUS)
-          ));
         }
       } catch { /* ignore */ }
     }
 
-    const speedScale = 0.05;
-    const halfWidth = TRAIL_WIDTH_PX * this.pixelWorldSize;
-    const degPerUnit = 180 / (Math.PI * PARTICLE_RADIUS);
+    // Dynamic particle count based on globe's screen area
+    const angularR = Math.asin(Math.min(1, EARTH_RADIUS / Math.max(EARTH_RADIUS + 1, this.camDist)));
+    const screenR = Math.tan(angularR) * vpH / (2 * Math.tan(fovRad / 2));
+    const globeScreenArea = Math.min(vpW * vpH, Math.PI * screenR * screenR);
+    this.activeCount = Math.min(MAX_PARTICLES, Math.max(200, Math.floor(globeScreenArea / PIXELS_PER_PARTICLE)));
 
-    for (let i = 0; i < this.particles.length; i++) {
+    // Scale particle movement so trails are a consistent pixel length regardless of zoom.
+    const degPerPixel = this.pixelWorldSize * 180 / (Math.PI * PARTICLE_RADIUS);
+    // Particles move ~4 pixels per frame per m/s of wind speed
+    const speedScale = degPerPixel * 4.0;
+    // Minimum movement per frame (ensures visible trail even at low wind)
+    const minMoveDeg = degPerPixel * 0.5;
+    const halfWidth = TRAIL_WIDTH_PX * this.pixelWorldSize;
+
+    for (let i = 0; i < MAX_PARTICLES; i++) {
       const p = this.particles[i];
+
+      // Particles beyond activeCount are dormant
+      if (i >= this.activeCount) {
+        const vBase = i * VERTS_PER_PARTICLE;
+        for (let j = 0; j < VERTS_PER_PARTICLE; j++) this.alphas[vBase + j] = 0;
+        continue;
+      }
+
       p.age += dt / p.maxAge;
 
-      // Respawn if expired, out of bounds, or outside the visible cone
-      const dLat = p.lat - this.camLat;
-      let dLng2 = p.lng - this.camLng;
-      if (dLng2 > 180) dLng2 -= 360; if (dLng2 < -180) dLng2 += 360;
-      const angDist = Math.sqrt(dLat * dLat + dLng2 * dLng2 * Math.cos(p.lat * DEG_TO_RAD) ** 2);
-      if (p.age >= 1.0 || p.lat < -85 || p.lat > 85 || angDist > this.visibleDeg * 1.2) {
+      // Current position from history
+      const curLat = p.histLat[p.histIdx];
+      const curLng = p.histLng[p.histIdx];
+
+      // Respawn if expired or out of bounds
+      if (p.age >= 1.0 || curLat < -85 || curLat > 85) {
         this.respawnParticle(p);
       }
 
-      // Advect
-      const [uVal, vVal] = sampleWind(this.currentU, this.currentV, p.lat, p.lng);
-      const cosLat = Math.cos(p.lat * DEG_TO_RAD);
-      p.lat += vVal * speedScale * dt;
-      p.lng += (cosLat > 0.01 ? (uVal * speedScale * dt) / cosLat : 0);
-      if (p.lng > 180) p.lng -= 360;
-      if (p.lng < -180) p.lng += 360;
+      // Read current position (may have changed from respawn)
+      const lat = p.histLat[p.histIdx];
+      const lng = p.histLng[p.histIdx];
 
-      // Fade
+      // Advect and push new position into history
+      const [uVal, vVal] = sampleWind(this.currentU, this.currentV, lat, lng);
+      const cosLat = Math.cos(lat * DEG_TO_RAD);
+      let dLat = vVal * speedScale * dt;
+      let dLng = cosLat > 0.01 ? (uVal * speedScale * dt) / cosLat : 0;
+      // Ensure minimum movement so trail has visible length
+      const moveMag = Math.sqrt(dLat * dLat + dLng * dLng);
+      if (moveMag > 0 && moveMag < minMoveDeg) {
+        const boost = minMoveDeg / moveMag;
+        dLat *= boost;
+        dLng *= boost;
+      }
+      const newLat = lat + dLat;
+      let newLng = lng + dLng;
+      if (newLng > 180) newLng -= 360;
+      if (newLng < -180) newLng += 360;
+
+      // Push to circular buffer
+      const nextIdx = (p.histIdx + 1) % TRAIL_HISTORY;
+      p.histLat[nextIdx] = newLat;
+      p.histLng[nextIdx] = newLng;
+      p.histIdx = nextIdx;
+      if (p.histLen < TRAIL_HISTORY) p.histLen++;
+
+      // Fade in/out
       const fadeIn = Math.min(p.age * 5, 1);
       const fadeOut = 1 - Math.max(0, (p.age - 0.7) / 0.3);
       let alpha = fadeIn * fadeOut;
 
-      // Head position
-      const [hx, hy, hz] = latLngToXYZ(p.lat, p.lng, PARTICLE_RADIUS);
+      // Head position (newest in buffer)
+      const [hx, hy, hz] = latLngToXYZ(newLat, newLng, PARTICLE_RADIUS);
 
-      // Front-face cull (same check as cloud shader front faces)
       if (!isFacingCamera(hx, hy, hz, this.camX, this.camY, this.camZ)) {
         alpha = 0;
       }
 
-      // Build trail points by backward-stepping through the wind field (curved trail)
-      const speed = Math.sqrt(uVal*uVal + vVal*vVal);
-      const trailWorldLen = (TRAIL_LENGTH_PX + speed * TRAIL_SPEED_SCALE_PX) * this.pixelWorldSize;
-      const stepDeg = trailWorldLen * degPerUnit / TRAIL_SEGMENTS;
-
-      // Trail points into pre-allocated buffer: head at index 0, tail segments after
-      const tp = this.trailPts;
-      tp[0] = hx; tp[1] = hy; tp[2] = hz;
-      let tLat = p.lat, tLng = p.lng;
-      for (let s = 0; s < TRAIL_SEGMENTS; s++) {
-        const [su, sv] = sampleWind(this.currentU, this.currentV, tLat, tLng);
-        const sp = Math.sqrt(su*su + sv*sv);
-        if (sp > 0.01) {
-          const cL = Math.cos(tLat * DEG_TO_RAD);
-          tLat -= (sv / sp) * stepDeg;
-          tLng -= (su / sp) * stepDeg / Math.max(0.15, cL);
-        }
-        tLat = Math.max(-85, Math.min(85, tLat));
-        const [tx, ty, tz] = latLngToXYZ(tLat, tLng, PARTICLE_RADIUS);
-        const si = (s + 1) * 3;
-        tp[si] = tx; tp[si+1] = ty; tp[si+2] = tz;
-      }
-
-      // Build quad strip: 2 vertices per point (left/right offset perpendicular to trail)
+      // Build quad strip through history positions (newest=head at j=0, oldest=tail)
       const vBase = i * VERTS_PER_PARTICLE;
-      for (let j = 0; j <= TRAIL_SEGMENTS; j++) {
-        const ji = j * 3;
-        const cx = tp[ji], cy = tp[ji+1], cz = tp[ji+2];
-        // Direction along trail at this point
-        let dx: number, dy: number, dz: number;
-        if (j < TRAIL_SEGMENTS) {
-          const ni = (j+1)*3;
-          dx = cx - tp[ni]; dy = cy - tp[ni+1]; dz = cz - tp[ni+2];
-        } else {
-          const pi = (j-1)*3;
-          dx = cx - tp[pi]; dy = cy - tp[pi+1]; dz = cz - tp[pi+2];
+      for (let j = 0; j < TRAIL_HISTORY; j++) {
+        if (j >= p.histLen) {
+          // Not enough history yet — zero out remaining vertices
+          const vi = (vBase + j * 2) * 3;
+          this.positions[vi]=0; this.positions[vi+1]=0; this.positions[vi+2]=0;
+          this.positions[vi+3]=0; this.positions[vi+4]=0; this.positions[vi+5]=0;
+          this.alphas[vBase + j*2] = 0;
+          this.alphas[vBase + j*2 + 1] = 0;
+          continue;
         }
-        // Perpendicular on sphere surface: cross(trailDir, surfaceNormal)
+
+        // Read position from circular buffer (j=0 is newest, j=histLen-1 is oldest)
+        const hIdx = ((p.histIdx - j) % TRAIL_HISTORY + TRAIL_HISTORY) % TRAIL_HISTORY;
+        const pLat = p.histLat[hIdx];
+        const pLng = p.histLng[hIdx];
+        const [cx, cy, cz] = latLngToXYZ(pLat, pLng, PARTICLE_RADIUS);
+
+        // Direction: toward the next-newer point (or use current direction for head)
+        let dx: number, dy: number, dz: number;
+        if (j < p.histLen - 1) {
+          const nIdx = ((p.histIdx - j + 1) % TRAIL_HISTORY + TRAIL_HISTORY) % TRAIL_HISTORY;
+          const [nx, ny, nz] = latLngToXYZ(p.histLat[nIdx], p.histLng[nIdx], PARTICLE_RADIUS);
+          dx = nx - cx; dy = ny - cy; dz = nz - cz;
+        } else if (j > 0) {
+          const pIdx = ((p.histIdx - j + 1) % TRAIL_HISTORY + TRAIL_HISTORY) % TRAIL_HISTORY;
+          const [px2, py2, pz2] = latLngToXYZ(p.histLat[pIdx], p.histLng[pIdx], PARTICLE_RADIUS);
+          dx = px2 - cx; dy = py2 - cy; dz = pz2 - cz;
+        } else {
+          dx = uVal * 0.01; dy = vVal * 0.01; dz = 0;
+        }
+
+        // Perpendicular on sphere surface
         let perpX = dy*cz - dz*cy;
         let perpY = dz*cx - dx*cz;
         let perpZ = dx*cy - dy*cx;
@@ -519,8 +585,7 @@ export class WindLayer extends BaseLayer<void> {
         this.positions[vi]   = cx - perpX; this.positions[vi+1] = cy - perpY; this.positions[vi+2] = cz - perpZ;
         this.positions[vi+3] = cx + perpX; this.positions[vi+4] = cy + perpY; this.positions[vi+5] = cz + perpZ;
 
-        // Alpha: full at head (j=0), fading toward tail
-        const tailFade = 1 - j / TRAIL_SEGMENTS;
+        const tailFade = 1 - j / (p.histLen - 1 || 1);
         const ai = vBase + j * 2;
         this.alphas[ai]   = alpha * tailFade * 0.85;
         this.alphas[ai+1] = alpha * tailFade * 0.85;
