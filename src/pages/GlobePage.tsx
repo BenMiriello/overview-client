@@ -250,7 +250,41 @@ const GlobePage = () => {
   }, []);
 
   const handleToggleOrbit = useCallback(() => setIsOrbiting(v => !v), []);
-  const handleToggleViewTarget = useCallback(() => setViewTarget(v => v === 'earth' ? 'moon' : 'earth'), []);
+
+  // Save/restore earth weather settings when switching to/from moon
+  const earthSettingsRef = useRef<{
+    temperatureEnabled: boolean;
+    precipitationEnabled: boolean;
+    windEnabled: boolean;
+    activeTimeline: string | null;
+  } | null>(null);
+
+  const handleToggleViewTarget = useCallback(() => {
+    setViewTarget(v => {
+      if (v === 'earth') {
+        earthSettingsRef.current = {
+          temperatureEnabled, precipitationEnabled, windEnabled, activeTimeline,
+        };
+        if (temperatureEnabled) {
+          setTemperatureEnabled(false);
+          layerManagerRef.current?.getLayer<TemperatureLayer>('temperature')?.hide();
+          layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setTemperatureEnabled(false);
+        }
+        if (precipitationEnabled) {
+          setPrecipitationEnabled(false);
+          layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation')?.hide();
+        }
+        if (windEnabled) {
+          setWindEnabled(false);
+          layerManagerRef.current?.getLayer<WindLayer>('wind')?.hide();
+        }
+        setActiveTimeline(null);
+        return 'moon';
+      } else {
+        return 'earth';
+      }
+    });
+  }, [temperatureEnabled, precipitationEnabled, windEnabled, activeTimeline]);
 
   const handleToggleClouds = useCallback(() => {
     setCloudsEnabled(v => {
@@ -442,6 +476,24 @@ const GlobePage = () => {
       const spot = pendingFlyAfterEarthRef.current;
       pendingFlyAfterEarthRef.current = null;
       setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
+    }
+    const saved = earthSettingsRef.current;
+    if (saved) {
+      earthSettingsRef.current = null;
+      if (saved.temperatureEnabled) {
+        setTemperatureEnabled(true);
+        layerManagerRef.current?.getLayer<TemperatureLayer>('temperature')?.show();
+        layerManagerRef.current?.getLayer<CloudLayer>('clouds')?.setTemperatureEnabled(true);
+      }
+      if (saved.precipitationEnabled) {
+        setPrecipitationEnabled(true);
+        layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation')?.show();
+      }
+      if (saved.windEnabled) {
+        setWindEnabled(true);
+        layerManagerRef.current?.getLayer<WindLayer>('wind')?.show();
+      }
+      setActiveTimeline(saved.activeTimeline as any);
     }
   }, []);
 

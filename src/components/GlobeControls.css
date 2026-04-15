@@ -5,7 +5,6 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
     z-index: 1001;
 }
 
@@ -68,6 +67,21 @@
 
 .ctrl-btn-wrap {
     position: relative;
+    margin-right: 8px;
+    transition: opacity 0.3s ease, max-width 0.3s ease-out, margin 0.3s ease-out;
+    max-width: 60px;
+}
+
+.ctrl-btn-wrap:last-child {
+    margin-right: 0;
+}
+
+.ctrl-btn-wrap.ctrl-btn-hidden {
+    opacity: 0;
+    max-width: 0;
+    margin-right: 0;
+    pointer-events: none;
+    overflow: hidden;
 }
 
 .ctrl-tooltip {

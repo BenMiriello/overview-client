@@ -53,13 +53,14 @@ interface CtrlBtnProps {
   tooltip: string;
   leftAlignTooltip?: boolean;
   tooltipExtra?: React.ReactNode;
+  hidden?: boolean;
   children: React.ReactNode;
 }
 
 // Tracks the deactivate function of the currently active interactive tooltip
 let activeTooltipDeactivate: (() => void) | null = null;
 
-const CtrlBtn: React.FC<CtrlBtnProps> = ({ className, onClick, ariaLabel, tooltip, leftAlignTooltip, tooltipExtra, children }) => {
+const CtrlBtn: React.FC<CtrlBtnProps> = ({ className, onClick, ariaLabel, tooltip, leftAlignTooltip, tooltipExtra, hidden, children }) => {
   const tooltipRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const btnHovered = useRef(false);
@@ -94,7 +95,7 @@ const CtrlBtn: React.FC<CtrlBtnProps> = ({ className, onClick, ariaLabel, toolti
   }, [hasExtra, activate]);
 
   return (
-    <div className="ctrl-btn-wrap">
+    <div className={`ctrl-btn-wrap${hidden ? ' ctrl-btn-hidden' : ''}`}>
       <button
         className={className}
         onClick={onClick}
@@ -253,6 +254,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onToggleClouds}
         ariaLabel={cloudsEnabled ? 'Hide clouds' : 'Show clouds'}
         tooltip="Clouds"
+        hidden={isMoonView}
         tooltipExtra={
           <>
             <div className="cloud-slider-inline">
@@ -283,6 +285,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onToggleLightning}
         ariaLabel={lightningEnabled ? 'Hide lightning' : 'Show lightning'}
         tooltip={lightningEnabled ? 'Hide lightning' : 'Show lightning'}
+        hidden={isMoonView}
         tooltipExtra={
           <div
             className={`ctrl-tooltip-history${
@@ -310,6 +313,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onToggleTemperature}
         ariaLabel={temperatureEnabled ? 'Hide temperature' : 'Show temperature'}
         tooltip={temperatureEnabled ? 'Hide temperature overlay' : 'Show temperature overlay'}
+        hidden={isMoonView}
         tooltipExtra={historyRow(tempHistoryOpen, onToggleTempHistory, temperatureEnabled, onToggleTemperature)}
       >
         <Thermometer size={16} />
@@ -319,6 +323,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onTogglePrecipitation}
         ariaLabel={precipitationEnabled ? 'Hide precipitation' : 'Show precipitation'}
         tooltip={precipitationEnabled ? 'Hide precipitation overlay' : 'Show precipitation overlay'}
+        hidden={isMoonView}
         tooltipExtra={historyRow(precipHistoryOpen, onTogglePrecipHistory, precipitationEnabled, onTogglePrecipitation)}
       >
         <CloudRain size={16} />
@@ -328,6 +333,7 @@ export const GlobeControls: React.FC<GlobeControlsProps> = ({
         onClick={onToggleWind}
         ariaLabel={windEnabled ? 'Hide wind' : 'Show wind'}
         tooltip={windEnabled ? 'Hide wind overlay' : 'Show wind overlay'}
+        hidden={isMoonView}
         tooltipExtra={historyRow(windHistoryOpen, onToggleWindHistory, windEnabled, onToggleWind)}
       >
         <Wind size={16} />
