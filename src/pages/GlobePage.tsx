@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { useLightningData } from '../services/dataStreams/hooks';
-import { GlobeComponent, GlobeControls, TemperatureLegend, PrecipitationLegend, WindLegend, WeatherTimeline } from '../components';
+import { GlobeComponent, GlobeControls, TemperatureLegend, PrecipitationLegend, WindLegend, WeatherTimeline, PlaceSearch } from '../components';
 import { TemperatureCursor, TemperatureCursorHandle } from '../components/TemperatureCursor';
 import { PrecipitationCursor, PrecipitationCursorHandle } from '../components/PrecipitationCursor';
 import { WindCursor, WindCursorHandle } from '../components/WindCursor';
@@ -624,6 +624,7 @@ const GlobePage = () => {
         error={cloudError}
         onDismissError={() => setCloudError(null)}
       />
+      <PlaceSearch onFlyTo={(lat, lng, altitude) => setFlyTo({ lat, lng, altitude })} />
       <NavigationIcons currentPage="globe" />
     </div>
   );

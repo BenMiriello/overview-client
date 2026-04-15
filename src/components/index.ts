@@ -6,3 +6,4 @@ export * from './TemperatureLegend';
 export * from './PrecipitationLegend';
 export * from './WeatherTimeline';
 export * from './WindLegend';
+export { default as PlaceSearch } from './PlaceSearch/PlaceSearch';
