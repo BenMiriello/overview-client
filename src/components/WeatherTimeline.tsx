@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Play, Pause } from 'lucide-react';
+import { Play, Pause, Loader2 } from 'lucide-react';
 import './WeatherTimeline.css';
 
 interface FrameInfo {
@@ -12,6 +12,8 @@ interface Props {
   frames: FrameInfo[];
   currentFrameId: string | null;
   onFrameChange: (runId: string) => void;
+  readyFrameIds?: Set<string>;
+  onRequestPrefetch?: () => void;
 }
 
 function formatHour(ts: number): string {
@@ -34,15 +36,31 @@ function formatDate(ts: number): string {
   return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
-export const WeatherTimeline: React.FC<Props> = ({ visible, frames, currentFrameId, onFrameChange }) => {
+export const WeatherTimeline: React.FC<Props> = ({
+  visible, frames, currentFrameId, onFrameChange,
+  readyFrameIds, onRequestPrefetch,
+}) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
 
   const currentIndex = frames.findIndex(f => f.runId === currentFrameId);
-  const isAtNow = currentIndex === frames.length - 1;
 
+  const allReady = !readyFrameIds
+    ? true
+    : frames.every(f => readyFrameIds.has(f.runId));
+
+  // When loading and all frames become ready, start playback
+  useEffect(() => {
+    if (isLoading && allReady) {
+      setIsLoading(false);
+      setIsPlaying(true);
+    }
+  }, [isLoading, allReady]);
+
+  // Playback interval — only advances to ready frames
   useEffect(() => {
     if (!isPlaying || frames.length < 2) {
       if (playIntervalRef.current) clearInterval(playIntervalRef.current);
@@ -52,16 +70,43 @@ export const WeatherTimeline: React.FC<Props> = ({ visible, frames, currentFrame
     playIntervalRef.current = setInterval(() => {
       const idx = frames.findIndex(f => f.runId === currentFrameId);
       const nextIdx = (idx + 1) % frames.length;
-      onFrameChange(frames[nextIdx].runId);
+      const nextId = frames[nextIdx].runId;
+      if (readyFrameIds && !readyFrameIds.has(nextId)) {
+        setIsPlaying(false);
+        return;
+      }
+      onFrameChange(nextId);
     }, 1000);
     return () => {
       if (playIntervalRef.current) clearInterval(playIntervalRef.current);
     };
-  }, [isPlaying, frames, currentFrameId, onFrameChange]);
+  }, [isPlaying, frames, currentFrameId, onFrameChange, readyFrameIds]);
 
   useEffect(() => {
-    if (!visible) setIsPlaying(false);
+    if (!visible) { setIsPlaying(false); setIsLoading(false); }
   }, [visible]);
+
+  const handlePlayClick = useCallback(() => {
+    if (isLoading) {
+      setIsLoading(false);
+      return;
+    }
+    if (isPlaying) {
+      setIsPlaying(false);
+      return;
+    }
+    if (allReady) {
+      setIsPlaying(true);
+    } else {
+      setIsLoading(true);
+      onRequestPrefetch?.();
+    }
+  }, [isPlaying, isLoading, allReady, onRequestPrefetch]);
+
+  const cancelPlayback = useCallback(() => {
+    setIsPlaying(false);
+    setIsLoading(false);
+  }, []);
 
   const handleTrackInteraction = useCallback((clientX: number) => {
     const track = trackRef.current;
@@ -75,7 +120,7 @@ export const WeatherTimeline: React.FC<Props> = ({ visible, frames, currentFrame
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     draggingRef.current = true;
-    setIsPlaying(false);
+    cancelPlayback();
     handleTrackInteraction(e.clientX);
     const onMove = (ev: MouseEvent) => handleTrackInteraction(ev.clientX);
     const onUp = () => {
@@ -85,19 +130,19 @@ export const WeatherTimeline: React.FC<Props> = ({ visible, frames, currentFrame
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [handleTrackInteraction]);
+  }, [handleTrackInteraction, cancelPlayback]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (frames.length < 2) return;
     const idx = frames.findIndex(f => f.runId === currentFrameId);
     if (e.key === 'ArrowLeft' && idx > 0) {
       onFrameChange(frames[idx - 1].runId);
-      setIsPlaying(false);
+      cancelPlayback();
     } else if (e.key === 'ArrowRight' && idx < frames.length - 1) {
       onFrameChange(frames[idx + 1].runId);
-      setIsPlaying(false);
+      cancelPlayback();
     }
-  }, [frames, currentFrameId, onFrameChange]);
+  }, [frames, currentFrameId, onFrameChange, cancelPlayback]);
 
   if (!visible || frames.length === 0) return null;
 
@@ -121,11 +166,16 @@ export const WeatherTimeline: React.FC<Props> = ({ visible, frames, currentFrame
   return (
     <div className="weather-timeline" tabIndex={0} onKeyDown={handleKeyDown}>
       <button
-        className="weather-timeline-play"
-        onClick={() => setIsPlaying(v => !v)}
-        aria-label={isPlaying ? 'Pause' : 'Play'}
+        className={`weather-timeline-play${isLoading ? ' loading' : ''}`}
+        onClick={handlePlayClick}
+        aria-label={isLoading ? 'Cancel loading' : isPlaying ? 'Pause' : 'Play'}
       >
-        {isPlaying ? <Pause size={14} /> : <Play size={14} />}
+        {isLoading
+          ? <Loader2 size={14} className="weather-timeline-spinner" />
+          : isPlaying
+            ? <Pause size={14} />
+            : <Play size={14} />
+        }
       </button>
       <div className="weather-timeline-track-wrap">
         <div className="weather-timeline-current">
@@ -181,7 +231,7 @@ export const WeatherTimeline: React.FC<Props> = ({ visible, frames, currentFrame
         onClick={() => {
           if (frames.length > 0) {
             onFrameChange(frames[frames.length - 1].runId);
-            setIsPlaying(false);
+            cancelPlayback();
           }
         }}
       >

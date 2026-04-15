@@ -16,7 +16,7 @@ const PARTICLE_RADIUS = EARTH_RADIUS * 1.005;
 const TRAIL_HISTORY = 15;
 const VERTS_PER_PARTICLE = TRAIL_HISTORY * 2;
 const INDICES_PER_PARTICLE = (TRAIL_HISTORY - 1) * 6;
-const PIXELS_PER_PARTICLE = 280;
+const PIXELS_PER_PARTICLE = 200;
 const TRAIL_WIDTH_PX = 2.0;
 
 const SPEED_COLORMAP: [number, [number, number, number]][] = [
@@ -363,20 +363,24 @@ export class WindLayer extends BaseLayer<void> {
   getFrameList(): FrameInfo[] { return this.frameList; }
   getCurrentFrameId(): string | null { return this.currentFrameId; }
 
+  private onFrameReady: ((readyIds: Set<string>) => void) | null = null;
+
   private cacheFrame(runId: string, frame: WindFrame): void {
     this.windFrames.set(runId, frame);
-    if (this.windFrames.size > WindLayer.MAX_CACHED_FRAMES) {
-      const oldest = this.windFrames.keys().next().value;
-      if (oldest && oldest !== '__latest__' && oldest !== this.currentFrameId)
-        this.windFrames.delete(oldest);
-    }
+    this.onFrameReady?.(this.getReadyFrameIds());
+  }
+
+  getReadyFrameIds(): Set<string> {
+    return new Set(this.windFrames.keys());
+  }
+
+  setOnFrameReady(cb: ((readyIds: Set<string>) => void) | null): void {
+    this.onFrameReady = cb;
   }
 
   async prefetchAllFrames(): Promise<void> {
-    const ci = this.frameList.findIndex(f => f.runId === this.currentFrameId);
     for (const info of this.frameList) {
       if (this.windFrames.has(info.runId)) continue;
-      if (Math.abs(this.frameList.indexOf(info) - ci) > 3) continue;
       try { this.cacheFrame(info.runId, await fetchFrame(info.runId)); }
       catch (err) { console.warn(`[WindLayer] prefetch ${info.runId} failed:`, err); }
     }

@@ -77,10 +77,13 @@ const GlobePage = () => {
   const windCursorRef = useRef<WindCursorHandle>(null);
   const [precipFrames, setPrecipFrames] = useState<{ runId: string; timestamp: number }[]>([]);
   const [precipCurrentFrameId, setPrecipCurrentFrameId] = useState<string | null>(null);
+  const [precipReadyIds, setPrecipReadyIds] = useState<Set<string>>(new Set());
   const [tempFrames, setTempFrames] = useState<{ runId: string; timestamp: number }[]>([]);
   const [tempCurrentFrameId, setTempCurrentFrameId] = useState<string | null>(null);
+  const [tempReadyIds, setTempReadyIds] = useState<Set<string>>(new Set());
   const [windFrames, setWindFrames] = useState<{ runId: string; timestamp: number }[]>([]);
   const [windCurrentFrameId, setWindCurrentFrameId] = useState<string | null>(null);
+  const [windReadyIds, setWindReadyIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     localStorage.setItem('lightning-cloud-opacity', String(cloudOpacity));
@@ -176,36 +179,42 @@ const GlobePage = () => {
       temperatureEnabledRef.current ? temperatureLayer.show() : temperatureLayer.hide();
       temperatureLayer.setOnFrameListChange(frames => {
         setTempFrames(frames);
+        setTempReadyIds(temperatureLayer.getReadyFrameIds());
         if (frames.length > 0 && !temperatureLayer.getCurrentFrameId()) {
           setTempCurrentFrameId(frames[frames.length - 1].runId);
         } else {
           setTempCurrentFrameId(temperatureLayer.getCurrentFrameId());
         }
       });
+      temperatureLayer.setOnFrameReady(ids => setTempReadyIds(ids));
     }
     const precipitationLayer = manager.createLayer<PrecipitationLayer>('precipitation', 'precipitation');
     if (precipitationLayer) {
       precipitationEnabledRef.current ? precipitationLayer.show() : precipitationLayer.hide();
       precipitationLayer.setOnFrameListChange(frames => {
         setPrecipFrames(frames);
+        setPrecipReadyIds(precipitationLayer.getReadyFrameIds());
         if (frames.length > 0 && !precipitationLayer.getCurrentFrameId()) {
           setPrecipCurrentFrameId(frames[frames.length - 1].runId);
         } else {
           setPrecipCurrentFrameId(precipitationLayer.getCurrentFrameId());
         }
       });
+      precipitationLayer.setOnFrameReady(ids => setPrecipReadyIds(ids));
     }
     const windLayer = manager.createLayer<WindLayer>('wind', 'wind');
     if (windLayer) {
       windEnabledRef.current ? windLayer.show() : windLayer.hide();
       windLayer.setOnFrameListChange(frames => {
         setWindFrames(frames);
+        setWindReadyIds(windLayer.getReadyFrameIds());
         if (frames.length > 0 && !windLayer.getCurrentFrameId()) {
           setWindCurrentFrameId(frames[frames.length - 1].runId);
         } else {
           setWindCurrentFrameId(windLayer.getCurrentFrameId());
         }
       });
+      windLayer.setOnFrameReady(ids => setWindReadyIds(ids));
     }
   }, [dataStream]);
 
@@ -309,6 +318,16 @@ const GlobePage = () => {
     setWindCurrentFrameId(runId);
     const layer = layerManagerRef.current?.getLayer<WindLayer>('wind');
     layer?.setFrame(runId);
+  }, []);
+
+  const handleTempPrefetch = useCallback(() => {
+    layerManagerRef.current?.getLayer<TemperatureLayer>('temperature')?.prefetchAllFrames();
+  }, []);
+  const handlePrecipPrefetch = useCallback(() => {
+    layerManagerRef.current?.getLayer<PrecipitationLayer>('precipitation')?.prefetchAllFrames();
+  }, []);
+  const handleWindPrefetch = useCallback(() => {
+    layerManagerRef.current?.getLayer<WindLayer>('wind')?.prefetchAllFrames();
   }, []);
 
   const handleSurfaceHover = useCallback((result: { lat: number; lng: number } | null, x: number, y: number) => {
@@ -439,6 +458,8 @@ const GlobePage = () => {
         frames={tempFrames}
         currentFrameId={tempCurrentFrameId}
         onFrameChange={handleTempFrameChange}
+        readyFrameIds={tempReadyIds}
+        onRequestPrefetch={handleTempPrefetch}
       />
       <PrecipitationLegend visible={precipitationEnabled} />
       <PrecipitationCursor ref={precipCursorRef} />
@@ -447,6 +468,8 @@ const GlobePage = () => {
         frames={precipFrames}
         currentFrameId={precipCurrentFrameId}
         onFrameChange={handlePrecipFrameChange}
+        readyFrameIds={precipReadyIds}
+        onRequestPrefetch={handlePrecipPrefetch}
       />
       <WindLegend visible={windEnabled} unit={windUnit} onUnitChange={setWindUnit} />
       <WindCursor ref={windCursorRef} unit={windUnit} />
@@ -455,6 +478,8 @@ const GlobePage = () => {
         frames={windFrames}
         currentFrameId={windCurrentFrameId}
         onFrameChange={handleWindFrameChange}
+        readyFrameIds={windReadyIds}
+        onRequestPrefetch={handleWindPrefetch}
       />
       <NavigationIcons currentPage="globe" />
     </div>

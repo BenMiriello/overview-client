@@ -232,26 +232,24 @@ export class TemperatureLayer extends BaseLayer<void> {
     return this.currentFrameId;
   }
 
+  private onFrameReady: ((readyIds: Set<string>) => void) | null = null;
+
   private cacheFrame(runId: string, data: Float32Array): void {
     this.frames.set(runId, data);
-    // Evict oldest entries beyond the cap (Map preserves insertion order)
-    if (this.frames.size > TemperatureLayer.MAX_CACHED_FRAMES) {
-      const oldest = this.frames.keys().next().value;
-      if (oldest && oldest !== '__latest__' && oldest !== this.currentFrameId) {
-        this.frames.delete(oldest);
-      }
-    }
+    this.onFrameReady?.(this.getReadyFrameIds());
+  }
+
+  getReadyFrameIds(): Set<string> {
+    return new Set(this.frames.keys());
+  }
+
+  setOnFrameReady(cb: ((readyIds: Set<string>) => void) | null): void {
+    this.onFrameReady = cb;
   }
 
   async prefetchAllFrames(): Promise<void> {
-    const currentIdx = this.frameList.findIndex(f => f.runId === this.currentFrameId);
-    const toFetch = this.frameList.filter((info, i) => {
-      if (this.frames.has(info.runId)) return false;
-      // Only prefetch frames adjacent to current
-      return Math.abs(i - currentIdx) <= 3;
-    });
-
-    for (const info of toFetch) {
+    for (const info of this.frameList) {
+      if (this.frames.has(info.runId)) continue;
       try {
         const grid = await fetchFrame(info.runId);
         this.cacheFrame(info.runId, grid);

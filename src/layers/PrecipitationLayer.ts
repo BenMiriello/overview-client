@@ -293,24 +293,24 @@ export class PrecipitationLayer extends BaseLayer<void> {
     return { rate: this.currentRates[idx], type: this.currentTypes[idx] };
   }
 
+  private onFrameReady: ((readyIds: Set<string>) => void) | null = null;
+
   private cacheFrame(runId: string, frame: PrecipFrame): void {
     this.frames.set(runId, frame);
-    if (this.frames.size > PrecipitationLayer.MAX_CACHED_FRAMES) {
-      const oldest = this.frames.keys().next().value;
-      if (oldest && oldest !== '__latest__' && oldest !== this.currentFrameId) {
-        this.frames.delete(oldest);
-      }
-    }
+    this.onFrameReady?.(this.getReadyFrameIds());
+  }
+
+  getReadyFrameIds(): Set<string> {
+    return new Set(this.frames.keys());
+  }
+
+  setOnFrameReady(cb: ((readyIds: Set<string>) => void) | null): void {
+    this.onFrameReady = cb;
   }
 
   async prefetchAllFrames(): Promise<void> {
-    const currentIdx = this.frameList.findIndex(f => f.runId === this.currentFrameId);
-    const toFetch = this.frameList.filter((info, i) => {
-      if (this.frames.has(info.runId)) return false;
-      return Math.abs(i - currentIdx) <= 3;
-    });
-
-    for (const info of toFetch) {
+    for (const info of this.frameList) {
+      if (this.frames.has(info.runId)) continue;
       try {
         const frame = await fetchFrame(info.runId);
         this.cacheFrame(info.runId, frame);

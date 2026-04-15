@@ -36,6 +36,19 @@
   color: #fff;
 }
 
+.weather-timeline-play.loading {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.weather-timeline-spinner {
+  animation: weather-spin 1s linear infinite;
+}
+
+@keyframes weather-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .weather-timeline-track-wrap {
   position: relative;
   width: 320px;
