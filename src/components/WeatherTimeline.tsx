@@ -175,8 +175,11 @@ export const WeatherTimeline: React.FC<Props> = ({ visible, frames, currentFrame
             ))}
           </div>
         )}
-        <div className="weather-timeline-now-label" style={{ left: '100%' }}>
-          {isAtNow ? 'NOW' : ''}
+        <div
+          className="weather-timeline-now-label"
+          onClick={() => frames.length > 0 && onFrameChange(frames[frames.length - 1].runId)}
+        >
+          NOW
         </div>
       </div>
     </div>
