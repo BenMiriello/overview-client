@@ -125,17 +125,15 @@
 }
 
 .weather-timeline-now-label {
-  position: absolute;
-  bottom: 100%;
-  right: -8px;
-  margin-bottom: 2px;
+  flex-shrink: 0;
   font-size: 10px;
   font-family: 'Roboto', sans-serif;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.5);
-  white-space: nowrap;
   cursor: pointer;
   transition: color 0.15s;
+  letter-spacing: 0.05em;
+  padding: 4px 0;
 }
 
 .weather-timeline-now-label:hover {
