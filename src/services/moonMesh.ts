@@ -10,17 +10,26 @@ import {
 } from './moonMaterial';
 import { LAYERS } from './renderLayers';
 
-// NASA Moon Trek WMTS — equirectangular projection.
+// Color: locally-served Hapke-normalized (shadow-free) LROC WAC mosaic,
+// sliced from the NASA SVS CGI Moon Kit 16K TIFF. See
+// client/scripts/build-moon-tiles.ts and documentation/moon/surface-tiles.md.
+// Shadow-free is required so the only visible illumination on the moon
+// comes from our shader's live sun-direction shading over the displaced
+// topography — the Trek WAC mosaic has solar shading baked into pixel
+// values and produces double-shadow artifacts.
 const MOON_COLOR_URL = (x: number, y: number, level: number): string =>
-  `https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/${level}/${y}/${x}.jpg`;
+  `/moon-tiles/${level}/${y}/${x}.jpg`;
 
+// DEM: NASA Moon Trek WMTS — equirectangular projection.
 const MOON_DEM_URL = (x: number, y: number, level: number): string =>
   `https://trek.nasa.gov/tiles/Moon/EQ/LRO_LOLA_DEM_Global_128ppd_v04/1.0.0/default/default028mm/${level}/${y}/${x}.png`;
 
-// DIAGNOSTIC: color max temporarily lowered to match DEM max so the zoom
-// level can't exceed where DEM data exists. Lets the user evaluate whether
-// level-5 LOLA DEM (~660m/texel) has enough fidelity to resolve real
-// topography before we invest in a rendering approach.
+// Color and DEM are held at the same max level so every color tile has a
+// matching DEM tile for fragment-shader gradient shading. At L5, color tiles
+// are ~760 m/px (source-native from the SVS 16K TIFF) and DEM tiles sample
+// LOLA 128 ppd (~660 m/px). The full-resolution SVS source (27360 wide) is
+// only 1.67x wider than 16K — not enough to justify L6, which would be a
+// bilinear upscale.
 const MOON_COLOR_MAX_LEVEL = 5;
 const MOON_DEM_MAX_LEVEL = 5;
 

@@ -24,3 +24,10 @@ dist-ssr
 *.sw?
 
 .claude/context/
+
+# Auto-downloaded source assets (regenerable; see scripts/build-moon-tiles.ts)
+vendor-assets/*
+!vendor-assets/.gitkeep
+
+# Generated tile pyramid (regenerable; built by predev/prebuild hook)
+public/moon-tiles/
