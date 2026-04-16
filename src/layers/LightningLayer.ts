@@ -193,12 +193,13 @@ export class LightningLayer extends BaseLayer<LightningStrike> {
     if (!this.globeEl) return 1.0;
     try {
       const camera = this.globeEl.camera();
-      const distance = camera.position.length();
-      const nearDistance = 150;
-      const farDistance = 1000;
-      const t = Math.max(0, Math.min(1, (distance - nearDistance) / (farDistance - nearDistance)));
-      // Thin lines at distance so bolt width stays proportional to apparent bolt length.
-      return 1.0 - t * 0.75;
+      const globeRadius = (this.globeEl.getGlobeRadius?.() as number | undefined) ?? 100;
+      const cameraDistance = camera.position.length();
+      // Scale = 1.0 at altitude 0.3 (reference close-zoom), decreasing quadratically
+      // so bolt width tracks its projected screen-space length. Capped at 1.0 so
+      // close-up is never thicker than the original 1px base.
+      const ratio = (globeRadius * 1.3) / cameraDistance;
+      return Math.max(0.15, Math.min(1.0, ratio * ratio));
     } catch {
       return 1.0;
     }
