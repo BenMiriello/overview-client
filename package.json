@@ -4,9 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "predev": "npx tsx scripts/ensure-moon-tiles.ts",
     "dev": "vite",
-    "prebuild": "npx tsx scripts/ensure-moon-tiles.ts",
     "build": "tsc -b && vite build",
     "build:places": "npx tsx scripts/build-places.ts",
     "build:moon-tiles": "npx tsx scripts/build-moon-tiles.ts",

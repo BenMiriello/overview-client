@@ -15,13 +15,15 @@ and the displaced topography.
 - **Size**: 909 MB, 16384 x 8192, 16-bit sRGB, equirectangular.
 - **License**: NASA public domain.
 
-The full-resolution variant (`lroc_color_16bit_srgb.tif`, 27360x13680,
-~2.6 GB) was evaluated but only provides 1.67x more resolution — not enough
-to justify level 6, which would be a bilinear upscale at 32768 px wide.
+A full-resolution variant (`lroc_color_16bit_srgb.tif`, 27360x13680, ~2.6 GB)
+is available from the same directory. Using it would enable L6 tiles at
+~1.2x upscale (vs 2x from 16K). Not currently in use because L5 already
+exceeds LOLA DEM resolution on Trek's WMTS — the shading has no bump detail
+above ~660 m/px. Swap if you ever upgrade the DEM source too.
 
 ## Tile pyramid
 
-Sliced into 6 levels (0..5) of 256x256 JPEGs in
+Sliced into 6 levels (0..5) of 256x256 JPEGs at
 `client/public/moon-tiles/{level}/{y}/{x}.jpg`. Convention matches
 `SlippyMapGlobe` equirectangular: `gx = 2 * 2^L` columns, `gy = 2^L` rows,
 NW pixel origin. Level 5 (~760 m/px) reaches source-native resolution;
@@ -29,20 +31,40 @@ going higher would only upsample.
 
 Total output: 2730 tiles, ~55 MB.
 
-## Regeneration
+## Storage: Git LFS
 
-Tiles and source TIFF are gitignored. They auto-build on the next
-`npm run dev` or `npm run build` via the predev/prebuild hook
-(`scripts/ensure-moon-tiles.ts`). First-time setup downloads the 909 MB
-source TIFF and runs the slicer once; subsequent runs short-circuit on
-the `public/moon-tiles/.complete` sentinel.
+Tiles are committed to the repo via git LFS (see `.gitattributes`). This
+keeps the tiles versioned alongside the code that expects their URLs, while
+LFS stores the binary blobs out-of-band so normal git pack size stays small.
+Regenerating the pyramid produces identical bytes for unchanged regions,
+which LFS deduplicates by content hash — repeated regens don't bloat repo
+history.
 
-To force a rebuild after editing the slicer or bumping the source URL:
+First-time clone requires LFS:
 
 ```sh
-rm client/public/moon-tiles/.complete
-npm --prefix client run build:moon-tiles
+brew install git-lfs   # or equivalent for your OS
+git lfs install        # one-time, globally
+git clone <repo>       # LFS fetch happens automatically
 ```
+
+Cloudflare Pages pulls LFS blobs automatically during deploy.
+
+## Regeneration
+
+Only needed when bumping the source (e.g. swapping to the full-res TIFF) or
+changing slicer parameters. Tiles do not auto-build on `dev` or `build` —
+they're already in the repo.
+
+```sh
+rm -rf client/public/moon-tiles         # clear old output
+npm --prefix client run build:moon-tiles
+git add client/public/moon-tiles
+git commit -m "Regenerate moon tiles (<reason>)"
+```
+
+The slicer writes `public/moon-tiles/.complete` on success. That file is
+gitignored — it's dev-machine state, not repo content.
 
 ## Why local, not WMTS
 

@@ -29,5 +29,6 @@ dist-ssr
 vendor-assets/*
 !vendor-assets/.gitkeep
 
-# Generated tile pyramid (regenerable; built by predev/prebuild hook)
-public/moon-tiles/
+# Generated tile pyramid is committed via git LFS (see .gitattributes).
+# Ignore only the build sentinel — it's dev-machine state, not content.
+public/moon-tiles/.complete
