@@ -51,7 +51,7 @@ function fetchDemForTile(tile: THREE.Mesh): void {
       const texture = new THREE.Texture(bitmap as unknown as HTMLImageElement);
       texture.flipY = false;
       texture.needsUpdate = true;
-      applyDemToMoonMaterial(tile.material as THREE.ShaderMaterial, texture, level);
+      applyDemToMoonMaterial(tile.material as THREE.ShaderMaterial, texture, level, y);
       console.log(`[DEM] bound tile ${level}/${y}/${x}`);
     })
     .catch((err) => { console.warn(`[DEM] failed ${level}/${y}/${x}:`, err); });
