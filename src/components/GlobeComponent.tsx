@@ -860,11 +860,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
             applyHorizonTilePovs(moonMeshRef.current.colorEngine,
               camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
           }
-          moonMeshRef.current.reliefEngine.updatePov(camera);
-          if (inMoonClose && cameraActuallyMoved) {
-            applyHorizonTilePovs(moonMeshRef.current.reliefEngine,
-              camera as THREE.PerspectiveCamera, moonCenter, MOON_RADIUS_SCENE);
-          }
         }
       }
 
@@ -873,7 +868,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
         cullEngineTiles(nightEngine, EARTH_R, camera);
         if (moonMeshRef.current) {
           cullEngineTiles(moonMeshRef.current.colorEngine, MOON_R_SCENE, camera);
-          cullEngineTiles(moonMeshRef.current.reliefEngine, MOON_R_SCENE, camera);
         }
       });
 
@@ -894,7 +888,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
           nightEngine.evictTiles(pred);
           if (moonMeshRef.current) {
             moonMeshRef.current.colorEngine.evictTiles(pred);
-            moonMeshRef.current.reliefEngine.evictTiles(pred);
           }
         });
       }
@@ -993,7 +986,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       nightTileEngineRef.current = null;
       scene.remove(moonMesh);
       moonMesh.colorEngine.clearTiles();
-      moonMesh.reliefEngine.clearTiles();
       moonMeshRef.current = null;
       scene.remove(sunGroup);
       disposeSunGroup(sunGroup);
@@ -2490,7 +2482,6 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
       (nightTileEngineRef.current as any)?.resetBackoff();
       if (moonMeshRef.current) {
         (moonMeshRef.current as any).colorEngine?.resetBackoff();
-        (moonMeshRef.current as any).reliefEngine?.resetBackoff();
       }
     };
     window.addEventListener('online', handleOnline);

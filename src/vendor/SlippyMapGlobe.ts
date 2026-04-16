@@ -773,6 +773,9 @@ export default class SlippyMapGlobe extends Group {
               this.#applyTexture(d.obj.material as Material, texture);
               if (!d.obj.userData) d.obj.userData = {};
               (d.obj.userData as any).__lastVisibleAt = Date.now();
+              (d.obj.userData as any).__tileX = d.x;
+              (d.obj.userData as any).__tileY = d.y;
+              (d.obj.userData as any).__tileLevel = capturedLevel;
               this.add(d.obj);
               this.#lastTileLoadedAt = performance.now();
               this.#onTileLoaded?.(d.obj);

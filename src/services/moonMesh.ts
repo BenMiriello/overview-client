@@ -4,29 +4,57 @@ import SlippyMapGlobe from '../vendor/SlippyMapGlobe';
 import { createTiledPlanetEngine } from './tiledPlanetEngine';
 import {
   createMoonColorMaterial,
-  createMoonReliefMaterial,
   applyMoonTileTexture,
+  applyDemToMoonMaterial,
+  moonEngineLevelRef,
 } from './moonMaterial';
 import { LAYERS } from './renderLayers';
 
-const RELIEF_OFFSET = 1.0008;
-
 // NASA Moon Trek WMTS — equirectangular projection.
-// LRO WAC global mosaic, 303ppd v02 (color/grayscale photographic).
 const MOON_COLOR_URL = (x: number, y: number, level: number): string =>
   `https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/${level}/${y}/${x}.jpg`;
 
-// LRO LOLA global shaded relief, 128ppd v04 — high-frequency surface detail
-// for crater rims, multiplied over the color layer.
-const MOON_RELIEF_URL = (x: number, y: number, level: number): string =>
-  `https://trek.nasa.gov/tiles/Moon/EQ/LRO_LOLA_Shade_Global_128ppd_v04/1.0.0/default/default028mm/${level}/${y}/${x}.jpg`;
+const MOON_DEM_URL = (x: number, y: number, level: number): string =>
+  `https://trek.nasa.gov/tiles/Moon/EQ/LRO_LOLA_DEM_Global_128ppd_v04/1.0.0/default/default028mm/${level}/${y}/${x}.png`;
 
-const MOON_COLOR_MAX_LEVEL = 7;
-const MOON_RELIEF_MAX_LEVEL = 6;
+// DIAGNOSTIC: color max temporarily lowered to match DEM max so the zoom
+// level can't exceed where DEM data exists. Lets the user evaluate whether
+// level-5 LOLA DEM (~660m/texel) has enough fidelity to resolve real
+// topography before we invest in a rendering approach.
+const MOON_COLOR_MAX_LEVEL = 5;
+const MOON_DEM_MAX_LEVEL = 5;
 
 export interface MoonGroup extends THREE.Group {
   colorEngine: SlippyMapGlobe;
-  reliefEngine: SlippyMapGlobe;
+}
+
+/**
+ * Fetch the DEM tile corresponding to a color tile and bind it to the
+ * tile's material. For color levels above the DEM max, no DEM is loaded
+ * (the shader falls back to flat shading via the uHasDem guard).
+ */
+function fetchDemForTile(tile: THREE.Mesh): void {
+  const ud = tile.userData as Record<string, number>;
+  const level = ud.__tileLevel;
+  const x = ud.__tileX;
+  const y = ud.__tileY;
+  if (level == null || level > MOON_DEM_MAX_LEVEL) return;
+
+  const url = MOON_DEM_URL(x, y, level);
+  fetch(url)
+    .then(r => {
+      if (!r.ok) throw new Error(`DEM ${r.status}`);
+      return r.blob();
+    })
+    .then(blob => createImageBitmap(blob, { imageOrientation: 'flipY' }))
+    .then(bitmap => {
+      const texture = new THREE.Texture(bitmap as unknown as HTMLImageElement);
+      texture.flipY = false;
+      texture.needsUpdate = true;
+      applyDemToMoonMaterial(tile.material as THREE.ShaderMaterial, texture, level);
+      console.log(`[DEM] bound tile ${level}/${y}/${x}`);
+    })
+    .catch((err) => { console.warn(`[DEM] failed ${level}/${y}/${x}:`, err); });
 }
 
 export function createMoonMesh(): MoonGroup {
@@ -42,24 +70,29 @@ export function createMoonMesh(): MoonGroup {
     materialFactory: createMoonColorMaterial,
     applyTexture: applyMoonTileTexture,
     tileRenderOrder: LAYERS.MOON_SURFACE,
+    onTileLoaded: fetchDemForTile,
   });
+  // Finer tile subdivision than the 5° default: vertex displacement needs
+  // enough vertices per tile for crater-scale features to deform the
+  // silhouette. At 0.5° a level-5 tile (≈5.6° span) gets ~12 segments
+  // per edge, which resolves large craters cleanly without blowing up
+  // total vertex count.
+  colorEngine.curvatureResolution = 0.5;
+  // Keep the shared uniform in sync with the engine's current LOD level.
+  // Non-current tiles read this to know they're fallbacks and should shift
+  // inward instead of displacing. We can't use onBeforeRender here —
+  // SlippyMapGlobe extends THREE.Group, and three.js only dispatches
+  // onBeforeRender on renderable objects (Mesh/Line/Points/Sprite). Wrap
+  // updatePov instead: it's called every frame from the main tick loop and
+  // is the canonical entry point through which `level` changes.
+  const origUpdatePov = colorEngine.updatePov.bind(colorEngine);
+  colorEngine.updatePov = (camera, forceFetch) => {
+    origUpdatePov(camera, forceFetch);
+    moonEngineLevelRef.value = colorEngine.level;
+  };
   group.add(colorEngine);
 
-  const reliefEngine = createTiledPlanetEngine({
-    radius: MOON_RADIUS_SCENE,
-    tileUrl: MOON_RELIEF_URL,
-    maxLevel: MOON_RELIEF_MAX_LEVEL,
-    projection: 'equirectangular',
-    materialFactory: createMoonReliefMaterial,
-    applyTexture: applyMoonTileTexture,
-    tileRenderOrder: LAYERS.MOON_RELIEF,
-  });
-  // Offset slightly outward to avoid z-fighting with the color sphere.
-  reliefEngine.scale.setScalar(RELIEF_OFFSET);
-  group.add(reliefEngine);
-
   group.colorEngine = colorEngine;
-  group.reliefEngine = reliefEngine;
   return group;
 }
 
@@ -82,15 +115,10 @@ const _tmpAxisY = new THREE.Vector3(0, 1, 0);
 const _tmpAxisX = new THREE.Vector3(1, 0, 0);
 
 export function updateMoonOrientation(mesh: THREE.Object3D, date: Date): void {
-  // Base orientation: look from moon center toward Earth (origin), so local +Z
-  // ends up pointing at Earth. SlippyMapGlobe's polar2Cartesian convention
-  // puts lng=0,lat=0 at +Z, so this is exactly the sub-earth point we want.
   _tmpEye.copy(mesh.position);
   _tmpM.lookAt(new THREE.Vector3(0, 0, 0), _tmpEye, CELESTIAL_NORTH_SCENE);
   mesh.quaternion.setFromRotationMatrix(_tmpM);
 
-  // Libration: rotate by the negative wobble so the offset sub-earth point
-  // ends up coincident with the +Z axis from Earth's perspective.
   const { elon, elat } = getMoonLibration(date);
   const lonRad = -elon * Math.PI / 180;
   const latRad = -elat * Math.PI / 180;

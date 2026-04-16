@@ -37,6 +37,8 @@ export interface TiledPlanetOptions {
   applyTexture?: ApplyTextureFn;
   /** Render order applied to each tile mesh — three.js does NOT inherit renderOrder from parent groups. */
   tileRenderOrder?: number;
+  /** Fired after each tile's texture loads and the tile joins the scene graph. */
+  onTileLoaded?: (tile: THREE.Mesh) => void;
 }
 
 export function createTiledPlanetEngine(opts: TiledPlanetOptions): SlippyMapGlobe {
@@ -49,6 +51,7 @@ export function createTiledPlanetEngine(opts: TiledPlanetOptions): SlippyMapGlob
     materialFactory,
     applyTexture,
     tileRenderOrder,
+    onTileLoaded,
   } = opts;
 
   const resolvedFactory: MaterialFactory =
@@ -66,6 +69,7 @@ export function createTiledPlanetEngine(opts: TiledPlanetOptions): SlippyMapGlob
     materialFactory: resolvedFactory,
     applyTexture,
     tileRenderOrder,
+    onTileLoaded,
   };
 
   const engine = new SlippyMapGlobe(radius, slippyOpts);
