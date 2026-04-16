@@ -38,6 +38,7 @@
   width: 260px;
   background: rgba(0, 0, 0, 0.45);
   border-color: rgba(255, 255, 255, 0.3);
+  cursor: text;
 }
 
 .place-search-bar-icon {

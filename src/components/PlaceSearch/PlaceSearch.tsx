@@ -129,7 +129,7 @@ const PlaceSearch: React.FC<PlaceSearchProps> = ({ onFlyTo }) => {
       onMouseLeave={handleZoneLeave}
     >
       <div ref={barRef} className={`place-search${isOpen ? ' open' : ''}`}>
-        <div className="place-search-bar">
+        <div className="place-search-bar" onClick={() => inputRef.current?.focus()}>
           <span className="place-search-bar-icon">
             <Search size={16} />
           </span>

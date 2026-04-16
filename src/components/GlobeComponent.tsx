@@ -1556,6 +1556,9 @@ export const GlobeComponent: React.FC<GlobeComponentProps> = ({
   // ── Programmatic fly-to (hotspot navigation) ─────────────────────────────
   useEffect(() => {
     if (!isGlobeReady || !globeEl.current || !flyTo) return;
+    // GlobePage defers flyTo until onEarthViewReady; this guard is a safety net
+    // against the flyTo firing while the camera is still positioned at moon distance.
+    if (inMoonViewRef.current) return;
 
     if (animationRef.current) animationRef.current.cancel();
 

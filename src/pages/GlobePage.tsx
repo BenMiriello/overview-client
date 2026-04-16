@@ -45,7 +45,7 @@ const GlobePage = () => {
   const [flyTo, setFlyTo] = useState<{ lat: number; lng: number; altitude: number } | null>(null);
 
   // Hotspot fly-to deferred until the moon→earth transition finishes
-  const pendingFlyAfterEarthRef = useRef<{ lat: number; lng: number } | null>(null);
+  const pendingFlyAfterEarthRef = useRef<{ lat: number; lng: number; altitude: number } | null>(null);
 
   // Camera ground target in close mode — updated every frame by GlobeComponent.
   // Use this instead of pointOfView() which returns nadir offset by pitch.
@@ -473,9 +473,9 @@ const GlobePage = () => {
 
   const handleEarthViewReady = useCallback(() => {
     if (pendingFlyAfterEarthRef.current) {
-      const spot = pendingFlyAfterEarthRef.current;
+      const pending = pendingFlyAfterEarthRef.current;
       pendingFlyAfterEarthRef.current = null;
-      setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
+      setFlyTo(pending);
     }
     const saved = earthSettingsRef.current;
     if (saved) {
@@ -503,7 +503,7 @@ const GlobePage = () => {
     if (!spot) return;
 
     if (viewTarget === 'moon') {
-      pendingFlyAfterEarthRef.current = spot;
+      pendingFlyAfterEarthRef.current = { lat: spot.lat, lng: spot.lng, altitude: 0.5 };
       setViewTarget('earth');
       return;
     }
@@ -511,6 +511,15 @@ const GlobePage = () => {
     console.log(`[hotspot] flying to lat=${spot.lat.toFixed(2)}, lng=${spot.lng.toFixed(2)}, count=${spot.count}`);
     setFlyTo({ lat: spot.lat, lng: spot.lng, altitude: 0.5 });
   }, [liveHotspot, hotspot, viewTarget]);
+
+  const handlePlaceFlyTo = useCallback((lat: number, lng: number, altitude: number) => {
+    if (viewTarget === 'moon') {
+      pendingFlyAfterEarthRef.current = { lat, lng, altitude };
+      setViewTarget('earth');
+    } else {
+      setFlyTo({ lat, lng, altitude });
+    }
+  }, [viewTarget]);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
@@ -624,7 +633,7 @@ const GlobePage = () => {
         error={cloudError}
         onDismissError={() => setCloudError(null)}
       />
-      <PlaceSearch onFlyTo={(lat, lng, altitude) => setFlyTo({ lat, lng, altitude })} />
+      <PlaceSearch onFlyTo={handlePlaceFlyTo} />
       <NavigationIcons currentPage="globe" />
     </div>
   );
